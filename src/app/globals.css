@@ -179,6 +179,31 @@ select, .inp { background: var(--surface); border: 1px solid var(--line); border
 .readlog { display: flex; flex-wrap: wrap; gap: 5px; }
 .readlog button { font-size: 11px; padding: 3px 7px; border-radius: 999px; background: var(--surface-2); color: var(--muted); font-variant-numeric: tabular-nums; }
 .totals { display: flex; gap: 14px; padding-block: 14px; border-top: 1px solid var(--line); margin-top: 4px; }
+/* النقطة في رأس البطاقة لا في ذيلها. وليست لاصقة: الاسم الطويل يأخذ سطرين
+   فيختلف ارتفاع الرأس، والبطاقة بعد الضغط تسع الشاشة فلا حاجة. */
+.totals.top {
+  margin-top: 0; border-top: 0; border-bottom: 1px solid var(--line); padding-block: 10px;
+}
+.totals.top .stat b { font-size: 17px; }
+
+/* سطر معيار واحد: التسمية ثم العدّاد على اليسار */
+.fld.line { display: flex; align-items: center; gap: 10px; padding-block: 7px; }
+.fld.line .flab { margin-bottom: 0; flex: 1; min-width: 0; flex-wrap: wrap; }
+.fld.line .flab b { font-size: 14px; }
+.fld.line .flab small { flex: none; }
+.fld.line .counter, .fld.line .mk { flex: none; }
+.clearslot { width: 44px; display: flex; justify-content: flex-end; flex: none; }
+.clearslot .clearb { padding: 6px 9px; font-size: 11px; }
+
+/* الحالة الخاصة: سطر مطويّ يُفتح عند الحاجة */
+.staterow {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  padding: 12px 0; border-top: 1px solid var(--line); text-align: start;
+}
+.staterow b { font-size: 13px; font-weight: 600; flex: none; }
+.staterow small { flex: 1; min-width: 0; font-size: 12px; color: var(--sand); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.staterow i { font-style: normal; color: var(--faint); flex: none; }
+.staterow.on small { color: var(--faint); }
 
 .kpis { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(104px, 1fr)); padding: 12px; }
 .kpi { display: flex; flex-direction: column; gap: 2px; }

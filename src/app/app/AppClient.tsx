@@ -1803,16 +1803,11 @@ function CriterionCounter({
   const atRoof = (shown ?? 0) >= ceiling && (isDeduct || assessed);
 
   return (
-    <div className="fld">
+    // التسمية والعدّاد في سطر واحد: خمسة معايير في ملء الشاشة بدل ثلاثة
+    <div className="fld line">
       <div className="flab">
         <b>{criterion.label}</b>
-        <small>
-          {isDeduct
-            ? "يبدأ كاملًا ويُخصم منه"
-            : assessed
-              ? "مقيَّم"
-              : "لم يُقيَّم — خارج الحساب"}
-        </small>
+        {!isDeduct && !assessed && <small>لم يُقيَّم</small>}
       </div>
       <div className="counter">
         <button
@@ -1835,10 +1830,14 @@ function CriterionCounter({
         >
           +
         </button>
-        <div className="hspace" />
-        {assessed && (
-          <button className="clearb" onClick={() => onChange(null)}>مسح</button>
-        )}
+        {/* خانة «مسح» محجوزة دائمًا: ظهورها واختفاؤها كان يزحزح الأزرار تحت الإصبع */}
+        <span className="clearslot">
+          {assessed && (
+            <button className="clearb" onClick={() => onChange(null)} aria-label={`امسح ${criterion.label}`}>
+              مسح
+            </button>
+          )}
+        </span>
       </div>
     </div>
   );
@@ -2132,6 +2131,7 @@ function StudentSheet({
   onStep: (step: number) => void;
 }) {
   const [edit, setEdit] = useState(false);
+  const [showState, setShowState] = useState(false);
   const tags = student.tags ?? [];
   const cc = continuousMark(criteria, record, readings);
   const average = termAverage(components, componentValues(criteria, record, readings));
@@ -2183,6 +2183,13 @@ function StudentSheet({
           </button>
         </div>
 
+        {/* النقطة أولًا: هي ما فُتحت البطاقة لأجله، فلا تُطلب بتمرير الشاشة */}
+        <div className="totals top">
+          <Stat value={fmt(cc)} label={ccLabel} />
+          <Stat value={fmt(average)} label="معدل المادة" />
+          <Stat value={grade(average) || "—"} label="التقدير" />
+        </div>
+
         {edit ? (
           <div className="fld">
             <label className="elab" htmlFor={`name-${student.id}`}>الاسم واللقب</label>
@@ -2199,43 +2206,6 @@ function StudentSheet({
             <button className="btn warn full" onClick={onDelete}>حذف التلميذ من القسم</button>
           </div>
         ) : null}
-
-        <div className="fld">
-          <label className="elab" htmlFor={`note-${student.id}`}>
-            حالة خاصة
-            <small>لك وحدك، لتتذكّرها. لا تدخل أي حساب ولا تظهر في المعدلات.</small>
-          </label>
-          <div className="chips tagrow">
-            {STATE_TAGS.map((tag) => {
-              const on = tags.includes(tag);
-              return (
-                <button
-                  key={tag}
-                  aria-pressed={on}
-                  onClick={() =>
-                    onEdit({
-                      tags: on ? tags.filter((t) => t !== tag) : [...tags, tag],
-                    })
-                  }
-                >
-                  {tag}
-                </button>
-              );
-            })}
-          </div>
-          <textarea
-            className="inp note-in"
-            id={`note-${student.id}`}
-            rows={2}
-            placeholder="أو اكتب ما لا تغطّيه الحالات أعلاه"
-            defaultValue={student.note ?? ""}
-            onBlur={(e) => {
-              const text = e.target.value.trim();
-              const next = text === "" ? null : text;
-              if (next !== (student.note ?? null)) onEdit({ note: next });
-            }}
-          />
-        </div>
 
         {criteria.map((c) => {
           if (c.kind === "auto") {
@@ -2274,10 +2244,10 @@ function StudentSheet({
         {marks.map((component) => {
           const field = component.code as MarkField;
           return (
-            <div key={component.id} className="fld">
+            <div key={component.id} className="fld line">
               <div className="flab">
                 <b>{component.label}</b>
-                <small>من 0 إلى 20 · معامل {Number(component.weight)}</small>
+                <small>معامل {Number(component.weight)}</small>
               </div>
               <div className="mk">
                 <input
@@ -2303,11 +2273,55 @@ function StudentSheet({
           );
         })}
 
-        <div className="totals">
-          <Stat value={fmt(cc)} label={ccLabel} />
-          <Stat value={fmt(average)} label="معدل المادة" />
-          <Stat value={grade(average) || "—"} label="التقدير" />
-        </div>
+        {/* الحالة الخاصة في الأسفل مطويّة: تُكتب مرة في الفصل، والعلامة كل حصة.
+            وكانت تأكل رُبع الشاشة في رأس البطاقة قبل أن يُرى أول معيار. */}
+        <button
+          className={showState ? "staterow on" : "staterow"}
+          aria-expanded={showState}
+          onClick={() => setShowState(!showState)}
+        >
+          <b>حالة خاصة</b>
+          <small>{state(student) || "لا شيء"}</small>
+          <i aria-hidden>{showState ? "⌃" : "⌄"}</i>
+        </button>
+
+        {showState && (
+          <div className="fld">
+            <label className="elab" htmlFor={`note-${student.id}`}>
+              لك وحدك، لتتذكّرها. لا تدخل أي حساب ولا تظهر في المعدلات ولا في الكشف.
+            </label>
+            <div className="chips tagrow">
+              {STATE_TAGS.map((tag) => {
+                const on = tags.includes(tag);
+                return (
+                  <button
+                    key={tag}
+                    aria-pressed={on}
+                    onClick={() =>
+                      onEdit({
+                        tags: on ? tags.filter((t) => t !== tag) : [...tags, tag],
+                      })
+                    }
+                  >
+                    {tag}
+                  </button>
+                );
+              })}
+            </div>
+            <textarea
+              className="inp note-in"
+              id={`note-${student.id}`}
+              rows={2}
+              placeholder="أو اكتب ما لا تغطّيه الحالات أعلاه"
+              defaultValue={student.note ?? ""}
+              onBlur={(e) => {
+                const text = e.target.value.trim();
+                const next = text === "" ? null : text;
+                if (next !== (student.note ?? null)) onEdit({ note: next });
+              }}
+            />
+          </div>
+        )}
       </div>
     </>
   );
