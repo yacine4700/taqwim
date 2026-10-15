@@ -27,9 +27,25 @@ type Student = {
   class_id: string;
   full_name: string;
   position: number;
-  /** ملاحظة الأستاذ عن حالة التلميذ. لا تدخل أي حساب. */
+  /** حالات جاهزة تُختار بنقرة. لا تدخل أي حساب. */
+  tags: string[];
+  /** ملاحظة حرة لما لا تغطّيه الحالات الجاهزة. لا تدخل أي حساب. */
   note: string | null;
 };
+
+/**
+ * الحالات الجاهزة: صيغت بما يفيد الأستاذ في الحصة (ما يفعله)، لا بتوصيف
+ * التلميذ. فـ«يحتاج مقدّمة القسم» إجراء عملي يغطّي أسبابًا كثيرة دون أن
+ * يُسجّل عن التلميذ ما ليس من شأن دفتر التنقيط.
+ */
+const STATE_TAGS = [
+  "غياب متكرر",
+  "يحتاج مقدّمة القسم",
+  "لا يملك الكتاب",
+  "متابعة من الولي",
+  "قليل المشاركة",
+  "يحتاج تشجيعًا",
+];
 type Tab = "classes" | "session" | "stats" | "settings";
 
 export default function AppClient({ email }: { email: string }) {
@@ -62,7 +78,7 @@ export default function AppClient({ email }: { email: string }) {
   const load = useCallback(async () => {
     const [c, s, cr, cp, r, rd] = await Promise.all([
       supabase.from("classes").select("id,name,position").order("position"),
-      supabase.from("students").select("id,class_id,full_name,position,note").order("position"),
+      supabase.from("students").select("id,class_id,full_name,position,note,tags").order("position"),
       supabase.from("criteria").select("id,code,label,kind,base,ceiling,position").order("position"),
       supabase.from("components").select("id,code,label,weight,position,active").order("position"),
       supabase.from("records").select("student_id,term,criteria,tp,devoir,exam"),
@@ -592,6 +608,13 @@ function ClassesView({
   );
 }
 
+/** سطر الحالة الخاصة كما يظهر تحت الاسم: الحالات الجاهزة ثم الملاحظة الحرة. */
+function state(student: Student): string {
+  return [...(student.tags ?? []), student.note ?? ""]
+    .filter((part) => part.trim() !== "")
+    .join(" · ");
+}
+
 function ClassView({
   klass, students, term, averageOf, readingCount, stats, onBack, onPick, onDelete,
 }: {
@@ -637,8 +660,8 @@ function ClassView({
               <span className="rank num">{average === null ? "–" : rank.get(student.id)}</span>
               <span className="sname">
                 {student.full_name}
-                {student.note && (
-                  <small className="nbadge" title={student.note}>{student.note}</small>
+                {state(student) && (
+                  <small className="nbadge" title={state(student)}>{state(student)}</small>
                 )}
               </span>
               <span className="sreads">{readingCount(student.id) ? `${readingCount(student.id)}×` : ""}</span>
@@ -1171,6 +1194,7 @@ function StudentSheet({
   onDelete: () => void;
 }) {
   const [edit, setEdit] = useState(false);
+  const tags = student.tags ?? [];
   const cc = continuousMark(criteria, record, readings);
   const average = termAverage(components, componentValues(criteria, record, readings));
   const ccLabel = components.find((c) => c.code === "cc")?.label ?? "التقويم المستمر";
@@ -1223,11 +1247,29 @@ function StudentSheet({
             حالة خاصة
             <small>لك وحدك، لتتذكّرها. لا تدخل أي حساب ولا تظهر في المعدلات.</small>
           </label>
+          <div className="chips tagrow">
+            {STATE_TAGS.map((tag) => {
+              const on = tags.includes(tag);
+              return (
+                <button
+                  key={tag}
+                  aria-pressed={on}
+                  onClick={() =>
+                    onEdit({
+                      tags: on ? tags.filter((t) => t !== tag) : [...tags, tag],
+                    })
+                  }
+                >
+                  {tag}
+                </button>
+              );
+            })}
+          </div>
           <textarea
             className="inp note-in"
             id={`note-${student.id}`}
             rows={2}
-            placeholder="مثلًا: يجلس في الأمام · كثير الغياب يوم الأحد · لا يملك الكتاب"
+            placeholder="أو اكتب ما لا تغطّيه الحالات أعلاه"
             defaultValue={student.note ?? ""}
             onBlur={(e) => {
               const text = e.target.value.trim();
