@@ -123,6 +123,7 @@ export default function AppClient({
   /* اختيار تبويب الحصة يُحفظ مع بقية المكان: الأستاذ يقرأ لقسم واحد في الحصة */
   const [sessionClass, setSessionClass] = useState("");
   const [sessionCount, setSessionCount] = useState(5);
+  const [hideStart, setHideStart] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<Klass | null>(null);
   const [confirmCriterion, setConfirmCriterion] = useState<Criterion | null>(null);
   const [confirmStudent, setConfirmStudent] = useState<Student | null>(null);
@@ -166,6 +167,44 @@ export default function AppClient({
     const list = students.filter((s) => s.class_id === openStudent.class_id);
     return { list, index: list.findIndex((s) => s.id === openStudent.id) };
   }, [students, openStudent]);
+
+  /**
+   * خطوات البداية: ما لا يعرف الأستاذ الجديد أنه ناقص.
+   * الاستيراد ظاهر في الشاشة الفارغة، لكن مجموع المعايير قد يخرج عن 20
+   * وبياناته قد تغيب عن ترويسة الكشف وهو لا يدري إلا عند الطبع.
+   */
+  const startSteps = useMemo(() => {
+    if (hideStart) return [];
+    const steps: Array<{ key: string; label: string; hint: string; action: string; onDo: () => void }> = [];
+    if (classes.length === 0) {
+      steps.push({
+        key: "classes",
+        label: "استورد أقسامك",
+        hint: "من ملف الإشراف التربوي، أو بلصق الأسماء",
+        action: "استيراد",
+        onDo: () => setImporting(true),
+      });
+    }
+    if (criteria.length && !checkTotal(criteria).exact) {
+      steps.push({
+        key: "criteria",
+        label: "راجع معاييرك",
+        hint: `مجموع السقوف ${Number(checkTotal(criteria).total.toFixed(2))} لا 20`,
+        action: "الإعدادات",
+        onDo: () => setTab("settings"),
+      });
+    }
+    if (!profile.full_name && !profile.school_name) {
+      steps.push({
+        key: "profile",
+        label: "اكتب اسمك ومؤسستك",
+        hint: "تظهر في ترويسة الكشف المطبوع",
+        action: "الإعدادات",
+        onDo: () => setTab("settings"),
+      });
+    }
+    return steps;
+  }, [hideStart, classes.length, criteria, profile]);
 
   /** عملٌ يحتاج الخادم: إنشاء، حذف، تغيير إعدادات. التنقيط وحده يعمل دون شبكة. */
   const needsNetwork = useCallback(() => {
@@ -261,6 +300,7 @@ export default function AppClient({
         openClass: string | null;
         sessionClass?: string;
         sessionCount?: number;
+        hideStart?: boolean;
       }>(whereKey);
       if (!saved) return;
       if (saved.term >= 1 && saved.term <= 3) setTerm(saved.term);
@@ -269,6 +309,7 @@ export default function AppClient({
         setSessionClass(saved.sessionClass);
       }
       if (saved.sessionCount && saved.sessionCount >= 3) setSessionCount(saved.sessionCount);
+      if (saved.hideStart) setHideStart(true);
       // القسم قد يكون حُذف من جهاز آخر، فلا يُفتح إلا إن كان ما يزال موجودًا.
       if (saved.openClass && classes.some((c) => c.id === saved.openClass)) {
         setOpenClass(saved.openClass);
@@ -278,8 +319,8 @@ export default function AppClient({
 
   useEffect(() => {
     if (!restoredRef.current) return;
-    void kvSet(whereKey, { tab, term, openClass, sessionClass, sessionCount });
-  }, [tab, term, openClass, sessionClass, sessionCount, whereKey]);
+    void kvSet(whereKey, { tab, term, openClass, sessionClass, sessionCount, hideStart });
+  }, [tab, term, openClass, sessionClass, sessionCount, hideStart, whereKey]);
 
   /* عودة الشبكة: أعد القراءة من الخادم مرة واحدة، لا عند كل تبدّل حالة */
   const onlineRef = useRef(true);
@@ -683,6 +724,8 @@ export default function AppClient({
                 statsOf={statsOf}
                 onOpen={setOpenClass}
                 onImport={() => setImporting(true)}
+                start={startSteps}
+                onDismissStart={() => setHideStart(true)}
               />
             ))}
 
@@ -865,8 +908,42 @@ export default function AppClient({
 
 /* ================= views ================= */
 
+/**
+ * ما يبقى على الأستاذ في أول أسبوع.
+ *
+ * الخطوات التي تمّت تختفي وحدها، والبطاقة كلها تختفي حين تتمّ كلها — فلا
+ * تبقى في الشاشة سنةً كاملة. ولا تُعرض خطوة لا يعرف الأستاذ أنها ناقصة:
+ * المعايير أُنشئت له افتراضًا، لكن مجموعها قد يخرج عن 20 وهو لا يدري.
+ */
+function StartCard({
+  steps, onDismiss,
+}: {
+  steps: Array<{ key: string; label: string; hint: string; action: string; onDo: () => void }>;
+  onDismiss: () => void;
+}) {
+  if (!steps.length) return null;
+  return (
+    <div className="card startcard">
+      <div className="srow2">
+        <b>لتبدأ</b>
+        <div className="hspace" />
+        <button className="clearb" onClick={onDismiss}>أخفِ</button>
+      </div>
+      {steps.map((step) => (
+        <div key={step.key} className="srow2">
+          <div className="k">
+            {step.label}
+            <small>{step.hint}</small>
+          </div>
+          <button className="btn soft" onClick={step.onDo}>{step.action}</button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function ClassesView({
-  loading, classes, studentCount, statsOf, onOpen, onImport,
+  loading, classes, studentCount, statsOf, onOpen, onImport, start, onDismissStart,
 }: {
   loading: boolean;
   classes: Klass[];
@@ -874,6 +951,8 @@ function ClassesView({
   statsOf: (id: string) => ReturnType<typeof classStats>;
   onOpen: (id: string) => void;
   onImport: () => void;
+  start: Array<{ key: string; label: string; hint: string; action: string; onDo: () => void }>;
+  onDismissStart: () => void;
 }) {
   return (
     <section className="view">
@@ -887,6 +966,8 @@ function ClassesView({
         <div className="hspace" />
         <button className="btn soft" onClick={onImport}>+ قسم</button>
       </div>
+
+      {!loading && <StartCard steps={start} onDismiss={onDismissStart} />}
 
       {loading ? (
         <div className="card empty">

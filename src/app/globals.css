@@ -403,6 +403,11 @@ nav.tabs svg { width: 21px; height: 21px; }
   @page { size: A4 portrait; margin: 12mm; }
 }
 
+/* بطاقة البداية: خطوة تختفي كلّما تمّت، والبطاقة كلّها حين تتمّ كلّها */
+.startcard { border-color: var(--primary-soft); }
+.startcard > .srow2:first-child b { font-size: 14px; font-weight: 600; }
+.startcard .btn.soft { flex: none; padding: 8px 13px; font-size: 13px; }
+
 /* شريط التصفية: الباقون بنقرة، والتقدّم رقمًا إلى جانبه */
 .filterbar { display: flex; align-items: center; gap: 8px; }
 .filterbar .chips { flex: 1; min-width: 0; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
