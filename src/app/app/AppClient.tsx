@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { isDurable, kvDel, kvGet, kvSet } from "@/lib/localdb";
 import ExportSheet from "./ExportSheet";
+import PrintView from "./PrintView";
 import { useOutbox } from "@/lib/useOutbox";
 import {
   applyReadings,
@@ -65,9 +66,15 @@ const STATE_TAGS = [
 ];
 type Tab = "classes" | "session" | "stats" | "settings";
 
+/** بيانات الأستاذ كما تُطبع في ترويسة الكشف. */
+type Profile = { full_name: string; subject: string | null; school_name: string | null };
+
+const NO_PROFILE: Profile = { full_name: "", subject: null, school_name: null };
+
 /** نسخة الخادم كما حُفظت في الجهاز، لتفتح الشاشة بلا شبكة. */
 type Snapshot = {
   classes: Klass[];
+  profile: Profile;
   students: Student[];
   criteria: Criterion[];
   components: Component[];
@@ -98,6 +105,7 @@ export default function AppClient({
   const [classes, setClasses] = useState<Klass[]>([]);
   const [criteria, setCriteria] = useState<Criterion[]>([]);
   const [components, setComponents] = useState<Component[]>([]);
+  const [profile, setProfile] = useState<Profile>(NO_PROFILE);
   /* نسخة الخادم وحدها. ما يراه الأستاذ = هذه + الطابور، ويُحسب أدناه. */
   const [baseStudents, setBaseStudents] = useState<Student[]>([]);
   const [baseRecords, setBaseRecords] = useState<RecordRow[]>([]);
@@ -110,6 +118,7 @@ export default function AppClient({
   const [openStudentId, setOpenStudentId] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [printing, setPrinting] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<Klass | null>(null);
   const [confirmCriterion, setConfirmCriterion] = useState<Criterion | null>(null);
   const [confirmStudent, setConfirmStudent] = useState<Student | null>(null);
@@ -161,13 +170,14 @@ export default function AppClient({
   const servedRef = useRef(false);
 
   const load = useCallback(async () => {
-    const [c, s, cr, cp, r, rd] = await Promise.all([
+    const [c, s, cr, cp, r, rd, me] = await Promise.all([
       supabase.from("classes").select("id,name,position").order("position"),
       supabase.from("students").select("id,class_id,full_name,position,note,tags").order("position"),
       supabase.from("criteria").select("id,code,label,kind,base,ceiling,position").order("position"),
       supabase.from("components").select("id,code,label,weight,position,active").order("position"),
       supabase.from("records").select("student_id,term,criteria,tp,devoir,exam"),
       supabase.from("readings").select("id,student_id,term,score,read_on").order("read_on"),
+      supabase.from("teachers").select("full_name,subject,school_name").eq("id", teacherId).maybeSingle(),
     ]);
     const failure =
       c.error ?? s.error ?? cr.error ?? cp.error ?? r.error ?? rd.error ?? null;
@@ -185,9 +195,11 @@ export default function AppClient({
       components: (cp.data ?? []) as Component[],
       records: (r.data ?? []) as RecordRow[],
       readings: (rd.data ?? []) as Reading[],
+      profile: (me.data as Profile | null) ?? NO_PROFILE,
       savedAt: Date.now(),
     };
     setClasses(snapshot.classes);
+    setProfile(snapshot.profile);
     setBaseStudents(snapshot.students);
     setCriteria(snapshot.criteria);
     setComponents(snapshot.components);
@@ -196,7 +208,7 @@ export default function AppClient({
     setCachedAt(null);
     setLoading(false);
     void kvSet(snapKey, snapshot);
-  }, [supabase, snapKey]);
+  }, [supabase, snapKey, teacherId]);
 
   useEffect(() => {
     let alive = true;
@@ -210,6 +222,7 @@ export default function AppClient({
       setComponents(saved.components ?? []);
       setBaseRecords(saved.records ?? []);
       setBaseReadings(saved.readings ?? []);
+      setProfile(saved.profile ?? NO_PROFILE);
       setCachedAt(saved.savedAt ?? 0);
       setLoading(false);
     })();
@@ -439,6 +452,16 @@ export default function AppClient({
     say(`حُذف معيار ${c.label}`);
   }
 
+  async function saveProfile(patch: Partial<Profile>) {
+    if (!needsNetwork()) return;
+    setProfile((p) => ({ ...p, ...patch }));
+    const { error } = await supabase.from("teachers").update(patch).eq("id", teacherId);
+    if (error) {
+      say("تعذّر حفظ بياناتك");
+      void load();
+    }
+  }
+
   async function saveComponent(id: string, patch: Partial<Component>) {
     if (!needsNetwork()) return;
     setComponents((cs) => cs.map((c) => (c.id === id ? { ...c, ...patch } : c)));
@@ -589,6 +612,7 @@ export default function AppClient({
                 onBack={() => setOpenClass(null)}
                 onPick={(s) => setOpenStudentId(s.id)}
                 onDelete={() => setConfirmDelete(classes.find((c) => c.id === openClass)!)}
+                onPrint={() => setPrinting(openClass)}
                 onCriterion={setCriterion}
                 onMark={(studentId, field, value) =>
                   saveRecord(studentId, { [field]: value } as Partial<RecordRow>)
@@ -629,6 +653,8 @@ export default function AppClient({
               onAddCriterion={addCriterion}
               onDeleteCriterion={setConfirmCriterion}
               onComponent={saveComponent}
+              onProfile={saveProfile}
+              profile={profile}
               onImport={() => setImporting(true)}
               onExport={() => setExporting(true)}
               onSignOut={() => (waiting.total ? setConfirmSignOut(true) : void signOut())}
@@ -668,6 +694,20 @@ export default function AppClient({
             setImporting(false);
             await createClassWithStudents(name, names);
           }}
+        />
+      )}
+
+      {printing && classes.some((c) => c.id === printing) && (
+        <PrintView
+          klass={classes.find((c) => c.id === printing)!}
+          students={studentsOf(printing)}
+          criteria={criteria}
+          components={components}
+          profile={profile}
+          term={term}
+          recordOf={recordOf}
+          readingsOf={readingsOf}
+          onClose={() => setPrinting(null)}
         />
       )}
 
@@ -821,7 +861,7 @@ function state(student: Student): string {
 function ClassView({
   klass, students, term, criteria, components, recordOf,
   averageOf, readingCount, stats,
-  onBack, onPick, onDelete, onCriterion, onMark,
+  onBack, onPick, onDelete, onPrint, onCriterion, onMark,
 }: {
   klass: Klass;
   students: Student[];
@@ -835,6 +875,7 @@ function ClassView({
   onBack: () => void;
   onPick: (s: Student) => void;
   onDelete: () => void;
+  onPrint: () => void;
   onCriterion: (studentId: string, code: string, value: number | null) => void;
   onMark: (studentId: string, field: MarkField, value: number | null) => void;
 }) {
@@ -965,7 +1006,11 @@ function ClassView({
             أنهِ العمود
           </button>
         ) : (
-          <button className="btn warn" onClick={onDelete}>حذف القسم</button>
+          <>
+            <button className="btn soft" onClick={onPrint}>كشف للطبع</button>
+            <div className="hspace" />
+            <button className="btn warn" onClick={onDelete}>حذف القسم</button>
+          </>
         )}
       </div>
     </section>
@@ -1301,16 +1346,18 @@ function StatsView({
 const TP_PRESETS = ["الأعمال التطبيقية", "التعبير الشفوي"];
 
 function SettingsView({
-  criteria, components, email,
-  onCriterion, onAddCriterion, onDeleteCriterion, onComponent, onImport, onExport, onSignOut,
+  criteria, components, email, profile,
+  onCriterion, onAddCriterion, onDeleteCriterion, onComponent, onProfile, onImport, onExport, onSignOut,
 }: {
   criteria: Criterion[];
   components: Component[];
   email: string;
+  profile: Profile;
   onCriterion: (id: string, patch: Partial<Criterion>) => void;
   onAddCriterion: () => void;
   onDeleteCriterion: (c: Criterion) => void;
   onComponent: (id: string, patch: Partial<Component>) => void;
+  onProfile: (patch: Partial<Profile>) => void;
   onImport: () => void;
   onExport: () => void;
   onSignOut: () => void;
@@ -1490,6 +1537,40 @@ function SettingsView({
             </div>
           );
         })}
+      </div>
+
+      {/* تُطبع في ترويسة كشف القسم، ولا تدخل أي حساب */}
+      <div className="card">
+        <div className="srow2">
+          <b>بياناتي</b>
+          <div className="hspace" />
+          <span className="pill">تظهر في الكشف المطبوع</span>
+        </div>
+        {([
+          ["full_name", "الاسم واللقب", "مثال: كوزريت ياسين"],
+          ["subject", "المادة", "مثال: علوم الطبيعة والحياة"],
+          ["school_name", "المؤسسة", "مثال: ثانوية ... بغرداية"],
+        ] as const).map(([field, label, hint]) => (
+          <div key={field} className="srow2">
+            <div className="k">
+              {label}
+              <small>{hint}</small>
+            </div>
+            <input
+              id={`profile-${field}`}
+              style={{ width: 170 }}
+              aria-label={label}
+              defaultValue={profile[field] ?? ""}
+              onBlur={(e) => {
+                const text = e.target.value.trim();
+                const next = field === "full_name" ? text : text === "" ? null : text;
+                if (next !== (profile[field] ?? (field === "full_name" ? "" : null))) {
+                  onProfile({ [field]: next } as Partial<Profile>);
+                }
+              }}
+            />
+          </div>
+        ))}
       </div>
 
       <div className="card">

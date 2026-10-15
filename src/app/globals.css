@@ -288,6 +288,69 @@ nav.tabs svg { width: 21px; height: 21px; }
 .authbox input { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 11px; }
 .authbox .swap { font-size: 13px; color: var(--primary); font-weight: 600; text-align: center; }
 
+/* كشف القسم: يُعرض على الشاشة كورقة، ويُطبع وحده دون بقية التطبيق */
+.printwrap { position: fixed; inset: 0; z-index: 80; background: var(--surface-2); overflow: auto; }
+.printbar {
+  position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 10px;
+  padding-block: 10px; background: var(--bg); border-bottom: 1px solid var(--line); flex-wrap: wrap;
+}
+.paper {
+  background: #fff; color: #10110f; margin: 16px auto 40px; padding: 14mm 10mm;
+  width: 210mm; max-width: calc(100% - 24px); box-shadow: var(--shadow); border-radius: 4px;
+}
+.phead { text-align: center; border-bottom: 1.5px solid #10110f; padding-bottom: 8px; margin-bottom: 12px; }
+.phead .pline { font-size: 12px; line-height: 1.6; }
+.phead .pline.strong { font-weight: 700; }
+.phead h1 { font-size: 17px; margin: 8px 0 6px; }
+.pmeta { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px 18px; font-size: 12px; }
+.pmeta b { font-weight: 700; }
+
+.ptable { width: 100%; border-collapse: collapse; font-size: 11px; }
+.ptable th, .ptable td { border: 0.6px solid #6b7a73; padding: 3px 4px; text-align: center; }
+.ptable th { background: #eceeec; font-weight: 700; font-size: 10px; line-height: 1.35; }
+.ptable th i { display: block; font-style: normal; font-weight: 400; font-size: 9px; color: #42514a; }
+/* الأعمدة الرقمية تُضيَّق عمدًا ليتّسع عمود الاسم: الأسماء المركّبة هنا
+   طويلة، وانكسارها على ثلاثة أسطر يرفع الكشف إلى صفحتين بلا داعٍ. */
+.ptable th.tiny { width: 4.5%; }
+.ptable th.narrow { width: 6%; }
+.ptable th.wide { width: 21%; }
+.ptable td.name { text-align: start; font-weight: 500; }
+.ptable td.gradecol, .ptable th.gradecol { white-space: nowrap; }
+.ptable td.num { font-variant-numeric: tabular-nums; }
+.ptable td.strong { font-weight: 700; }
+.ptable td.low { font-weight: 700; color: #8d1d14; }
+.ptable tbody tr:nth-child(even) td { background: #f6f8f7; }
+
+.pfoot { margin-top: 12px; }
+.pstats { display: flex; flex-wrap: wrap; gap: 4px 18px; font-size: 11px; border: 0.6px solid #6b7a73; padding: 6px 8px; }
+.psign { display: flex; justify-content: space-between; margin-top: 26px; font-size: 12px; font-weight: 600; padding-inline: 10mm; }
+
+@media print {
+  /* لا يُطبع إلا الكشف: الترويسة والتبويبات والأوراق المنبثقة تُخفى */
+  header, main, nav.tabs, .toast, .scrim, .sheet, .printbar { display: none !important; }
+  .printwrap { position: static; overflow: visible; background: #fff; }
+  .paper {
+    width: auto; max-width: none; margin: 0; padding: 0;
+    box-shadow: none; border-radius: 0; background: #fff; color: #000;
+  }
+  /* الألوان الفاتحة تُطبع كما هي ولو كان المظهر داكنًا على الشاشة */
+  .paper, .ptable th, .ptable tbody tr:nth-child(even) td {
+    -webkit-print-color-adjust: exact; print-color-adjust: exact;
+  }
+  /* خلفية الشاشة الرمادية لا تُطبع، ولو شغّل الأستاذ طبع الخلفيات */
+  html, body { background: #fff !important; }
+  /* رؤوس الجدول تتكرّر في كل صفحة، ولا يُقطع سطر تلميذ بين صفحتين */
+  .ptable thead { display: table-header-group; }
+  .ptable tr { break-inside: avoid; }
+  /* الذيل يُقسَّم إن لزم: إبقاؤه كتلة واحدة كان يدفعه وحده إلى صفحة ثانية */
+  .pstats, .psign { break-inside: avoid; }
+  /* قسمٌ من 36 تلميذًا يملأ الصفحة تمامًا، فتُضيَّق السطور ليبقى الذيل معه */
+  .ptable td { padding: 1.6px 4px; }
+  .ptable th { padding: 2px 4px; }
+  .psign { margin-top: 16px; }
+  @page { size: A4 portrait; margin: 12mm; }
+}
+
 /* التنقيط بالعمود: معيار واحد ينزل على كل أسماء القسم */
 .colbar { display: flex; align-items: center; gap: 8px; }
 .colbar .collab { font-size: 12px; color: var(--faint); flex: none; }
