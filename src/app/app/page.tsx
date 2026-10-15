@@ -8,5 +8,7 @@ export default async function AppPage() {
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) redirect("/login");
-  return <AppClient email={user.email ?? ""} />;
+  // المعرّف يصل مع الصفحة لا بنداء على الخادم عند كل كتابة: في القاعة بلا
+  // شبكة لا يُجاب ذلك النداء، فتتعطّل كتابة كانت ستنجح من الطابور.
+  return <AppClient email={user.email ?? ""} teacherId={user.id} />;
 }

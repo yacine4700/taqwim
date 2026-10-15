@@ -43,6 +43,12 @@ export async function middleware(request: NextRequest) {
   return response;
 }
 
+/**
+ * عامل الخدمة والـmanifest خارج المرشّح: لو مرّا بالوسيط لصار لكل طلب منهما
+ * نداء تحقّق من الجلسة، وهما يُطلبان قبل الدخول أصلًا — عند تثبيت التطبيق.
+ */
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)"],
+  matcher: [
+    "/((?!_next/static|_next/image|favicon.ico|sw\\.js|manifest\\.webmanifest|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
+  ],
 };

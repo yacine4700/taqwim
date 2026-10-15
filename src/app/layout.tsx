@@ -4,6 +4,18 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "دفتر التقويم المستمر",
   description: "تنقيط التقويم المستمر لأساتذة التعليم الثانوي",
+  manifest: "/manifest.webmanifest",
+  applicationName: "دفتر التقويم",
+  icons: {
+    icon: [{ url: "/favicon-32.png", sizes: "32x32", type: "image/png" }],
+    apple: [{ url: "/apple-touch-icon.png", sizes: "180x180" }],
+  },
+  // مثبَّت على الشاشة الرئيسية: يفتح بلا شريط متصفّح، وبعنوان قصير تحت الأيقونة
+  appleWebApp: {
+    capable: true,
+    title: "دفتر التقويم",
+    statusBarStyle: "default",
+  },
 };
 
 export const viewport: Viewport = {

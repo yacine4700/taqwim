@@ -3,6 +3,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { isDurable, kvDel, kvGet, kvSet } from "@/lib/localdb";
+import { useOutbox } from "@/lib/useOutbox";
+import {
+  applyReadings,
+  applyRecords,
+  applyStudents,
+  countWord,
+  newOp,
+  pending,
+  pendingLabel,
+  uid,
+  type Op,
+} from "@/lib/outbox";
 import {
   checkTotal,
   clamp,
@@ -50,32 +63,99 @@ const STATE_TAGS = [
 ];
 type Tab = "classes" | "session" | "stats" | "settings";
 
-export default function AppClient({ email }: { email: string }) {
+/** نسخة الخادم كما حُفظت في الجهاز، لتفتح الشاشة بلا شبكة. */
+type Snapshot = {
+  classes: Klass[];
+  students: Student[];
+  criteria: Criterion[];
+  components: Component[];
+  records: RecordRow[];
+  readings: Reading[];
+  savedAt: number;
+};
+
+/** تاريخ اليوم بتوقيت الجهاز. ISO يعطي توقيت غرينتش، فيقدّم المحاولة يومًا قبل الفجر. */
+function today(): string {
+  const now = new Date();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+}
+
+export default function AppClient({
+  email,
+  teacherId,
+}: {
+  email: string;
+  teacherId: string;
+}) {
   const router = useRouter();
   const supabase = useMemo(() => createClient(), []);
 
   const [tab, setTab] = useState<Tab>("classes");
   const [term, setTerm] = useState(1);
   const [classes, setClasses] = useState<Klass[]>([]);
-  const [students, setStudents] = useState<Student[]>([]);
   const [criteria, setCriteria] = useState<Criterion[]>([]);
   const [components, setComponents] = useState<Component[]>([]);
-  const [records, setRecords] = useState<RecordRow[]>([]);
-  const [readings, setReadings] = useState<Reading[]>([]);
+  /* نسخة الخادم وحدها. ما يراه الأستاذ = هذه + الطابور، ويُحسب أدناه. */
+  const [baseStudents, setBaseStudents] = useState<Student[]>([]);
+  const [baseRecords, setBaseRecords] = useState<RecordRow[]>([]);
+  const [baseReadings, setBaseReadings] = useState<Reading[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  /** وقت حفظ النسخة المعروضة إن كانت من الجهاز لا من الخادم. */
+  const [cachedAt, setCachedAt] = useState<number | null>(null);
   const [openClass, setOpenClass] = useState<string | null>(null);
-  const [openStudent, setOpenStudent] = useState<Student | null>(null);
+  const [openStudentId, setOpenStudentId] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<Klass | null>(null);
   const [confirmCriterion, setConfirmCriterion] = useState<Criterion | null>(null);
   const [confirmStudent, setConfirmStudent] = useState<Student | null>(null);
+  const [showPending, setShowPending] = useState(false);
+  const [confirmSignOut, setConfirmSignOut] = useState(false);
   const [toast, setToast] = useState("");
 
   const say = useCallback((text: string) => {
     setToast(text);
     window.setTimeout(() => setToast(""), 2400);
   }, []);
+
+  /* ---------- الطابور: ما أُدخل ولم يصل الخادم ---------- */
+
+  /**
+   * العملية التي قبلها الخادم تنتقل إلى نسخة الخادم في اللحظة نفسها التي
+   * تخرج فيها من الطابور، فلا يرتجف الرقم على الشاشة بينهما.
+   */
+  const onApplied = useCallback((op: Op) => {
+    if (op.kind === "record") setBaseRecords((rows) => applyRecords(rows, [op]));
+    else if (op.kind === "student") setBaseStudents((rows) => applyStudents(rows, [op]));
+    else setBaseReadings((rows) => applyReadings(rows, [op]));
+  }, []);
+
+  const outbox = useOutbox(supabase, teacherId, onApplied);
+  const queue = outbox.queue;
+  const waiting = useMemo(() => pending(queue), [queue]);
+
+  const students = useMemo(() => applyStudents(baseStudents, queue), [baseStudents, queue]);
+  const records = useMemo(() => applyRecords(baseRecords, queue), [baseRecords, queue]);
+  const readings = useMemo(() => applyReadings(baseReadings, queue), [baseReadings, queue]);
+
+  const openStudent = useMemo(
+    () => students.find((s) => s.id === openStudentId) ?? null,
+    [students, openStudentId],
+  );
+
+  /** عملٌ يحتاج الخادم: إنشاء، حذف، تغيير إعدادات. التنقيط وحده يعمل دون شبكة. */
+  const needsNetwork = useCallback(() => {
+    if (outbox.online) return true;
+    say("هذا يحتاج اتصالًا. التنقيط وحده يعمل دون شبكة.");
+    return false;
+  }, [outbox.online, say]);
+
+  /* ---------- تحميل البيانات ---------- */
+
+  const snapKey = `snapshot:${teacherId}`;
+  /** وصلت نسخة من الخادم، فلا تكتب فوقها نسخة الجهاز القديمة. */
+  const servedRef = useRef(false);
 
   const load = useCallback(async () => {
     const [c, s, cr, cp, r, rd] = await Promise.all([
@@ -90,21 +170,70 @@ export default function AppClient({ email }: { email: string }) {
       c.error ?? s.error ?? cr.error ?? cp.error ?? r.error ?? rd.error ?? null;
     if (failure) {
       setError(failure.message);
-    } else {
-      setError("");
-      setClasses((c.data ?? []) as Klass[]);
-      setStudents((s.data ?? []) as Student[]);
-      setCriteria((cr.data ?? []) as Criterion[]);
-      setComponents((cp.data ?? []) as Component[]);
-      setRecords((r.data ?? []) as RecordRow[]);
-      setReadings((rd.data ?? []) as Reading[]);
+      setLoading(false);
+      return;
     }
+    servedRef.current = true;
+    setError("");
+    const snapshot: Snapshot = {
+      classes: (c.data ?? []) as Klass[],
+      students: (s.data ?? []) as Student[],
+      criteria: (cr.data ?? []) as Criterion[],
+      components: (cp.data ?? []) as Component[],
+      records: (r.data ?? []) as RecordRow[],
+      readings: (rd.data ?? []) as Reading[],
+      savedAt: Date.now(),
+    };
+    setClasses(snapshot.classes);
+    setBaseStudents(snapshot.students);
+    setCriteria(snapshot.criteria);
+    setComponents(snapshot.components);
+    setBaseRecords(snapshot.records);
+    setBaseReadings(snapshot.readings);
+    setCachedAt(null);
     setLoading(false);
-  }, [supabase]);
+    void kvSet(snapKey, snapshot);
+  }, [supabase, snapKey]);
 
   useEffect(() => {
+    let alive = true;
+    void (async () => {
+      const saved = await kvGet<Snapshot>(snapKey);
+      // إن سبق الخادمُ القراءةَ من الجهاز فالأحدث هو الباقي.
+      if (!alive || !saved || servedRef.current) return;
+      setClasses(saved.classes ?? []);
+      setBaseStudents(saved.students ?? []);
+      setCriteria(saved.criteria ?? []);
+      setComponents(saved.components ?? []);
+      setBaseRecords(saved.records ?? []);
+      setBaseReadings(saved.readings ?? []);
+      setCachedAt(saved.savedAt ?? 0);
+      setLoading(false);
+    })();
     void load();
-  }, [load]);
+    return () => {
+      alive = false;
+    };
+  }, [snapKey, load]);
+
+  /* عودة الشبكة: أعد القراءة من الخادم مرة واحدة، لا عند كل تبدّل حالة */
+  const onlineRef = useRef(true);
+  useEffect(() => {
+    if (outbox.online && !onlineRef.current) void load();
+    onlineRef.current = outbox.online;
+  }, [outbox.online, load]);
+
+  /* تسجيل عامل الخدمة: به تفتح الشاشة والتطبيق مثبَّت ولا شبكة */
+  useEffect(() => {
+    if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) return;
+    const register = () => {
+      void navigator.serviceWorker.register("/sw.js").catch(() => {
+        /* متصفّح يمنع العمّال، أو سياق غير آمن: التطبيق يعمل دونه */
+      });
+    };
+    if (document.readyState === "complete") register();
+    else window.addEventListener("load", register, { once: true });
+  }, []);
 
   /* ---------- derived ---------- */
   const studentsOf = useCallback(
@@ -137,7 +266,12 @@ export default function AppClient({ email }: { email: string }) {
   );
 
   /* ---------- writes ---------- */
-  async function saveRecord(studentId: string, patch: Partial<RecordRow>) {
+
+  /**
+   * كل علامة تدخل الطابور أولًا فتظهر في الشاشة في اللحظة نفسها، ثم تُرسل في
+   * الخلفية. لا انتظار للخادم عند الضغطة، ولا إعادة تحميل تمحو ما أُدخل.
+   */
+  function saveRecord(studentId: string, patch: Partial<RecordRow>) {
     const current = recordOf(studentId);
     const next: RecordRow = {
       student_id: studentId,
@@ -148,65 +282,53 @@ export default function AppClient({ email }: { email: string }) {
       exam: current?.exam ?? null,
       ...patch,
     };
-    setRecords((rows) => {
-      const rest = rows.filter((r) => !(r.student_id === studentId && r.term === term));
-      return [...rest, next];
-    });
-    const { data: me } = await supabase.auth.getUser();
-    const { error } = await supabase.from("records").upsert(
-      {
-        teacher_id: me.user?.id,
+    outbox.push(
+      newOp("record", {
         student_id: studentId,
         term,
         criteria: next.criteria,
         tp: next.tp,
         devoir: next.devoir,
         exam: next.exam,
-        updated_at: new Date().toISOString(),
-      },
-      { onConflict: "student_id,term" },
+      }),
     );
-    if (error) {
-      say("تعذّر الحفظ، أعد المحاولة");
-      void load();
-    }
   }
 
-  async function setCriterion(studentId: string, code: string, value: number | null) {
+  function setCriterion(studentId: string, code: string, value: number | null) {
     const current = recordOf(studentId);
     const map = { ...(current?.criteria ?? {}) };
+    // الحذف لا التصفير: «مسح» يعيد المعيار إلى «لم يُقيَّم».
     if (value === null) delete map[code];
     else map[code] = value;
-    await saveRecord(studentId, { criteria: map });
+    saveRecord(studentId, { criteria: map });
   }
 
   async function addReadings(entries: Array<{ studentId: string; score: number }>) {
-    const { data: me } = await supabase.auth.getUser();
-    const today = new Date().toISOString().slice(0, 10);
-    const rows = entries.map((e) => ({
-      teacher_id: me.user?.id,
-      student_id: e.studentId,
-      term,
-      score: e.score,
-      read_on: today,
-    }));
-    const { data, error } = await supabase.from("readings").insert(rows).select("id,student_id,term,score,read_on");
-    if (error) {
-      say("تعذّر حفظ المحاولات");
-      return false;
+    const day = today();
+    for (const entry of entries) {
+      // المعرّف يُولَّد هنا: تظهر المحاولة فورًا، وإعادة الإرسال لا تكرّرها.
+      const reading: Reading = {
+        id: uid(),
+        student_id: entry.studentId,
+        term,
+        score: entry.score,
+        read_on: day,
+      };
+      outbox.push(newOp("reading-add", { reading }));
     }
-    setReadings((rs) => [...rs, ...((data ?? []) as Reading[])]);
-    say(`سُجّلت ${entries.length} محاولة`);
+    say(
+      outbox.online
+        ? `سُجّلت ${entries.length} محاولة`
+        : `سُجّلت ${entries.length} محاولة — ستُرسل عند عودة الشبكة`,
+    );
     return true;
   }
 
-  async function removeReading(id: string) {
-    setReadings((rs) => rs.filter((r) => r.id !== id));
-    const { error } = await supabase.from("readings").delete().eq("id", id);
-    if (error) {
-      say("تعذّر الحذف");
-      void load();
-    }
+  function removeReading(id: string) {
+    const row = readings.find((r) => r.id === id);
+    outbox.push(
+      newOp("reading-del", { reading_id: id, student_id: row?.student_id ?? "" }),
+    );
   }
 
   /**
@@ -217,6 +339,7 @@ export default function AppClient({ email }: { email: string }) {
   async function updateCriterion(id: string, patch: Partial<Criterion>) {
     const before = criteria.find((c) => c.id === id);
     if (!before) return;
+    if (!needsNetwork()) return;
     const next: Criterion = { ...before, ...patch };
     if (next.kind === "deduct") next.base = Number(next.ceiling);
     else if (next.kind === "add" || next.kind === "auto") next.base = 0;
@@ -274,12 +397,12 @@ export default function AppClient({ email }: { email: string }) {
   }
 
   async function addCriterion() {
-    const { data: me } = await supabase.auth.getUser();
+    if (!needsNetwork()) return;
     // كود داخلي ثابت لا يراه الأستاذ: علامات التلاميذ محفوظة به، فلو ربطناه
     // بالتسمية لضاعت العلامات عند أول تغيير للاسم.
     const code = `c${Math.random().toString(36).slice(2, 10)}`;
     const row = {
-      teacher_id: me.user?.id,
+      teacher_id: teacherId,
       code,
       label: "معيار جديد",
       kind: "add" as const,
@@ -301,6 +424,7 @@ export default function AppClient({ email }: { email: string }) {
   }
 
   async function deleteCriterion(c: Criterion) {
+    if (!needsNetwork()) return;
     setCriteria((cs) => cs.filter((x) => x.id !== c.id));
     setConfirmCriterion(null);
     const { error } = await supabase.from("criteria").delete().eq("id", c.id);
@@ -313,6 +437,7 @@ export default function AppClient({ email }: { email: string }) {
   }
 
   async function saveComponent(id: string, patch: Partial<Component>) {
+    if (!needsNetwork()) return;
     setComponents((cs) => cs.map((c) => (c.id === id ? { ...c, ...patch } : c)));
     const { error } = await supabase.from("components").update(patch).eq("id", id);
     if (error) {
@@ -321,35 +446,34 @@ export default function AppClient({ email }: { email: string }) {
     }
   }
 
-  async function updateStudent(id: string, patch: Partial<Student>) {
-    setStudents((ss) => ss.map((s) => (s.id === id ? { ...s, ...patch } : s)));
-    setOpenStudent((s) => (s && s.id === id ? { ...s, ...patch } : s));
-    const { error } = await supabase.from("students").update(patch).eq("id", id);
-    if (error) {
-      say("تعذّر الحفظ");
-      void load();
-    }
+  /** الاسم والحالة الخاصة يُكتبان في الحصة، فيمرّان بالطابور مثل العلامة. */
+  function updateStudent(id: string, patch: Partial<Student>) {
+    outbox.push(newOp("student", { student_id: id, patch }));
   }
 
   async function deleteStudent(student: Student) {
-    // العلامات والمحاولات تُحذف معه بـ on delete cascade، فالتأكيد ضروري.
-    setStudents((ss) => ss.filter((s) => s.id !== student.id));
+    if (!needsNetwork()) return;
     setConfirmStudent(null);
-    setOpenStudent(null);
+    setOpenStudentId(null);
     const { error } = await supabase.from("students").delete().eq("id", student.id);
     if (error) {
       say("تعذّر الحذف");
-      void load();
       return;
     }
-    setRecords((rs) => rs.filter((r) => r.student_id !== student.id));
-    setReadings((rs) => rs.filter((r) => r.student_id !== student.id));
+    // ما بقي له في الطابور لم يعد له مكان يصل إليه: صفّه بدل أن يتعثّر.
+    for (const op of queue) {
+      const owner =
+        op.kind === "reading-add" ? op.reading.student_id : op.student_id;
+      if (owner === student.id) outbox.discard(op.id);
+    }
+    setBaseStudents((ss) => ss.filter((s) => s.id !== student.id));
+    setBaseRecords((rs) => rs.filter((r) => r.student_id !== student.id));
+    setBaseReadings((rs) => rs.filter((r) => r.student_id !== student.id));
     say(`حُذف ${student.full_name}`);
   }
 
   async function createClassWithStudents(name: string, names: string[]) {
-    const { data: me } = await supabase.auth.getUser();
-    const teacherId = me.user?.id;
+    if (!needsNetwork()) return;
     const { data: created, error } = await supabase
       .from("classes")
       .insert({ teacher_id: teacherId, name, position: classes.length + 1 })
@@ -377,6 +501,7 @@ export default function AppClient({ email }: { email: string }) {
   }
 
   async function deleteClass(klass: Klass) {
+    if (!needsNetwork()) return;
     const { error } = await supabase.from("classes").delete().eq("id", klass.id);
     if (error) {
       say("تعذّر الحذف");
@@ -388,7 +513,17 @@ export default function AppClient({ email }: { email: string }) {
     await load();
   }
 
+  /**
+   * الخروج يمسح نسخة الجهاز وطابوره: الجهاز قد يكون مشتركًا بين أستاذين،
+   * فلا تبقى أقسام أحدهما وعلاماته بعد خروجه. وإن بقي شيء لم يُرسل، يُسأل
+   * أولًا — فالخروج يضيّعه.
+   */
   async function signOut() {
+    setConfirmSignOut(false);
+    await kvDel(`snapshot:${teacherId}`);
+    await kvDel(`queue:${teacherId}`);
+    outbox.reset();
+    navigator.serviceWorker?.controller?.postMessage({ type: "clear-cache" });
     await supabase.auth.signOut();
     router.push("/login");
     router.refresh();
@@ -403,6 +538,13 @@ export default function AppClient({ email }: { email: string }) {
             دفتر <span>التقويم</span>
           </div>
           <div className="hspace" />
+          <SyncBadge
+            waiting={waiting}
+            online={outbox.online}
+            sending={outbox.sending}
+            label={pendingLabel(queue)}
+            onClick={() => setShowPending(true)}
+          />
           <div className="terms" role="group" aria-label="الفصل">
             {[1, 2, 3].map((t) => (
               <button key={t} aria-pressed={term === t} onClick={() => setTerm(t)}>
@@ -416,9 +558,16 @@ export default function AppClient({ email }: { email: string }) {
 
       <main className="gut">
         <div className="wrap">
-          {error && (
+          {error && classes.length === 0 && (
             <div className="note bad" style={{ marginBottom: 14 }}>
               تعذّر الوصول إلى البيانات: {error}
+            </div>
+          )}
+
+          {cachedAt !== null && classes.length > 0 && (
+            <div className="note warn" style={{ marginBottom: 14 }}>
+              تعمل من نسخة هذا الجهاز ({since(cachedAt)}). التنقيط يُحفظ ويُرسل
+              عند عودة الشبكة.
             </div>
           )}
 
@@ -432,7 +581,7 @@ export default function AppClient({ email }: { email: string }) {
                 readingCount={(id) => readingsOf(id).length}
                 stats={statsOf(openClass)}
                 onBack={() => setOpenClass(null)}
-                onPick={setOpenStudent}
+                onPick={(s) => setOpenStudentId(s.id)}
                 onDelete={() => setConfirmDelete(classes.find((c) => c.id === openClass)!)}
               />
             ) : (
@@ -471,7 +620,7 @@ export default function AppClient({ email }: { email: string }) {
               onDeleteCriterion={setConfirmCriterion}
               onComponent={saveComponent}
               onImport={() => setImporting(true)}
-              onSignOut={signOut}
+              onSignOut={() => (waiting.total ? setConfirmSignOut(true) : void signOut())}
             />
           )}
         </div>
@@ -492,7 +641,7 @@ export default function AppClient({ email }: { email: string }) {
           record={recordOf(openStudent.id)}
           readings={readingsOf(openStudent.id)}
           components={components}
-          onClose={() => setOpenStudent(null)}
+          onClose={() => setOpenStudentId(null)}
           onCriterion={(code, value) => setCriterion(openStudent.id, code, value)}
           onMark={(field, value) => saveRecord(openStudent.id, { [field]: value } as Partial<RecordRow>)}
           onRemoveReading={removeReading}
@@ -535,6 +684,33 @@ export default function AppClient({ email }: { email: string }) {
           reads={readings.filter((r) => r.student_id === confirmStudent.id).length}
           onCancel={() => setConfirmStudent(null)}
           onConfirm={() => deleteStudent(confirmStudent)}
+        />
+      )}
+
+      {showPending && (
+        <PendingSheet
+          queue={queue}
+          waiting={waiting}
+          online={outbox.online}
+          sending={outbox.sending}
+          lastSyncedAt={outbox.lastSyncedAt}
+          nameOf={(id) => students.find((s) => s.id === id)?.full_name ?? "تلميذ محذوف"}
+          onClose={() => setShowPending(false)}
+          onFlush={outbox.flush}
+          onRetry={outbox.retry}
+          onDiscard={outbox.discard}
+        />
+      )}
+
+      {confirmSignOut && (
+        <ConfirmSignOutSheet
+          label={pendingLabel(queue)}
+          onCancel={() => setConfirmSignOut(false)}
+          onShow={() => {
+            setConfirmSignOut(false);
+            setShowPending(true);
+          }}
+          onConfirm={() => void signOut()}
         />
       )}
 
@@ -1258,6 +1434,210 @@ function ConfirmCriterionSheet({
           <button className="btn ghost" onClick={onCancel}>تراجع</button>
           <div className="hspace" />
           <button className="btn danger" onClick={onConfirm}>احذف المعيار</button>
+        </div>
+      </div>
+    </>
+  );
+}
+
+/* ================= الإرسال: المؤشّر وقائمة المعلّقات ================= */
+
+/** «منذ ثلاث دقائق» — الأستاذ يحتاج أن يعرف كم عمر ما يراه. */
+function since(at: number): string {
+  const minutes = Math.max(0, Math.round((Date.now() - at) / 60_000));
+  if (minutes < 1) return "قبل لحظات";
+  if (minutes < 60) return `منذ ${countWord(minutes, "دقيقة", "دقيقتين", "دقائق", "دقيقة")}`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `منذ ${countWord(hours, "ساعة", "ساعتين", "ساعات", "ساعة")}`;
+  return `منذ ${countWord(Math.round(hours / 24), "يوم", "يومين", "أيام", "يومًا")}`;
+}
+
+/**
+ * مؤشّر الإرسال في رأس الشاشة.
+ *
+ * لا يُعرض رقمٌ إلا إن كان هناك ما ينتظر فعلًا: الأستاذ في الحصة يحتاج أن
+ * يعرف بنظرة أن علاماته وصلت، لا أن يقرأ شريط حالة دائمًا.
+ */
+function SyncBadge({
+  waiting, online, sending, label, onClick,
+}: {
+  waiting: ReturnType<typeof pending>;
+  online: boolean;
+  sending: boolean;
+  label: string;
+  onClick: () => void;
+}) {
+  const tone = waiting.blocked ? "bad" : !online ? "off" : waiting.total ? "busy" : "ok";
+  const title = waiting.blocked
+    ? `${label} — منها ${waiting.blocked} متعثّرة`
+    : waiting.total
+      ? online
+        ? `${label} — جارٍ الإرسال`
+        : `${label} — ستُرسل عند عودة الشبكة`
+      : online
+        ? "كل ما أدخلته محفوظ في الخادم"
+        : "دون اتصال، ولا شيء ينتظر الإرسال";
+
+  return (
+    <button
+      className={`sync ${tone}${sending ? " busy-now" : ""}`}
+      onClick={onClick}
+      aria-label={title}
+      title={title}
+    >
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+        {tone === "ok" ? (
+          <path d="M20 6L9 17l-5-5" />
+        ) : tone === "off" ? (
+          <path d="M4 4l16 16M7 18h9a4 4 0 00.9-7.9A6 6 0 008 8.6" />
+        ) : tone === "bad" ? (
+          <path d="M12 8v5M12 16.5v.01M12 3l9 17H3z" />
+        ) : (
+          <path d="M12 16V8m0 0l-3 3m3-3l3 3M7 18h9a4 4 0 100-8 6 6 0 00-11.3 1.5A3.5 3.5 0 006 18h1" />
+        )}
+      </svg>
+      {waiting.total > 0 && <span className="num">{waiting.total}</span>}
+    </button>
+  );
+}
+
+function opWho(op: Op): string {
+  if (op.kind === "reading-add") return op.reading.student_id;
+  if (op.kind === "reading-del") return op.student_id;
+  return op.student_id;
+}
+
+function opWhat(op: Op): string {
+  switch (op.kind) {
+    case "record":
+      return `علامات الفصل ${op.term}`;
+    case "reading-add":
+      return `محاولة قراءة ${op.reading.score}`;
+    case "reading-del":
+      return "حذف محاولة قراءة";
+    case "student":
+      return "بيانات التلميذ";
+  }
+}
+
+/**
+ * قائمة ما لم يصل الخادم بعد: باسم التلميذ ووقت إدخاله.
+ *
+ * وجودها هو ما يجعل الطابور أمانًا لا صندوقًا أسود: الأستاذ يرى بعينه أن
+ * العشرين علامة لم تضع، ويقرّر في المتعثّر منها.
+ */
+function PendingSheet({
+  queue, waiting, online, sending, lastSyncedAt, nameOf,
+  onClose, onFlush, onRetry, onDiscard,
+}: {
+  queue: Op[];
+  waiting: ReturnType<typeof pending>;
+  online: boolean;
+  sending: boolean;
+  lastSyncedAt: number | null;
+  nameOf: (studentId: string) => string;
+  onClose: () => void;
+  onFlush: () => void;
+  onRetry: (id: string) => void;
+  onDiscard: (id: string) => void;
+}) {
+  return (
+    <>
+      <div className="scrim" onClick={onClose} />
+      <div className="sheet">
+        <div className="shead">
+          <h3>{waiting.total ? pendingLabel(queue) : "كل شيء محفوظ"}</h3>
+          <button className="icbtn" onClick={onClose} aria-label="إغلاق">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+              <path d="M6 6l12 12M18 6L6 18" />
+            </svg>
+          </button>
+        </div>
+
+        <p className="lead">
+          {!online
+            ? "لا اتصال الآن. ما أدخلته محفوظ في الجهاز ويُرسل وحده عند عودة الشبكة — ولو أُغلق التطبيق."
+            : sending
+              ? "جارٍ الإرسال…"
+              : waiting.total
+                ? "في الطريق إلى الخادم."
+                : lastSyncedAt
+                  ? `آخر إرسال ${since(lastSyncedAt)}.`
+                  : "لا شيء ينتظر الإرسال."}
+        </p>
+
+        {waiting.total > 0 && isDurable() === false && (
+          <div className="note warn">
+            هذا المتصفّح لا يسمح بالحفظ في الجهاز (نافذة خاصة غالبًا)، فما ينتظر
+            الإرسال يضيع بإغلاق التطبيق. أبقِه مفتوحًا حتى تعود الشبكة.
+          </div>
+        )}
+
+        {waiting.blocked > 0 && (
+          <div className="note bad">
+            {waiting.blocked} منها رفضها الخادم ولن تنجح بإعادة المحاولة وحدها —
+            غالبًا لأن التلميذ حُذف. راجعها أدناه.
+          </div>
+        )}
+
+        {queue.length > 0 && (
+          <div className="plist">
+            {queue.map((op) => (
+              <div key={op.id} className={op.blocked ? "prow bad" : "prow"}>
+                <div className="k">
+                  <b>{nameOf(opWho(op))}</b>
+                  <small>
+                    {opWhat(op)} · {since(op.at)}
+                  </small>
+                  {op.blocked && op.error && <small className="perr">{op.error}</small>}
+                </div>
+                {op.blocked ? (
+                  <div className="pacts">
+                    <button className="clearb" onClick={() => onRetry(op.id)}>أعد</button>
+                    <button className="clearb danger" onClick={() => onDiscard(op.id)}>تجاهل</button>
+                  </div>
+                ) : (
+                  <span className="pill">{op.tries > 0 ? `محاولة ${op.tries}` : "ينتظر"}</span>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {waiting.total > 0 && online && (
+          <button className="btn" style={{ marginTop: 14 }} onClick={onFlush} disabled={sending}>
+            {sending ? "جارٍ الإرسال…" : "أرسل الآن"}
+          </button>
+        )}
+      </div>
+    </>
+  );
+}
+
+function ConfirmSignOutSheet({
+  label, onCancel, onShow, onConfirm,
+}: {
+  label: string;
+  onCancel: () => void;
+  onShow: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <>
+      <div className="scrim" onClick={onCancel} />
+      <div className="sheet">
+        <div className="shead">
+          <h3>الخروج قبل الإرسال</h3>
+        </div>
+        <p className="lead">
+          {label} بعد. الخروج يمسح بيانات هذا الجهاز، فتضيع. انتظر عودة الشبكة
+          ثم اخرج.
+        </p>
+        <div className="srow2">
+          <button className="btn ghost" onClick={onCancel}>تراجع</button>
+          <div className="hspace" />
+          <button className="btn soft" onClick={onShow}>أرني</button>
+          <button className="btn danger" onClick={onConfirm}>اخرج وامسح</button>
         </div>
       </div>
     </>
