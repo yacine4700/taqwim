@@ -64,7 +64,7 @@ const STATE_TAGS = [
   "قليل المشاركة",
   "يحتاج تشجيعًا",
 ];
-type Tab = "classes" | "session" | "stats" | "settings";
+type Tab = "classes" | "session" | "stats" | "docs" | "settings";
 
 /** بيانات الأستاذ كما تُطبع في ترويسة الكشف. */
 type Profile = { full_name: string; subject: string | null; school_name: string | null };
@@ -644,6 +644,16 @@ export default function AppClient({
             <StatsView classes={classes} statsOf={statsOf} term={term} />
           )}
 
+          {tab === "docs" && (
+            <DocsView
+              classes={classes}
+              profile={profile}
+              onImport={() => setImporting(true)}
+              onExport={() => setExporting(true)}
+              onPrint={setPrinting}
+            />
+          )}
+
           {tab === "settings" && (
             <SettingsView
               criteria={criteria}
@@ -655,8 +665,6 @@ export default function AppClient({
               onComponent={saveComponent}
               onProfile={saveProfile}
               profile={profile}
-              onImport={() => setImporting(true)}
-              onExport={() => setExporting(true)}
               onSignOut={() => (waiting.total ? setConfirmSignOut(true) : void signOut())}
             />
           )}
@@ -1343,11 +1351,111 @@ function StatsView({
   );
 }
 
+/**
+ * الوثائق: كل ما له ملف في مكان واحد.
+ *
+ * كانت وثيقة حجز النقاط في الإعدادات والكشف مخبّأً في أسفل جدول القسم، وهذا
+ * خلط بين ما يُضبط مرة في السنة وما يُستعمل كل فصل. والأستاذ يبحث عن «وثيقة»
+ * لا عن «إعداد».
+ *
+ * والفرق بين الاثنتين مكتوب هنا لا في الذاكرة: الإكسل يُرسل إلى الإدارة
+ * بأربع خانات، والكشف يبقى عند الأستاذ بكل التفصيل.
+ */
+function DocsView({
+  classes, profile, onImport, onExport, onPrint,
+}: {
+  classes: Klass[];
+  profile: Profile;
+  onImport: () => void;
+  onExport: () => void;
+  onPrint: (classId: string) => void;
+}) {
+  const [forPrint, setForPrint] = useState("");
+  const chosen = forPrint || classes[0]?.id || "";
+  const ready = profile.school_name || profile.full_name;
+
+  return (
+    <section className="view">
+      <div className="vhead">
+        <div>
+          <h2>الوثائق</h2>
+          <p>ما يدخل التطبيق من ملفات وما يخرج منه.</p>
+        </div>
+      </div>
+
+      <div className="card doccard">
+        <div className="dochead">
+          <b>وثيقة حجز النقاط</b>
+          <span className="pill">إلى الإدارة</span>
+        </div>
+        <p>
+          ارفع الوثيقة التي نزّلتها، فتُملأ خانات أقسامك كلها دفعة واحدة —
+          التقويم المستمر والأعمال التطبيقية ومعدل الفروض والاختبار — وتعود
+          بترويساتها وتنسيقها كما كانت.
+        </p>
+        <button className="btn full" onClick={onExport} disabled={!classes.length}>
+          ارفع الوثيقة واملأها
+        </button>
+      </div>
+
+      <div className="card doccard">
+        <div className="dochead">
+          <b>كشف القسم</b>
+          <span className="pill">يبقى عندك</span>
+        </div>
+        <p>
+          ورقة A4 فيها القسم كله: كل معيار في عموده، والمعدل والرتبة والتقدير،
+          وإحصاء القسم وسطر الإمضاءين. تطبعها أو تحفظها PDF — للمداولات، أو
+          لتبيّن من أين جاءت النقطة.
+        </p>
+        {!classes.length ? (
+          <div className="note">استورد قسمًا أولًا.</div>
+        ) : (
+          <>
+            {!ready && (
+              <div className="note warn">
+                اكتب اسمك ومؤسستك في الإعدادات ليظهرا في ترويسة الكشف.
+              </div>
+            )}
+            <div className="pickbar">
+              <select
+                value={chosen}
+                aria-label="القسم"
+                onChange={(e) => setForPrint(e.target.value)}
+                style={{ flex: 1 }}
+              >
+                {classes.map((c) => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
+                ))}
+              </select>
+              <button className="btn" onClick={() => onPrint(chosen)}>
+                افتح الكشف
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+
+      <div className="card doccard">
+        <div className="dochead">
+          <b>استيراد قسم</b>
+          <span className="pill">إلى التطبيق</span>
+        </div>
+        <p>
+          من ملف الإشراف التربوي (xlsx) يُقرأ اسم القسم وأسماء تلاميذه، أو
+          الصق الأسماء سطرًا لكل تلميذ.
+        </p>
+        <button className="btn soft full" onClick={onImport}>استيراد قائمة</button>
+      </div>
+    </section>
+  );
+}
+
 const TP_PRESETS = ["الأعمال التطبيقية", "التعبير الشفوي"];
 
 function SettingsView({
   criteria, components, email, profile,
-  onCriterion, onAddCriterion, onDeleteCriterion, onComponent, onProfile, onImport, onExport, onSignOut,
+  onCriterion, onAddCriterion, onDeleteCriterion, onComponent, onProfile, onSignOut,
 }: {
   criteria: Criterion[];
   components: Component[];
@@ -1358,8 +1466,6 @@ function SettingsView({
   onDeleteCriterion: (c: Criterion) => void;
   onComponent: (id: string, patch: Partial<Component>) => void;
   onProfile: (patch: Partial<Profile>) => void;
-  onImport: () => void;
-  onExport: () => void;
   onSignOut: () => void;
 }) {
   const check = checkTotal(criteria);
@@ -1574,20 +1680,6 @@ function SettingsView({
       </div>
 
       <div className="card">
-        <div className="srow2">
-          <div className="k">
-            استيراد قسم
-            <small>ملف الإشراف التربوي أو لصق الأسماء</small>
-          </div>
-          <button className="btn soft" onClick={onImport}>استيراد</button>
-        </div>
-        <div className="srow2">
-          <div className="k">
-            ملء وثيقة حجز النقاط
-            <small>ارفع وثيقتك فتُملأ خاناتها بعلامات أقسامك</small>
-          </div>
-          <button className="btn soft" onClick={onExport}>ملء</button>
-        </div>
         <div className="srow2">
           <div className="k">
             الحساب
@@ -2341,6 +2433,7 @@ const TAB_ITEMS: Array<{ key: Tab; label: string; path: string }> = [
   { key: "classes", label: "الأقسام", path: "M4 6h16M4 12h16M4 18h10" },
   { key: "session", label: "الحصة", path: "M12 4v16M4 12h16" },
   { key: "stats", label: "الإحصاء", path: "M5 19V10M12 19V5M19 19v-6" },
+  { key: "docs", label: "الوثائق", path: "M7 3h7l4 4v14H7zM14 3v4h4M10 13h6M10 17h6" },
   { key: "settings", label: "الإعدادات", path: "M12 15a3 3 0 100-6 3 3 0 000 6zM4 12h2M18 12h2M12 4v2M12 18v2" },
 ];
 

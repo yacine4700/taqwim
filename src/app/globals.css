@@ -288,6 +288,13 @@ nav.tabs svg { width: 21px; height: 21px; }
 .authbox input { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 11px; }
 .authbox .swap { font-size: 13px; color: var(--primary); font-weight: 600; text-align: center; }
 
+/* بطاقة وثيقة: ما هي، وإلى أين تذهب، ثم زرّها */
+.doccard { padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+.dochead { display: flex; align-items: center; gap: 10px; }
+.dochead b { flex: 1; min-width: 0; font-size: 15px; font-weight: 600; }
+.doccard p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.75; }
+.doccard .btn.full { width: 100%; margin: 0; }
+
 /* كشف القسم: يُعرض على الشاشة كورقة، ويُطبع وحده دون بقية التطبيق */
 .printwrap { position: fixed; inset: 0; z-index: 80; background: var(--surface-2); overflow: auto; }
 .printbar {
