@@ -238,6 +238,15 @@ textarea.inp { width: 100%; min-height: 150px; resize: vertical; line-height: 1.
 @media (prefers-reduced-motion: reduce) {
   .sw i { transition: none; }
 }
+
+/* حالة التلميذ الخاصة: سطر تحت اسمه في القائمة، وحقل في بطاقته */
+.nbadge { display: block; font-size: 11px; font-weight: 500; color: var(--sand); overflow: hidden; text-overflow: ellipsis; }
+.elab { display: block; font-size: 13px; font-weight: 600; margin-bottom: 7px; }
+.elab small { display: block; font-weight: 400; color: var(--faint); font-size: 11px; margin-top: 2px; }
+textarea.note-in { min-height: 62px; }
+.sheet p.lead { margin: 0 0 14px; color: var(--muted); font-size: 13px; line-height: 1.8; }
+.icbtn.on { background: var(--primary-soft); color: var(--primary); }
+.btn.warn.full { margin: 11px 0 0; width: 100%; }
 .toast { position: fixed; inset-inline: 0; bottom: calc(76px + env(safe-area-inset-bottom, 0px)); z-index: 70; display: flex; justify-content: center; pointer-events: none; padding-inline: 16px; }
 .toast div { background: var(--ink); color: var(--bg); padding: 9px 16px; border-radius: 999px; font-size: 13px; font-weight: 500; box-shadow: var(--shadow); }
 

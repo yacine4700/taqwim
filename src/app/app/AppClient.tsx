@@ -22,7 +22,14 @@ import {
 } from "@/lib/scoring";
 
 type Klass = { id: string; name: string; position: number };
-type Student = { id: string; class_id: string; full_name: string; position: number };
+type Student = {
+  id: string;
+  class_id: string;
+  full_name: string;
+  position: number;
+  /** ملاحظة الأستاذ عن حالة التلميذ. لا تدخل أي حساب. */
+  note: string | null;
+};
 type Tab = "classes" | "session" | "stats" | "settings";
 
 export default function AppClient({ email }: { email: string }) {
@@ -44,6 +51,7 @@ export default function AppClient({ email }: { email: string }) {
   const [importing, setImporting] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<Klass | null>(null);
   const [confirmCriterion, setConfirmCriterion] = useState<Criterion | null>(null);
+  const [confirmStudent, setConfirmStudent] = useState<Student | null>(null);
   const [toast, setToast] = useState("");
 
   const say = useCallback((text: string) => {
@@ -54,7 +62,7 @@ export default function AppClient({ email }: { email: string }) {
   const load = useCallback(async () => {
     const [c, s, cr, cp, r, rd] = await Promise.all([
       supabase.from("classes").select("id,name,position").order("position"),
-      supabase.from("students").select("id,class_id,full_name,position").order("position"),
+      supabase.from("students").select("id,class_id,full_name,position,note").order("position"),
       supabase.from("criteria").select("id,code,label,kind,base,ceiling,position").order("position"),
       supabase.from("components").select("id,code,label,weight,position,active").order("position"),
       supabase.from("records").select("student_id,term,criteria,tp,devoir,exam"),
@@ -295,6 +303,32 @@ export default function AppClient({ email }: { email: string }) {
     }
   }
 
+  async function updateStudent(id: string, patch: Partial<Student>) {
+    setStudents((ss) => ss.map((s) => (s.id === id ? { ...s, ...patch } : s)));
+    setOpenStudent((s) => (s && s.id === id ? { ...s, ...patch } : s));
+    const { error } = await supabase.from("students").update(patch).eq("id", id);
+    if (error) {
+      say("تعذّر الحفظ");
+      void load();
+    }
+  }
+
+  async function deleteStudent(student: Student) {
+    // العلامات والمحاولات تُحذف معه بـ on delete cascade، فالتأكيد ضروري.
+    setStudents((ss) => ss.filter((s) => s.id !== student.id));
+    setConfirmStudent(null);
+    setOpenStudent(null);
+    const { error } = await supabase.from("students").delete().eq("id", student.id);
+    if (error) {
+      say("تعذّر الحذف");
+      void load();
+      return;
+    }
+    setRecords((rs) => rs.filter((r) => r.student_id !== student.id));
+    setReadings((rs) => rs.filter((r) => r.student_id !== student.id));
+    say(`حُذف ${student.full_name}`);
+  }
+
   async function createClassWithStudents(name: string, names: string[]) {
     const { data: me } = await supabase.auth.getUser();
     const teacherId = me.user?.id;
@@ -444,6 +478,8 @@ export default function AppClient({ email }: { email: string }) {
           onCriterion={(code, value) => setCriterion(openStudent.id, code, value)}
           onMark={(field, value) => saveRecord(openStudent.id, { [field]: value } as Partial<RecordRow>)}
           onRemoveReading={removeReading}
+          onEdit={(patch) => updateStudent(openStudent.id, patch)}
+          onDelete={() => setConfirmStudent(openStudent)}
         />
       )}
 
@@ -471,6 +507,16 @@ export default function AppClient({ email }: { email: string }) {
           criterion={confirmCriterion}
           onCancel={() => setConfirmCriterion(null)}
           onConfirm={() => deleteCriterion(confirmCriterion)}
+        />
+      )}
+
+      {confirmStudent && (
+        <ConfirmStudentSheet
+          student={confirmStudent}
+          marks={records.filter((r) => r.student_id === confirmStudent.id).length}
+          reads={readings.filter((r) => r.student_id === confirmStudent.id).length}
+          onCancel={() => setConfirmStudent(null)}
+          onConfirm={() => deleteStudent(confirmStudent)}
         />
       )}
 
@@ -589,7 +635,12 @@ function ClassView({
           {rows.map(({ student, average }) => (
             <button key={student.id} className="srow" onClick={() => onPick(student)}>
               <span className="rank num">{average === null ? "–" : rank.get(student.id)}</span>
-              <span className="sname">{student.full_name}</span>
+              <span className="sname">
+                {student.full_name}
+                {student.note && (
+                  <small className="nbadge" title={student.note}>{student.note}</small>
+                )}
+              </span>
               <span className="sreads">{readingCount(student.id) ? `${readingCount(student.id)}×` : ""}</span>
               <span className={`savg num${average === null ? " none" : average < 10 ? " low" : ""}`}>
                 {fmt(average)}
@@ -1041,6 +1092,38 @@ function SettingsView({
   );
 }
 
+function ConfirmStudentSheet({
+  student, marks, reads, onCancel, onConfirm,
+}: {
+  student: Student;
+  marks: number;
+  reads: number;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const has = marks > 0 || reads > 0;
+  return (
+    <>
+      <div className="scrim" onClick={onCancel} />
+      <div className="sheet">
+        <div className="shead">
+          <h3>حذف {student.full_name}</h3>
+        </div>
+        <p className="lead">
+          {has
+            ? `معه ${marks} سجل علامات و${reads} محاولة قراءة، وتُحذف معه في الفصول الثلاثة. لا رجعة في هذا.`
+            : "ليست معه علامات مسجَّلة. يُحذف من القسم في الفصول الثلاثة."}
+        </p>
+        <div className="srow2">
+          <button className="btn ghost" onClick={onCancel}>تراجع</button>
+          <div className="hspace" />
+          <button className="btn danger" onClick={onConfirm}>احذف التلميذ</button>
+        </div>
+      </div>
+    </>
+  );
+}
+
 function ConfirmCriterionSheet({
   criterion, onCancel, onConfirm,
 }: {
@@ -1072,7 +1155,8 @@ function ConfirmCriterionSheet({
 /* ================= sheets ================= */
 
 function StudentSheet({
-  student, criteria, record, readings, components, onClose, onCriterion, onMark, onRemoveReading,
+  student, criteria, record, readings, components,
+  onClose, onCriterion, onMark, onRemoveReading, onEdit, onDelete,
 }: {
   student: Student;
   criteria: Criterion[];
@@ -1083,7 +1167,10 @@ function StudentSheet({
   onCriterion: (code: string, value: number | null) => void;
   onMark: (field: MarkField, value: number | null) => void;
   onRemoveReading: (id: string) => void;
+  onEdit: (patch: Partial<Student>) => void;
+  onDelete: () => void;
 }) {
+  const [edit, setEdit] = useState(false);
   const cc = continuousMark(criteria, record, readings);
   const average = termAverage(components, componentValues(criteria, record, readings));
   const ccLabel = components.find((c) => c.code === "cc")?.label ?? "التقويم المستمر";
@@ -1097,11 +1184,57 @@ function StudentSheet({
       <div className="sheet">
         <div className="shead">
           <h3>{student.full_name}</h3>
+          <button
+            className={edit ? "icbtn on" : "icbtn"}
+            aria-pressed={edit}
+            onClick={() => setEdit(!edit)}
+            aria-label="تعديل بيانات التلميذ"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M4 20h4l10-10-4-4L4 16v4zM14 6l4 4" />
+            </svg>
+          </button>
           <button className="icbtn" onClick={onClose} aria-label="إغلاق">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
               <path d="M6 6l12 12M18 6L6 18" />
             </svg>
           </button>
+        </div>
+
+        {edit ? (
+          <div className="fld">
+            <label className="elab" htmlFor={`name-${student.id}`}>الاسم واللقب</label>
+            <input
+              className="cname"
+              id={`name-${student.id}`}
+              defaultValue={student.full_name}
+              onBlur={(e) => {
+                const text = e.target.value.trim();
+                if (text && text !== student.full_name) onEdit({ full_name: text });
+                else e.target.value = student.full_name;
+              }}
+            />
+            <button className="btn warn full" onClick={onDelete}>حذف التلميذ من القسم</button>
+          </div>
+        ) : null}
+
+        <div className="fld">
+          <label className="elab" htmlFor={`note-${student.id}`}>
+            حالة خاصة
+            <small>لك وحدك، لتتذكّرها. لا تدخل أي حساب ولا تظهر في المعدلات.</small>
+          </label>
+          <textarea
+            className="inp note-in"
+            id={`note-${student.id}`}
+            rows={2}
+            placeholder="مثلًا: يجلس في الأمام · كثير الغياب يوم الأحد · لا يملك الكتاب"
+            defaultValue={student.note ?? ""}
+            onBlur={(e) => {
+              const text = e.target.value.trim();
+              const next = text === "" ? null : text;
+              if (next !== (student.note ?? null)) onEdit({ note: next });
+            }}
+          />
         </div>
 
         {criteria.map((c) => {
