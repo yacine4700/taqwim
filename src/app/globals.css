@@ -241,6 +241,20 @@ textarea.inp { width: 100%; min-height: 150px; resize: vertical; line-height: 1.
 
 /* حالة التلميذ الخاصة: سطر تحت اسمه في القائمة، وحقل في بطاقته */
 .nbadge { display: block; font-size: 11px; font-weight: 500; color: var(--sand); overflow: hidden; text-overflow: ellipsis; }
+/* عدّاد المعيار: ناقص وزائد ورقم بينهما، كبير بما يكفي لحصة قائمة */
+.counter { display: flex; align-items: center; gap: 10px; }
+.cbtn {
+  width: 42px; height: 42px; flex: none; border-radius: 50%;
+  background: var(--primary-soft); color: var(--primary);
+  font-size: 22px; font-weight: 600; line-height: 1;
+  display: grid; place-items: center;
+}
+.cbtn:disabled { background: var(--surface-2); color: var(--faint); cursor: default; }
+.cval { display: flex; align-items: baseline; gap: 4px; min-width: 76px; justify-content: center; }
+.cval b { font-size: 21px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.cval i { font-size: 12px; font-style: normal; color: var(--faint); font-variant-numeric: tabular-nums; }
+.clearb { font-size: 12px; font-weight: 600; color: var(--muted); padding: 7px 11px; border-radius: 999px; background: var(--surface-2); }
+
 .chips.tagrow { margin-bottom: 9px; }
 .chips.tagrow button { font-size: 12px; padding: 6px 11px; color: var(--muted); }
 .chips.tagrow button[aria-pressed="true"] { background: var(--sand); color: #fff; border-color: var(--sand); }

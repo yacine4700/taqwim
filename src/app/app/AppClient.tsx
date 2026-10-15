@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import {
   checkTotal,
+  clamp,
   classStats,
   componentValues,
   continuousMark,
@@ -13,6 +14,7 @@ import {
   optionsFor,
   pickForSession,
   readingAverage,
+  stepFor,
   termAverage,
   type Component,
   type Criterion,
@@ -1115,6 +1117,93 @@ function SettingsView({
   );
 }
 
+/**
+ * عدّاد معيار واحد: ناقص وزائد ورقم بينهما يقول أين وصلت علامة التلميذ.
+ *
+ * الفرق بين «صفر» و«لم يُقيَّم» محفوظ لأن الحساب كله يقوم عليه:
+ * - معيار الخصم يبدأ من العلامة الكاملة ويُحسب دائمًا، فالعدّاد يبدأ ممتلئًا.
+ * - معيار الإضافة يبدأ غير مقيَّم فيظهر «—» ويخرج من القسمة؛ أول ضغطة على
+ *   زائد تجعله مقيَّمًا. و«مسح» يعيده إلى غير مقيَّم، لا إلى صفر.
+ */
+function CriterionCounter({
+  criterion, record, onChange,
+}: {
+  criterion: Criterion;
+  record: RecordRow | undefined;
+  onChange: (value: number | null) => void;
+}) {
+  const ceiling = Number(criterion.ceiling);
+  const base = Number(criterion.base);
+  const step = stepFor(criterion);
+  const isDeduct = criterion.kind === "deduct";
+
+  const stored = record?.criteria?.[criterion.code];
+  const value = typeof stored === "number" ? stored : null;
+  const assessed = value !== null;
+
+  const shown = isDeduct
+    ? clamp(base + (value ?? 0), 0, ceiling)
+    : assessed
+      ? clamp(value, 0, ceiling)
+      : null;
+
+  function bump(delta: number) {
+    if (isDeduct) {
+      const next = clamp((shown ?? ceiling) + delta, 0, ceiling);
+      onChange(Number((next - base).toFixed(2)));
+      return;
+    }
+    if (!assessed && delta < 0) return;
+    const next = clamp((shown ?? 0) + delta, 0, ceiling);
+    onChange(Number(next.toFixed(2)));
+  }
+
+  // عند الصفر لا ينزل أكثر: «مسح» هو طريق الرجوع إلى «لم يُقيَّم».
+  const atFloor = isDeduct ? shown === 0 : !assessed || shown === 0;
+  const atRoof = (shown ?? 0) >= ceiling && (isDeduct || assessed);
+
+  return (
+    <div className="fld">
+      <div className="flab">
+        <b>{criterion.label}</b>
+        <small>
+          {isDeduct
+            ? "يبدأ كاملًا ويُخصم منه"
+            : assessed
+              ? "مقيَّم"
+              : "لم يُقيَّم — خارج الحساب"}
+        </small>
+      </div>
+      <div className="counter">
+        <button
+          className="cbtn"
+          onClick={() => bump(-step)}
+          disabled={atFloor}
+          aria-label={`أنقص ${step}`}
+        >
+          −
+        </button>
+        <span className="cval">
+          <b className="num">{shown === null ? "—" : fmt(shown, shown % 1 ? 1 : 0)}</b>
+          <i className="num">/ {ceiling}</i>
+        </span>
+        <button
+          className="cbtn"
+          onClick={() => bump(step)}
+          disabled={atRoof}
+          aria-label={`أضف ${step}`}
+        >
+          +
+        </button>
+        <div className="hspace" />
+        {assessed && (
+          <button className="clearb" onClick={() => onChange(null)}>مسح</button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function ConfirmStudentSheet({
   student, marks, reads, onCancel, onConfirm,
 }: {
@@ -1303,35 +1392,13 @@ function StudentSheet({
               </div>
             );
           }
-          const current = record?.criteria?.[c.code];
-          const value = typeof current === "number" ? current : null;
-          const shown = c.kind === "deduct"
-            ? Math.max(0, Math.min(Number(c.ceiling), Number(c.base) + (value ?? 0)))
-            : value;
-          const options = optionsFor(c);
           return (
-            <div key={c.id} className="fld">
-              <div className="flab">
-                <b>{c.label}</b>
-                <small>{c.kind === "deduct" ? `الفارغ = ${c.base} كاملة` : `من 0 إلى ${c.ceiling}`}</small>
-                <i>{shown === null ? "—" : `${fmt(shown, 1)} / ${c.ceiling}`}</i>
-              </div>
-              <div className="chips">
-                {options.map((n) => (
-                  <button
-                    key={n}
-                    className={c.kind === "deduct" && n < 0 ? "neg" : undefined}
-                    aria-pressed={value === n}
-                    onClick={() => onCriterion(c.code, value === n ? null : n)}
-                  >
-                    {c.kind === "deduct" ? (n === 0 ? "كاملة" : n) : n}
-                  </button>
-                ))}
-                {value !== null && (
-                  <button onClick={() => onCriterion(c.code, null)}>مسح</button>
-                )}
-              </div>
-            </div>
+            <CriterionCounter
+              key={c.id}
+              criterion={c}
+              record={record}
+              onChange={(value) => onCriterion(c.code, value)}
+            />
           );
         })}
 

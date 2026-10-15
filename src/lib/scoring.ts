@@ -268,15 +268,26 @@ function trim(value: number): string {
   return Number(value.toFixed(2)).toString();
 }
 
+/** خطوة العدّاد: تكبر مع السقف حتى لا يطول الضغط على الزرّ. */
+export function stepFor(criterion: Pick<Criterion, "ceiling">): number {
+  const span = Number(criterion.ceiling);
+  if (!Number.isFinite(span) || span <= 0) return 0.5;
+  return span <= 5 ? 0.5 : span <= 10 ? 1 : 2;
+}
+
+export function clamp(value: number, low: number, high: number): number {
+  return Math.max(low, Math.min(high, value));
+}
+
 /**
  * خيارات التنقيط لمعيار واحد، مولَّدة من سقفه لا من قائمة ثابتة:
  * معيار الخصم يعطي 0 ثم قيمًا سالبة حتى −السقف، ومعيار الإضافة من 0 إلى السقف.
- * الخطوة تكبر مع السقف حتى لا تمتلئ الشاشة بأزرار.
+ * تُستعمل الآن في سلّم محاولات القراءة في الحصة.
  */
 export function optionsFor(criterion: Criterion): number[] {
   const span = Number(criterion.ceiling);
   if (!Number.isFinite(span) || span <= 0) return [0];
-  const step = span <= 5 ? 0.5 : span <= 10 ? 1 : 2;
+  const step = stepFor(criterion);
   const out: number[] = [];
   for (let v = 0; v <= span + 1e-9; v += step) out.push(Number(v.toFixed(2)));
   if (out[out.length - 1] !== span) out.push(span);
