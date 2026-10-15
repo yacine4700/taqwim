@@ -173,6 +173,24 @@ t("التشكيل يسقط", normalizeName("مُحَمَّد"), "محمد");
 t("التطويل يسقط", normalizeName("محـــمد"), "محمد");
 t("المسافات تُجمع", normalizeName("  بن   عامر  "), "بن عامر");
 
+/* نسخة حرفية من nameMatches في src/lib/names.ts — بحث الأستاذ عن تلميذ */
+function nameMatches(name, query) {
+  const target = normalizeName(name);
+  const words = normalizeName(query).split(" ").filter(Boolean);
+  if (!words.length) return true;
+  return words.every((word) => target.includes(word));
+}
+
+console.log("\n3ب. البحث عن تلميذ: يتذكّر الأستاذ الاسم أو اللقب لا ترتيبهما");
+t("كلمة واحدة من اللقب", nameMatches("بن عمر أمين", "عمر"), true);
+t("كلمة من الاسم", nameMatches("بن عمر أمين", "أمين"), true);
+t("بترتيب مقلوب", nameMatches("بن عمر أمين", "أمين عمر"), true);
+t("بلا همزات", nameMatches("أولاد إبراهيم راضية", "اولاد ابراهيم"), true);
+t("جزء من كلمة", nameMatches("بوحميدة فاطمة", "حميد"), true);
+t("خانة فارغة تُظهر الجميع", nameMatches("أي أحد", "   "), true);
+t("ما لا يطابق", nameMatches("بن عمر أمين", "خالد"), false);
+t("كلمة تطابق وأخرى لا", nameMatches("بن عمر أمين", "عمر خالد"), false);
+
 console.log("\n4. المطابقة: ولا علامة في سطر غير صاحبها");
 const sheetRows = [row(9, "أولاد إبراهيم", "راضية"), row(10, "العيورات", "سلسبيل"), row(11, "بن عامر", "فردوس")];
 let m = matchStudents(

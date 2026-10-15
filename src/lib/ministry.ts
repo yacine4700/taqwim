@@ -19,6 +19,7 @@
  * وأخرى 01/03/09 بلا أعمال تطبيقية — فتُقرأ من السطر 7 ولا تُفترض أبدًا.
  */
 
+import { normalizeName } from "./names";
 import { cellAt, columnName, readRows, setNumber, sharedStrings, type Row } from "./sheetxml";
 import { entryText, readZip, textEntry, writeZip, type ZipEntry } from "./zip";
 
@@ -189,24 +190,6 @@ export async function readMinistryFile(bytes: Uint8Array): Promise<MinistryDoc> 
 }
 
 /* ---------- مطابقة الأسماء ---------- */
-
-/**
- * توحيد الاسم قبل المقارنة: الهمزات والألف المقصورة والتاء المربوطة تُكتب
- * بأشكال مختلفة في الملفّين لنفس التلميذ، فلو قورنت حرفيًا لسقط نصف القسم.
- */
-export function normalizeName(text: string): string {
-  return text
-    .normalize("NFKC")
-    .replace(/[ً-ْٰـ]/g, "")
-    .replace(/[أإآٱ]/g, "ا")
-    .replace(/ى/g, "ي")
-    .replace(/ئ/g, "ي")
-    .replace(/ؤ/g, "و")
-    .replace(/ة/g, "ه")
-    .replace(/[^\p{L}\p{N} ]/gu, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
 
 /** مفتاح أرخى: يُسقط «ال» من أوّل كل كلمة، فيلتقي «العيورات» و«عيورات». */
 function loose(text: string): string {

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { isDurable, kvDel, kvGet, kvSet } from "@/lib/localdb";
+import { nameMatches } from "@/lib/names";
 import ExportSheet from "./ExportSheet";
 import PrintView from "./PrintView";
 import { useOutbox } from "@/lib/useOutbox";
@@ -156,6 +157,13 @@ export default function AppClient({
     [students, openStudentId],
   );
 
+  /** جيران التلميذ المفتوح في قسمه: للانتقال دون إغلاق البطاقة وفتح أخرى. */
+  const neighbours = useMemo(() => {
+    if (!openStudent) return { list: [] as Student[], index: -1 };
+    const list = students.filter((s) => s.class_id === openStudent.class_id);
+    return { list, index: list.findIndex((s) => s.id === openStudent.id) };
+  }, [students, openStudent]);
+
   /** عملٌ يحتاج الخادم: إنشاء، حذف، تغيير إعدادات. التنقيط وحده يعمل دون شبكة. */
   const needsNetwork = useCallback(() => {
     if (outbox.online) return true;
@@ -231,6 +239,34 @@ export default function AppClient({
       alive = false;
     };
   }, [snapKey, load]);
+
+  /*
+   * يفتح التطبيق حيث تركه الأستاذ: التبويب والفصل والقسم المفتوح.
+   * الحصة تُستأنف بعد انقطاع — رنّة، سؤال تلميذ، قفل الشاشة — والبدء من
+   * قائمة الأقسام في كل مرة يعني ثلاث لمسات قبل أول علامة.
+   */
+  const whereKey = `where:${teacherId}`;
+  const restoredRef = useRef(false);
+
+  useEffect(() => {
+    if (restoredRef.current || !classes.length) return;
+    restoredRef.current = true;
+    void (async () => {
+      const saved = await kvGet<{ tab: Tab; term: number; openClass: string | null }>(whereKey);
+      if (!saved) return;
+      if (saved.term >= 1 && saved.term <= 3) setTerm(saved.term);
+      if (saved.tab) setTab(saved.tab);
+      // القسم قد يكون حُذف من جهاز آخر، فلا يُفتح إلا إن كان ما يزال موجودًا.
+      if (saved.openClass && classes.some((c) => c.id === saved.openClass)) {
+        setOpenClass(saved.openClass);
+      }
+    })();
+  }, [classes, whereKey]);
+
+  useEffect(() => {
+    if (!restoredRef.current) return;
+    void kvSet(whereKey, { tab, term, openClass });
+  }, [tab, term, openClass, whereKey]);
 
   /* عودة الشبكة: أعد القراءة من الخادم مرة واحدة، لا عند كل تبدّل حالة */
   const onlineRef = useRef(true);
@@ -701,6 +737,12 @@ export default function AppClient({
           onRemoveReading={removeReading}
           onEdit={(patch) => updateStudent(openStudent.id, patch)}
           onDelete={() => setConfirmStudent(openStudent)}
+          position={neighbours.index + 1}
+          count={neighbours.list.length}
+          onStep={(step) => {
+            const next = neighbours.list[neighbours.index + step];
+            if (next) setOpenStudentId(next.id);
+          }}
         />
       )}
 
@@ -898,9 +940,14 @@ function ClassView({
 }) {
   /** العمود المفتوح: `c:` معيار و`m:` مركّبة. فارغ = جدول المعدلات المعتاد. */
   const [column, setColumn] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
 
-  const rows = students.map((s) => ({ student: s, average: averageOf(s.id) }));
-  const ranked = [...rows]
+  // الترتيب والرتبة يُحسبان على القسم كله، فالبحث يُخفي سطورًا ولا يغيّر رتبة.
+  const rows = students
+    .filter((s) => nameMatches(s.full_name, query))
+    .map((s) => ({ student: s, average: averageOf(s.id) }));
+  const ranked = students
+    .map((s) => ({ student: s, average: averageOf(s.id) }))
     .filter((r) => r.average !== null)
     .sort((a, b) => (b.average ?? 0) - (a.average ?? 0));
   const rank = new Map(ranked.map((r, i) => [r.student.id, i + 1]));
@@ -966,10 +1013,36 @@ function ClassView({
         </div>
       )}
 
+      {students.length > 8 && (
+        <div className="search">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+            <circle cx="11" cy="11" r="7" />
+            <path d="M20 20l-4-4" />
+          </svg>
+          <input
+            id="class-search"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="ابحث عن تلميذ"
+            aria-label="ابحث عن تلميذ"
+          />
+          {query && (
+            <button className="clearb" onClick={() => setQuery("")} aria-label="امسح البحث">
+              ×
+            </button>
+          )}
+        </div>
+      )}
+
       {students.length === 0 ? (
         <div className="card empty">
           <h3>القسم بلا تلاميذ</h3>
           <p>استورد قائمة الأسماء من تبويب الأقسام.</p>
+        </div>
+      ) : rows.length === 0 ? (
+        <div className="card empty">
+          <h3>لا اسم يطابق «{query}»</h3>
+          <button className="btn soft" onClick={() => setQuery("")}>أظهر القسم كله</button>
         </div>
       ) : (
         <div className="slist">
@@ -2040,6 +2113,7 @@ function ConfirmSignOutSheet({
 function StudentSheet({
   student, criteria, record, readings, components,
   onClose, onCriterion, onMark, onRemoveReading, onEdit, onDelete,
+  position, count, onStep,
 }: {
   student: Student;
   criteria: Criterion[];
@@ -2052,6 +2126,10 @@ function StudentSheet({
   onRemoveReading: (id: string) => void;
   onEdit: (patch: Partial<Student>) => void;
   onDelete: () => void;
+  /** موضعه في القسم وعدد تلاميذه، للتنقّل دون إغلاق البطاقة. */
+  position: number;
+  count: number;
+  onStep: (step: number) => void;
 }) {
   const [edit, setEdit] = useState(false);
   const tags = student.tags ?? [];
@@ -2068,6 +2146,26 @@ function StudentSheet({
       <div className="sheet">
         <div className="shead">
           <h3>{student.full_name}</h3>
+          {/* تنقّل داخل القسم: تنقيط عشرة تلاميذ كان عشر فتحات وإغلاقات */}
+          {count > 1 && (
+            <div className="stepper" role="group" aria-label="تلميذ آخر">
+              <button
+                onClick={() => onStep(-1)}
+                disabled={position <= 1}
+                aria-label="التلميذ السابق"
+              >
+                ›
+              </button>
+              <span className="num">{position}/{count}</span>
+              <button
+                onClick={() => onStep(1)}
+                disabled={position >= count}
+                aria-label="التلميذ التالي"
+              >
+                ‹
+              </button>
+            </div>
+          )}
           <button
             className={edit ? "icbtn on" : "icbtn"}
             aria-pressed={edit}

@@ -289,6 +289,22 @@ nav.tabs svg { width: 21px; height: 21px; }
 .authbox input { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 11px; }
 .authbox .swap { font-size: 13px; color: var(--primary); font-weight: 600; text-align: center; }
 
+/* البحث عن تلميذ: في قسم من 36 اسمًا، التمرير بحثًا عن اسم يطيل الحصة */
+.search {
+  display: flex; align-items: center; gap: 8px;
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--radius-sm); padding: 0 11px;
+}
+.search svg { width: 17px; height: 17px; color: var(--faint); flex: none; }
+.search input { flex: 1; min-width: 0; border: 0; background: none; padding: 10px 0; outline: none; }
+.search .clearb { padding: 4px 10px; font-size: 16px; line-height: 1; }
+
+/* التنقّل بين التلاميذ من داخل البطاقة */
+.stepper { display: flex; align-items: center; gap: 2px; flex: none; background: var(--surface-2); border-radius: 999px; padding: 2px; }
+.stepper button { width: 30px; height: 30px; border-radius: 50%; font-size: 19px; line-height: 1; color: var(--primary); }
+.stepper button:disabled { color: var(--faint); cursor: default; }
+.stepper span { font-size: 11px; color: var(--muted); padding-inline: 4px; font-variant-numeric: tabular-nums; }
+
 /* بطاقة وثيقة: ما هي، وإلى أين تذهب، ثم زرّها */
 .doccard { padding: 14px; display: flex; flex-direction: column; gap: 10px; }
 .dochead { display: flex; align-items: center; gap: 10px; }
