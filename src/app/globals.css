@@ -93,7 +93,8 @@ header {
   border-bottom: 1px solid var(--line);
 }
 .hwrap { display: flex; align-items: center; gap: 12px; padding-block: 10px; min-height: 54px; }
-.brand { font-size: 17px; font-weight: 700; }
+.brand { font-size: 17px; font-weight: 700; padding: 4px 6px; margin-inline-start: -6px; border-radius: var(--radius-sm); flex: none; }
+.brand:hover { background: var(--surface-2); }
 .brand span { color: var(--primary); }
 .hspace { flex: 1; }
 .terms { display: flex; background: var(--surface-2); border-radius: 999px; padding: 3px; gap: 2px; }

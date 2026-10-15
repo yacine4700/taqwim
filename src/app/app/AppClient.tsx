@@ -560,9 +560,18 @@ export default function AppClient({
     <div className="shell">
       <header className="gut">
         <div className="hwrap wrap">
-          <div className="brand">
+          {/* اسم التطبيق طريق الرجوع: من أيّ تبويب أو بطاقة قسم إلى الأقسام */}
+          <button
+            className="brand"
+            aria-label="العودة إلى الأقسام"
+            onClick={() => {
+              setTab("classes");
+              setOpenClass(null);
+              setOpenStudentId(null);
+            }}
+          >
             دفتر <span>التقويم</span>
-          </div>
+          </button>
           <div className="hspace" />
           <SyncBadge
             waiting={waiting}
