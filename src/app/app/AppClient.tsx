@@ -657,7 +657,6 @@ export default function AppClient({
                 onBack={() => setOpenClass(null)}
                 onPick={(s) => setOpenStudentId(s.id)}
                 onDelete={() => setConfirmDelete(classes.find((c) => c.id === openClass)!)}
-                onPrint={() => setPrinting(openClass)}
                 onCriterion={setCriterion}
                 onMark={(studentId, field, value) =>
                   saveRecord(studentId, { [field]: value } as Partial<RecordRow>)
@@ -920,7 +919,7 @@ function state(student: Student): string {
 function ClassView({
   klass, students, term, criteria, components, recordOf,
   averageOf, readingCount, stats,
-  onBack, onPick, onDelete, onPrint, onCriterion, onMark,
+  onBack, onPick, onDelete, onCriterion, onMark,
 }: {
   klass: Klass;
   students: Student[];
@@ -934,18 +933,14 @@ function ClassView({
   onBack: () => void;
   onPick: (s: Student) => void;
   onDelete: () => void;
-  onPrint: () => void;
   onCriterion: (studentId: string, code: string, value: number | null) => void;
   onMark: (studentId: string, field: MarkField, value: number | null) => void;
 }) {
   /** العمود المفتوح: `c:` معيار و`m:` مركّبة. فارغ = جدول المعدلات المعتاد. */
   const [column, setColumn] = useState<string | null>(null);
   const [query, setQuery] = useState("");
+  const [filter, setFilter] = useState<"all" | "todo" | "low">("all");
 
-  // الترتيب والرتبة يُحسبان على القسم كله، فالبحث يُخفي سطورًا ولا يغيّر رتبة.
-  const rows = students
-    .filter((s) => nameMatches(s.full_name, query))
-    .map((s) => ({ student: s, average: averageOf(s.id) }));
   const ranked = students
     .map((s) => ({ student: s, average: averageOf(s.id) }))
     .filter((r) => r.average !== null)
@@ -967,14 +962,34 @@ function ClassView({
     ? (open.key.slice(2) as MarkField)
     : null;
 
-  /** كم تلميذًا فيه إدخال صريح في هذا العمود. */
-  const filled = !open
-    ? 0
-    : students.filter((s) => {
-        const record = recordOf(s.id);
-        if (openCriterion) return typeof record?.criteria?.[openCriterion.code] === "number";
-        return openMark ? record?.[openMark] !== null && record?.[openMark] !== undefined : false;
-      }).length;
+  /**
+   * «أين وقفت؟» هو سؤال كل حصة. والجواب يختلف بالسياق: في وضع العمود هو من
+   * لم يُدخَل له شيء في هذا العمود، وفي الجدول العادي من لا علامة له أصلًا.
+   */
+  const waiting = (student: Student) => {
+    const record = recordOf(student.id);
+    if (openCriterion) return typeof record?.criteria?.[openCriterion.code] !== "number";
+    if (openMark) return record?.[openMark] === null || record?.[openMark] === undefined;
+    return averageOf(student.id) === null;
+  };
+
+  const todo = students.filter(waiting).length;
+  const filled = students.length - todo;
+  const low = students.filter((s) => {
+    const average = averageOf(s.id);
+    return average !== null && average < 10;
+  }).length;
+
+  // الترتيب والرتبة يُحسبان على القسم كله، فالتصفية تُخفي سطورًا ولا تغيّر رتبة.
+  const rows = students
+    .filter((s) => nameMatches(s.full_name, query))
+    .filter((s) => (filter === "todo" ? waiting(s) : true))
+    .filter((s) => {
+      if (filter !== "low") return true;
+      const average = averageOf(s.id);
+      return average !== null && average < 10;
+    })
+    .map((s) => ({ student: s, average: averageOf(s.id) }));
 
   return (
     <section className="view">
@@ -988,7 +1003,7 @@ function ClassView({
           <h2>{klass.name}</h2>
           <p>
             {open
-              ? `${open.label} · أدخلتَ لـ ${filled} من ${students.length}`
+              ? `تنقّط عمود ${open.label}`
               : `الفصل ${term} · معدل القسم ${fmt(stats.mean)}`}
           </p>
         </div>
@@ -1004,12 +1019,50 @@ function ClassView({
               <button
                 key={c.key}
                 aria-pressed={column === c.key}
-                onClick={() => setColumn(column === c.key ? null : c.key)}
+                onClick={() => {
+                  setColumn(column === c.key ? null : c.key);
+                  setFilter("all");
+                }}
               >
                 {c.label}
               </button>
             ))}
           </div>
+        </div>
+      )}
+
+      {/* عدّاد التقدّم وتصفيته في زرّ واحد: الرقم يقول أين وقفت، والضغط
+          يُظهر الباقين وحدهم فلا يُبحث عنهم بالنظر في ستّة وثلاثين سطرًا. */}
+      {students.length > 0 && (
+        <div className="filterbar">
+          <div className="chips">
+            <button aria-pressed={filter === "all"} onClick={() => setFilter("all")}>
+              الكل
+            </button>
+            <button
+              aria-pressed={filter === "todo"}
+              onClick={() => setFilter(filter === "todo" ? "all" : "todo")}
+              disabled={todo === 0}
+            >
+              {open ? "بلا إدخال" : "بلا علامة"} {todo}
+            </button>
+            {!open && (
+              <button
+                aria-pressed={filter === "low"}
+                onClick={() => setFilter(filter === "low" ? "all" : "low")}
+                disabled={low === 0}
+              >
+                تحت 10 · {low}
+              </button>
+            )}
+          </div>
+          <div className="hspace" />
+          <span
+            className={todo === 0 ? "pill ok" : "pill"}
+            title={open ? `أدخلتَ لـ ${filled} من ${students.length}` : `نُقِّط ${filled} من ${students.length}`}
+          >
+            {filled}/{students.length}
+          </span>
         </div>
       )}
 
@@ -1041,8 +1094,22 @@ function ClassView({
         </div>
       ) : rows.length === 0 ? (
         <div className="card empty">
-          <h3>لا اسم يطابق «{query}»</h3>
-          <button className="btn soft" onClick={() => setQuery("")}>أظهر القسم كله</button>
+          <h3>
+            {query
+              ? `لا اسم يطابق «${query}»`
+              : filter === "todo"
+                ? "لم يبقَ أحد — القسم كله منقَّط"
+                : "لا أحد تحت 10"}
+          </h3>
+          <button
+            className="btn soft"
+            onClick={() => {
+              setQuery("");
+              setFilter("all");
+            }}
+          >
+            أظهر القسم كله
+          </button>
         </div>
       ) : (
         <div className="slist">
@@ -1096,11 +1163,7 @@ function ClassView({
             أنهِ العمود
           </button>
         ) : (
-          <>
-            <button className="btn soft" onClick={onPrint}>كشف للطبع</button>
-            <div className="hspace" />
-            <button className="btn warn" onClick={onDelete}>حذف القسم</button>
-          </>
+          <button className="btn warn" onClick={onDelete}>حذف القسم</button>
         )}
       </div>
     </section>

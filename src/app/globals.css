@@ -400,6 +400,14 @@ nav.tabs svg { width: 21px; height: 21px; }
   @page { size: A4 portrait; margin: 12mm; }
 }
 
+/* شريط التصفية: الباقون بنقرة، والتقدّم رقمًا إلى جانبه */
+.filterbar { display: flex; align-items: center; gap: 8px; }
+.filterbar .chips { flex: 1; min-width: 0; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+.filterbar .chips::-webkit-scrollbar { display: none; }
+.filterbar .chips button { flex: none; font-size: 12px; padding: 6px 11px; color: var(--muted); font-weight: 600; }
+.filterbar .chips button:disabled { opacity: 0.4; cursor: default; }
+.filterbar .pill { flex: none; }
+
 /* التنقيط بالعمود: معيار واحد ينزل على كل أسماء القسم */
 .colbar { display: flex; align-items: center; gap: 8px; }
 .colbar .collab { font-size: 12px; color: var(--faint); flex: none; }
