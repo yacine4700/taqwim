@@ -17,8 +17,8 @@ import {
   type Op,
 } from "@/lib/outbox";
 import {
+  bump,
   checkTotal,
-  clamp,
   classStats,
   componentValues,
   continuousMark,
@@ -27,6 +27,7 @@ import {
   optionsFor,
   pickForSession,
   readingAverage,
+  shownValue,
   stepFor,
   termAverage,
   type Component,
@@ -577,12 +578,19 @@ export default function AppClient({
                 klass={classes.find((c) => c.id === openClass)!}
                 students={studentsOf(openClass)}
                 term={term}
+                criteria={criteria}
+                components={components}
+                recordOf={recordOf}
                 averageOf={averageOf}
                 readingCount={(id) => readingsOf(id).length}
                 stats={statsOf(openClass)}
                 onBack={() => setOpenClass(null)}
                 onPick={(s) => setOpenStudentId(s.id)}
                 onDelete={() => setConfirmDelete(classes.find((c) => c.id === openClass)!)}
+                onCriterion={setCriterion}
+                onMark={(studentId, field, value) =>
+                  saveRecord(studentId, { [field]: value } as Partial<RecordRow>)
+                }
               />
             ) : (
               <ClassesView
@@ -794,23 +802,57 @@ function state(student: Student): string {
 }
 
 function ClassView({
-  klass, students, term, averageOf, readingCount, stats, onBack, onPick, onDelete,
+  klass, students, term, criteria, components, recordOf,
+  averageOf, readingCount, stats,
+  onBack, onPick, onDelete, onCriterion, onMark,
 }: {
   klass: Klass;
   students: Student[];
   term: number;
+  criteria: Criterion[];
+  components: Component[];
+  recordOf: (id: string) => RecordRow | undefined;
   averageOf: (id: string) => number | null;
   readingCount: (id: string) => number;
   stats: ReturnType<typeof classStats>;
   onBack: () => void;
   onPick: (s: Student) => void;
   onDelete: () => void;
+  onCriterion: (studentId: string, code: string, value: number | null) => void;
+  onMark: (studentId: string, field: MarkField, value: number | null) => void;
 }) {
+  /** العمود المفتوح: `c:` معيار و`m:` مركّبة. فارغ = جدول المعدلات المعتاد. */
+  const [column, setColumn] = useState<string | null>(null);
+
   const rows = students.map((s) => ({ student: s, average: averageOf(s.id) }));
   const ranked = [...rows]
     .filter((r) => r.average !== null)
     .sort((a, b) => (b.average ?? 0) - (a.average ?? 0));
   const rank = new Map(ranked.map((r, i) => [r.student.id, i + 1]));
+
+  // معيار القراءة لا يُنقَّط بيد: نقطته من محاولات الحصة.
+  const columns = [
+    ...criteria.filter((c) => c.kind !== "auto").map((c) => ({ key: `c:${c.code}`, label: c.label })),
+    ...components
+      .filter((c) => c.code !== "cc" && c.active)
+      .map((c) => ({ key: `m:${c.code}`, label: c.label })),
+  ];
+  const open = columns.find((c) => c.key === column) ?? null;
+  const openCriterion = open?.key.startsWith("c:")
+    ? criteria.find((c) => `c:${c.code}` === open.key) ?? null
+    : null;
+  const openMark = open?.key.startsWith("m:")
+    ? (open.key.slice(2) as MarkField)
+    : null;
+
+  /** كم تلميذًا فيه إدخال صريح في هذا العمود. */
+  const filled = !open
+    ? 0
+    : students.filter((s) => {
+        const record = recordOf(s.id);
+        if (openCriterion) return typeof record?.criteria?.[openCriterion.code] === "number";
+        return openMark ? record?.[openMark] !== null && record?.[openMark] !== undefined : false;
+      }).length;
 
   return (
     <section className="view">
@@ -822,9 +864,32 @@ function ClassView({
         </button>
         <div>
           <h2>{klass.name}</h2>
-          <p>الفصل {term} · معدل القسم {fmt(stats.mean)}</p>
+          <p>
+            {open
+              ? `${open.label} · أدخلتَ لـ ${filled} من ${students.length}`
+              : `الفصل ${term} · معدل القسم ${fmt(stats.mean)}`}
+          </p>
         </div>
       </div>
+
+      {/* الواجب يُصحَّح للقسم كله مرة واحدة، لا تلميذًا تلميذًا: يُختار العمود
+          مرة ثم يُنزَل على الأسماء بعدّاد لكل سطر. */}
+      {students.length > 0 && columns.length > 0 && (
+        <div className="colbar">
+          <span className="collab">نقّط عمودًا:</span>
+          <div className="chips">
+            {columns.map((c) => (
+              <button
+                key={c.key}
+                aria-pressed={column === c.key}
+                onClick={() => setColumn(column === c.key ? null : c.key)}
+              >
+                {c.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {students.length === 0 ? (
         <div className="card empty">
@@ -833,29 +898,165 @@ function ClassView({
         </div>
       ) : (
         <div className="slist">
-          {rows.map(({ student, average }) => (
-            <button key={student.id} className="srow" onClick={() => onPick(student)}>
-              <span className="rank num">{average === null ? "–" : rank.get(student.id)}</span>
-              <span className="sname">
-                {student.full_name}
-                {state(student) && (
-                  <small className="nbadge" title={state(student)}>{state(student)}</small>
-                )}
-              </span>
-              <span className="sreads">{readingCount(student.id) ? `${readingCount(student.id)}×` : ""}</span>
-              <span className={`savg num${average === null ? " none" : average < 10 ? " low" : ""}`}>
-                {fmt(average)}
-              </span>
-              <span className="gradecell">{grade(average)}</span>
-            </button>
-          ))}
+          {rows.map(({ student, average }, index) =>
+            open ? (
+              <div key={student.id} className="srow colmode">
+                <span className="rank num">{index + 1}</span>
+                <button className="sname asname" onClick={() => onPick(student)}>
+                  {student.full_name}
+                  {state(student) && (
+                    <small className="nbadge" title={state(student)}>{state(student)}</small>
+                  )}
+                </button>
+                {openCriterion ? (
+                  <RowCounter
+                    criterion={openCriterion}
+                    record={recordOf(student.id)}
+                    onChange={(value) => onCriterion(student.id, openCriterion.code, value)}
+                  />
+                ) : openMark ? (
+                  <RowMark
+                    field={openMark}
+                    record={recordOf(student.id)}
+                    onChange={(value) => onMark(student.id, openMark, value)}
+                  />
+                ) : null}
+              </div>
+            ) : (
+              <button key={student.id} className="srow" onClick={() => onPick(student)}>
+                <span className="rank num">{average === null ? "–" : rank.get(student.id)}</span>
+                <span className="sname">
+                  {student.full_name}
+                  {state(student) && (
+                    <small className="nbadge" title={state(student)}>{state(student)}</small>
+                  )}
+                </span>
+                <span className="sreads">{readingCount(student.id) ? `${readingCount(student.id)}×` : ""}</span>
+                <span className={`savg num${average === null ? " none" : average < 10 ? " low" : ""}`}>
+                  {fmt(average)}
+                </span>
+                <span className="gradecell">{grade(average)}</span>
+              </button>
+            ),
+          )}
         </div>
       )}
 
       <div className="pickbar">
-        <button className="btn warn" onClick={onDelete}>حذف القسم</button>
+        {open ? (
+          <button className="btn ghost" onClick={() => setColumn(null)}>
+            أنهِ العمود
+          </button>
+        ) : (
+          <button className="btn warn" onClick={onDelete}>حذف القسم</button>
+        )}
       </div>
     </section>
+  );
+}
+
+/**
+ * عدّاد سطر واحد في وضع العمود: ناقص ورقم وزائد، مضغوطة لتسع الاسم معها.
+ * نفس حساب بطاقة التلميذ (bump/shownValue)، فلا يختلف ما يُخزَّن باختلاف
+ * المكان الذي نُقِّط منه.
+ */
+function RowCounter({
+  criterion, record, onChange,
+}: {
+  criterion: Criterion;
+  record: RecordRow | undefined;
+  onChange: (value: number | null) => void;
+}) {
+  const ceiling = Number(criterion.ceiling);
+  const step = stepFor(criterion);
+  const stored = record?.criteria?.[criterion.code];
+  const value = typeof stored === "number" ? stored : null;
+  const assessed = value !== null;
+  const shown = shownValue(criterion, value);
+  const isDeduct = criterion.kind === "deduct";
+
+  const atFloor = isDeduct ? shown === 0 : !assessed || shown === 0;
+  const atRoof = (shown ?? 0) >= ceiling && (isDeduct || assessed);
+
+  return (
+    <div className="rowc">
+      <button
+        className="rcbtn"
+        onClick={() => onChange(bump(criterion, value, -step))}
+        disabled={atFloor}
+        aria-label={`${criterion.label}: أنقص ${step}`}
+      >
+        −
+      </button>
+      <button
+        className={assessed || isDeduct ? "rcval num" : "rcval num none"}
+        onClick={() => assessed && onChange(null)}
+        disabled={!assessed}
+        aria-label={assessed ? "امسح فيعود غير مقيَّم" : "لم يُقيَّم"}
+        title={assessed ? "انقر لتمسح فيعود غير مقيَّم" : "لم يُقيَّم"}
+      >
+        {shown === null ? "—" : fmt(shown, shown % 1 ? 1 : 0)}
+      </button>
+      <button
+        className="rcbtn"
+        onClick={() => onChange(bump(criterion, value, step))}
+        disabled={atRoof}
+        aria-label={`${criterion.label}: أضف ${step}`}
+      >
+        +
+      </button>
+    </div>
+  );
+}
+
+/** مركّبة من 20 في وضع العمود: خانة رقم، والفراغ يعني «لم يُنقَّط». */
+function RowMark({
+  field, record, onChange,
+}: {
+  field: MarkField;
+  record: RecordRow | undefined;
+  onChange: (value: number | null) => void;
+}) {
+  const current = record?.[field] ?? null;
+  return (
+    <div className="rowm">
+      <input
+        type="number"
+        inputMode="decimal"
+        min={0}
+        max={20}
+        step={0.25}
+        defaultValue={current ?? ""}
+        key={`${field}-${current ?? ""}`}
+        aria-label="العلامة من 20"
+        onBlur={(e) => {
+          const text = e.target.value.trim();
+          if (text === "") {
+            if (current !== null) onChange(null);
+            return;
+          }
+          const value = Number(text);
+          if (Number.isNaN(value) || value < 0 || value > 20) {
+            e.target.value = String(current ?? "");
+            return;
+          }
+          if (value !== current) onChange(value);
+        }}
+        onKeyDown={(e) => {
+          // Enter ينتقل إلى التلميذ التالي: اليد لا تترك لوحة المفاتيح.
+          if (e.key !== "Enter") return;
+          e.preventDefault();
+          const field = e.currentTarget;
+          const inputs = Array.from(
+            field.closest(".slist")?.querySelectorAll(".rowm input") ?? [],
+          ) as HTMLInputElement[];
+          const next = inputs[inputs.indexOf(field) + 1];
+          if (next) next.focus();
+          else e.currentTarget.blur();
+        }}
+      />
+      <i className="num">/ 20</i>
+    </div>
   );
 }
 
@@ -1309,30 +1510,13 @@ function CriterionCounter({
   onChange: (value: number | null) => void;
 }) {
   const ceiling = Number(criterion.ceiling);
-  const base = Number(criterion.base);
   const step = stepFor(criterion);
   const isDeduct = criterion.kind === "deduct";
 
   const stored = record?.criteria?.[criterion.code];
   const value = typeof stored === "number" ? stored : null;
   const assessed = value !== null;
-
-  const shown = isDeduct
-    ? clamp(base + (value ?? 0), 0, ceiling)
-    : assessed
-      ? clamp(value, 0, ceiling)
-      : null;
-
-  function bump(delta: number) {
-    if (isDeduct) {
-      const next = clamp((shown ?? ceiling) + delta, 0, ceiling);
-      onChange(Number((next - base).toFixed(2)));
-      return;
-    }
-    if (!assessed && delta < 0) return;
-    const next = clamp((shown ?? 0) + delta, 0, ceiling);
-    onChange(Number(next.toFixed(2)));
-  }
+  const shown = shownValue(criterion, value);
 
   // عند الصفر لا ينزل أكثر: «مسح» هو طريق الرجوع إلى «لم يُقيَّم».
   const atFloor = isDeduct ? shown === 0 : !assessed || shown === 0;
@@ -1353,7 +1537,7 @@ function CriterionCounter({
       <div className="counter">
         <button
           className="cbtn"
-          onClick={() => bump(-step)}
+          onClick={() => onChange(bump(criterion, value, -step))}
           disabled={atFloor}
           aria-label={`أنقص ${step}`}
         >
@@ -1365,7 +1549,7 @@ function CriterionCounter({
         </span>
         <button
           className="cbtn"
-          onClick={() => bump(step)}
+          onClick={() => onChange(bump(criterion, value, step))}
           disabled={atRoof}
           aria-label={`أضف ${step}`}
         >

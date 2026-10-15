@@ -139,53 +139,79 @@ for (const ceiling of [0.5, 1, 2.5, 3, 4, 5, 6, 7, 10, 12, 20]) {
 console.log(`  ok   كل السقوف تعطي خيارات داخل المجال، فيها 0 والسقف، وأقل من 15 زرًا`);
 
 console.log("\n7. عدّاد المعيار: ما يُخزَّن عند كل ضغطة");
+/* نسخة حرفية من shownValue و bump في src/lib/scoring.ts — تستعملهما بطاقة
+   التلميذ ووضع التنقيط بالعمود معًا، فلا تختلف العلامة باختلاف مكان إدخالها. */
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 function stepFor(c) { const s = Number(c.ceiling); return s <= 5 ? 0.5 : s <= 10 ? 1 : 2; }
-/** يحاكي bump في CriterionCounter ويرجع القيمة المخزَّنة الجديدة. */
-function bump(c, value, dir) {
-  const ceiling = Number(c.ceiling), base = Number(c.base), step = stepFor(c) * dir;
-  const assessed = value !== null;
-  const shown = c.kind === "deduct"
-    ? clamp(base + (value ?? 0), 0, ceiling)
-    : assessed ? clamp(value, 0, ceiling) : null;
-  if (c.kind === "deduct") return Number((clamp((shown ?? ceiling) + step, 0, ceiling) - base).toFixed(2));
-  if (!assessed && step < 0) return value;
-  return Number(clamp((shown ?? 0) + step, 0, ceiling).toFixed(2));
+
+function shownValue(criterion, value) {
+  const ceiling = Number(criterion.ceiling);
+  if (criterion.kind === "deduct") {
+    return clamp(Number(criterion.base) + (value ?? 0), 0, ceiling);
+  }
+  return value === null ? null : clamp(value, 0, ceiling);
 }
+
+function bump(criterion, value, delta) {
+  const ceiling = Number(criterion.ceiling);
+  const base = Number(criterion.base);
+  const shown = shownValue(criterion, value);
+  if (criterion.kind === "deduct") {
+    return Number((clamp((shown ?? ceiling) + delta, 0, ceiling) - base).toFixed(2));
+  }
+  if (value === null && delta < 0) return null;
+  return Number(clamp((shown ?? 0) + delta, 0, ceiling).toFixed(2));
+}
+
+/** ضغطة واحدة على ناقص أو زائد، بخطوة المعيار نفسه. */
+const press = (c, v, dir) => bump(c, v, stepFor(c) * dir);
+
 const D = { code: "disc", kind: "deduct", base: 4, ceiling: 4 };
 const A = { code: "part", kind: "add", base: 0, ceiling: 4 };
-const seen = (c, v) => c.kind === "deduct"
-  ? clamp(Number(c.base) + (v ?? 0), 0, c.ceiling)
-  : (v === null ? null : clamp(v, 0, c.ceiling));
+const seen = shownValue;
 
 // معيار الخصم: يبدأ كاملًا فينزل بالضغط، والعلامة المعروضة تطابق المخزَّنة
 let v = null;
 const downs = [];
-for (let i = 0; i < 9; i++) { v = bump(D, v, -1); downs.push(`${seen(D, v)}(${v})`); }
+for (let i = 0; i < 9; i++) { v = press(D, v, -1); downs.push(`${seen(D, v)}(${v})`); }
 t("الخصم ينزل إلى 0 ويتوقف", seen(D, v), 0);
 console.log("       ", downs.join(" → "));
-v = bump(D, v, +1); t("ثم يعود بزائد", seen(D, v), 0.5);
+v = press(D, v, +1); t("ثم يعود بزائد", seen(D, v), 0.5);
 
 // معيار الإضافة: «لم يُقيَّم» ليس صفرًا
 v = null;
-t("ناقص على غير المقيَّم لا يفعل شيئًا", bump(A, v, -1), null);
-v = bump(A, v, +1); t("أول زائد يجعله 0.5", v, 0.5);
-for (let i = 0; i < 20; i++) v = bump(A, v, +1);
+t("ناقص على غير المقيَّم لا يفعل شيئًا", press(A, v, -1), null);
+v = press(A, v, +1); t("أول زائد يجعله 0.5", v, 0.5);
+for (let i = 0; i < 20; i++) v = press(A, v, +1);
 t("لا يتجاوز السقف", v, 4);
-v = bump(A, 0.5, -1); t("ينزل إلى صفر مقيَّم", v, 0);
+v = press(A, 0.5, -1); t("ينزل إلى صفر مقيَّم", v, 0);
 t("صفر مقيَّم ≠ غير مقيَّم", continuousMark([A, D], { criteria: { part: 0 } }, []) !== continuousMark([A, D], { criteria: {} }, []), true);
+
+// العلامة المعروضة: الخصم يبدأ كاملًا، والإضافة تبقى فارغة حتى تُنقَّط
+t("الخصم الفارغ يُعرض كاملًا", shownValue(D, null), 4);
+t("الإضافة الفارغة تبقى فارغة", shownValue(A, null), null);
+t("الخصم لا يُعرض سالبًا مهما خُصم", shownValue(D, -9), 0);
+t("الإضافة لا تتجاوز السقف", shownValue(A, 99), 4);
 
 // كل علامة يُنتجها العدّاد تبقى داخل المجال بعد الحساب
 let bad = 0;
 for (const c of [D, A, { ...D, ceiling: 6, base: 6 }, { ...A, ceiling: 12 }]) {
   let cur = null;
   for (let i = 0; i < 30; i++) {
-    cur = bump(c, cur, i % 3 === 0 ? +1 : -1);
+    cur = press(c, cur, i % 3 === 0 ? +1 : -1);
     const s = seen(c, cur);
     if (s !== null && (s < 0 || s > Number(c.ceiling))) bad++;
   }
 }
 t("لا علامة خارج [0, السقف] بعد 120 ضغطة", bad, 0);
+
+// وضع العمود وبطاقة التلميذ يكتبان القيمة نفسها لأن الدالّة واحدة
+let fromCard = null, fromColumn = null;
+for (const dir of [+1, +1, +1, -1, +1]) {
+  fromCard = press(A, fromCard, dir);
+  fromColumn = bump(A, fromColumn, stepFor(A) * dir);
+}
+t("نفس التتابع من البطاقة ومن العمود", fromCard, fromColumn);
 
 console.log(`\n${pass} ناجح · ${fail} فاشل\n`);
 process.exit(fail ? 1 : 0);

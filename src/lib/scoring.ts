@@ -279,6 +279,47 @@ export function clamp(value: number, low: number, high: number): number {
   return Math.max(low, Math.min(high, value));
 }
 
+/* ---------- العدّاد ---------- */
+
+/**
+ * العلامة كما تُعرض في العدّاد، لا كما تُخزَّن.
+ *
+ * المخزَّن في معيار الخصم هو مقدار الخصم (سالب)، والمعروض هو ما بقي للتلميذ.
+ * وفي معيار الإضافة المخزَّن هو المعروض نفسه، و`null` تعني «لم يُقيَّم» —
+ * وهي ليست صفرًا: الصفر يدخل الحساب وغير المقيَّم يخرج منه.
+ */
+export function shownValue(
+  criterion: Pick<Criterion, "kind" | "base" | "ceiling">,
+  value: number | null,
+): number | null {
+  const ceiling = Number(criterion.ceiling);
+  if (criterion.kind === "deduct") {
+    return clamp(Number(criterion.base) + (value ?? 0), 0, ceiling);
+  }
+  return value === null ? null : clamp(value, 0, ceiling);
+}
+
+/**
+ * القيمة المخزَّنة بعد ضغطة واحدة على ناقص أو زائد.
+ *
+ * ناقصٌ على معيار إضافة لم يُقيَّم بعد لا يفعل شيئًا: الطريق إلى «غير مقيَّم»
+ * هو زرّ «مسح» وحده، فلا يصير الفارغ صفرًا بضغطة في غير محلّها.
+ */
+export function bump(
+  criterion: Pick<Criterion, "kind" | "base" | "ceiling">,
+  value: number | null,
+  delta: number,
+): number | null {
+  const ceiling = Number(criterion.ceiling);
+  const base = Number(criterion.base);
+  const shown = shownValue(criterion, value);
+  if (criterion.kind === "deduct") {
+    return Number((clamp((shown ?? ceiling) + delta, 0, ceiling) - base).toFixed(2));
+  }
+  if (value === null && delta < 0) return null;
+  return Number(clamp((shown ?? 0) + delta, 0, ceiling).toFixed(2));
+}
+
 /**
  * خيارات التنقيط لمعيار واحد، مولَّدة من سقفه لا من قائمة ثابتة:
  * معيار الخصم يعطي 0 ثم قيمًا سالبة حتى −السقف، ومعيار الإضافة من 0 إلى السقف.

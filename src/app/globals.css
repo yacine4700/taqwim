@@ -288,6 +288,36 @@ nav.tabs svg { width: 21px; height: 21px; }
 .authbox input { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 11px; }
 .authbox .swap { font-size: 13px; color: var(--primary); font-weight: 600; text-align: center; }
 
+/* التنقيط بالعمود: معيار واحد ينزل على كل أسماء القسم */
+.colbar { display: flex; align-items: center; gap: 8px; }
+.colbar .collab { font-size: 12px; color: var(--faint); flex: none; }
+.colbar .chips { flex: 1; min-width: 0; flex-wrap: nowrap; overflow-x: auto; padding-bottom: 2px; scrollbar-width: none; }
+.colbar .chips::-webkit-scrollbar { display: none; }
+.colbar .chips button { flex: none; font-size: 12px; padding: 6px 11px; color: var(--muted); }
+
+.srow.colmode { gap: 8px; }
+.srow .sname.asname { text-align: start; font-weight: 500; padding: 0; }
+.rowc { display: flex; align-items: center; gap: 4px; flex: none; }
+.rcbtn {
+  width: 34px; height: 34px; flex: none; border-radius: 50%;
+  background: var(--primary-soft); color: var(--primary);
+  font-size: 19px; font-weight: 600; line-height: 1; display: grid; place-items: center;
+}
+.rcbtn:disabled { background: var(--surface-2); color: var(--faint); cursor: default; }
+.rcval {
+  min-width: 38px; text-align: center; font-size: 16px; font-weight: 700;
+  font-variant-numeric: tabular-nums; padding: 4px 2px; border-radius: var(--radius-sm);
+}
+.rcval.none { color: var(--faint); font-weight: 400; }
+.rcval:disabled { cursor: default; }
+.rowm { display: flex; align-items: baseline; gap: 4px; flex: none; }
+.rowm input {
+  width: 62px; text-align: center; background: var(--surface-2);
+  border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 7px 4px;
+  font-variant-numeric: tabular-nums; font-weight: 600;
+}
+.rowm i { font-size: 11px; font-style: normal; color: var(--faint); }
+
 /* مؤشّر الإرسال: ساكن أخضر حين يصل كل شيء، ورمليّ حين ينتظر، وأحمر حين يتعثّر */
 .sync {
   display: inline-flex; align-items: center; gap: 5px; flex: none;
