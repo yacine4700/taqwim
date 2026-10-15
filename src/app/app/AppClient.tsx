@@ -4,16 +4,19 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import {
+  checkTotal,
   classStats,
   componentValues,
   continuousMark,
   fmt,
   grade,
+  optionsFor,
   pickForSession,
   readingAverage,
   termAverage,
   type Component,
   type Criterion,
+  type MarkField,
   type Reading,
   type RecordRow,
 } from "@/lib/scoring";
@@ -21,9 +24,6 @@ import {
 type Klass = { id: string; name: string; position: number };
 type Student = { id: string; class_id: string; full_name: string; position: number };
 type Tab = "classes" | "session" | "stats" | "settings";
-
-const DEDUCTIONS = [0, -0.5, -1, -1.5, -2, -3, -4];
-const ADDITIONS = [0, 1, 2, 3, 4];
 
 export default function AppClient({ email }: { email: string }) {
   const router = useRouter();
@@ -43,6 +43,7 @@ export default function AppClient({ email }: { email: string }) {
   const [openStudent, setOpenStudent] = useState<Student | null>(null);
   const [importing, setImporting] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<Klass | null>(null);
+  const [confirmCriterion, setConfirmCriterion] = useState<Criterion | null>(null);
   const [toast, setToast] = useState("");
 
   const say = useCallback((text: string) => {
@@ -55,7 +56,7 @@ export default function AppClient({ email }: { email: string }) {
       supabase.from("classes").select("id,name,position").order("position"),
       supabase.from("students").select("id,class_id,full_name,position").order("position"),
       supabase.from("criteria").select("id,code,label,kind,base,ceiling,position").order("position"),
-      supabase.from("components").select("id,code,label,weight,position").order("position"),
+      supabase.from("components").select("id,code,label,weight,position,active").order("position"),
       supabase.from("records").select("student_id,term,criteria,tp,devoir,exam"),
       supabase.from("readings").select("id,student_id,term,score,read_on").order("read_on"),
     ]);
@@ -182,20 +183,116 @@ export default function AppClient({ email }: { email: string }) {
     }
   }
 
-  async function saveCriterion(id: string, ceiling: number, isDeduct: boolean) {
+  /**
+   * تعديل معيار. القيمة الابتدائية تُشتق من النوع ولا تُطلب من الأستاذ:
+   * معيار الخصم يبدأ من العلامة الكاملة (base = ceiling) فيُحسب دائمًا ولو لم
+   * يُخصم منه شيء، ومعيار الإضافة يبدأ من صفر فيخرج من الحساب حتى يُنقَّط.
+   */
+  async function updateCriterion(id: string, patch: Partial<Criterion>) {
+    const before = criteria.find((c) => c.id === id);
+    if (!before) return;
+    const next: Criterion = { ...before, ...patch };
+    if (next.kind === "deduct") next.base = Number(next.ceiling);
+    else if (next.kind === "add" || next.kind === "auto") next.base = 0;
+
+    // معيار قراءة واحد فقط: لو عُيّن معيار آخر للقراءة صار متوسط المحاولات
+    // محسوبًا مرتين في النقطة نفسها.
+    const demoted =
+      next.kind === "auto"
+        ? criteria.filter((c) => c.id !== id && c.kind === "auto")
+        : [];
+
     setCriteria((cs) =>
-      cs.map((c) => (c.id === id ? { ...c, ceiling, base: isDeduct ? ceiling : c.base } : c)),
+      cs.map((c) =>
+        c.id === id
+          ? next
+          : demoted.some((d) => d.id === c.id)
+            ? { ...c, kind: "add" as const, base: 0 }
+            : c,
+      ),
     );
-    const patch: Record<string, number> = { ceiling };
-    if (isDeduct) patch.base = ceiling;
-    const { error } = await supabase.from("criteria").update(patch).eq("id", id);
-    if (error) say("تعذّر حفظ الإعداد");
+
+    const { error } = await supabase
+      .from("criteria")
+      .update({
+        label: next.label,
+        kind: next.kind,
+        base: next.base,
+        ceiling: next.ceiling,
+        position: next.position,
+      })
+      .eq("id", id);
+
+    for (const d of demoted) {
+      await supabase.from("criteria").update({ kind: "add", base: 0 }).eq("id", d.id);
+    }
+
+    if (error) {
+      say("تعذّر حفظ المعيار");
+      void load();
+      return;
+    }
+    if (demoted.length) {
+      say(`${demoted[0].label}: صار معيارًا يدويًا`);
+      return;
+    }
+    // تغيير النوع يغيّر معنى العلامات المسجَّلة: ما كان إضافةً صار خصمًا.
+    if (patch.kind && patch.kind !== before.kind) {
+      const marked = records.filter(
+        (r) => typeof r.criteria?.[before.code] === "number",
+      ).length;
+      if (marked) {
+        say(`تنبيه: ${marked} علامة مسجَّلة في هذا المعيار صار معناها مختلفًا`);
+      }
+    }
   }
 
-  async function saveComponent(id: string, weight: number) {
-    setComponents((cs) => cs.map((c) => (c.id === id ? { ...c, weight } : c)));
-    const { error } = await supabase.from("components").update({ weight }).eq("id", id);
-    if (error) say("تعذّر حفظ المعامل");
+  async function addCriterion() {
+    const { data: me } = await supabase.auth.getUser();
+    // كود داخلي ثابت لا يراه الأستاذ: علامات التلاميذ محفوظة به، فلو ربطناه
+    // بالتسمية لضاعت العلامات عند أول تغيير للاسم.
+    const code = `c${Math.random().toString(36).slice(2, 10)}`;
+    const row = {
+      teacher_id: me.user?.id,
+      code,
+      label: "معيار جديد",
+      kind: "add" as const,
+      base: 0,
+      ceiling: 4,
+      position: criteria.length + 1,
+    };
+    const { data, error } = await supabase
+      .from("criteria")
+      .insert(row)
+      .select("id,code,label,kind,base,ceiling,position")
+      .single();
+    if (error || !data) {
+      say("تعذّر إضافة المعيار");
+      return;
+    }
+    setCriteria((cs) => [...cs, data as Criterion]);
+    say("أُضيف معيار — سمِّه واضبط سقفه");
+  }
+
+  async function deleteCriterion(c: Criterion) {
+    setCriteria((cs) => cs.filter((x) => x.id !== c.id));
+    setConfirmCriterion(null);
+    const { error } = await supabase.from("criteria").delete().eq("id", c.id);
+    if (error) {
+      say("تعذّر الحذف");
+      void load();
+      return;
+    }
+    say(`حُذف معيار ${c.label}`);
+  }
+
+  async function saveComponent(id: string, patch: Partial<Component>) {
+    setComponents((cs) => cs.map((c) => (c.id === id ? { ...c, ...patch } : c)));
+    const { error } = await supabase.from("components").update(patch).eq("id", id);
+    if (error) {
+      say("تعذّر حفظ المركّبة");
+      void load();
+    }
   }
 
   async function createClassWithStudents(name: string, names: string[]) {
@@ -303,6 +400,7 @@ export default function AppClient({ email }: { email: string }) {
               studentsOf={studentsOf}
               attemptsOf={(id) => readingsOf(id).length}
               term={term}
+              reading={criteria.find((c) => c.kind === "auto")}
               onSave={addReadings}
             />
           )}
@@ -316,7 +414,9 @@ export default function AppClient({ email }: { email: string }) {
               criteria={criteria}
               components={components}
               email={email}
-              onCriterion={saveCriterion}
+              onCriterion={updateCriterion}
+              onAddCriterion={addCriterion}
+              onDeleteCriterion={setConfirmCriterion}
               onComponent={saveComponent}
               onImport={() => setImporting(true)}
               onSignOut={signOut}
@@ -363,6 +463,14 @@ export default function AppClient({ email }: { email: string }) {
           count={studentsOf(confirmDelete.id).length}
           onCancel={() => setConfirmDelete(null)}
           onConfirm={() => deleteClass(confirmDelete)}
+        />
+      )}
+
+      {confirmCriterion && (
+        <ConfirmCriterionSheet
+          criterion={confirmCriterion}
+          onCancel={() => setConfirmCriterion(null)}
+          onConfirm={() => deleteCriterion(confirmCriterion)}
         />
       )}
 
@@ -500,12 +608,14 @@ function ClassView({
 }
 
 function SessionView({
-  classes, studentsOf, attemptsOf, term, onSave,
+  classes, studentsOf, attemptsOf, term, reading, onSave,
 }: {
   classes: Klass[];
   studentsOf: (id: string) => Student[];
   attemptsOf: (id: string) => number;
   term: number;
+  /** معيار القراءة المحسوب تلقائيًا، إن أبقاه الأستاذ في معاييره. */
+  reading: Criterion | undefined;
   onSave: (entries: Array<{ studentId: string; score: number }>) => Promise<boolean>;
 }) {
   const [classId, setClassId] = useState(classes[0]?.id ?? "");
@@ -537,6 +647,8 @@ function SessionView({
   const list = studentsOf(classId);
   const unread = list.filter((s) => attemptsOf(s.id) === 0).length;
   const chosen = picked.filter((s) => typeof scores[s.id] === "number").length;
+  // سلّم التنقيط من سقف معيار القراءة نفسه، فلو رفعه الأستاذ إلى 6 ظهرت 6.
+  const scale = reading ? optionsFor({ ...reading, kind: "add" }) : [0, 1, 2, 3, 4];
 
   return (
     <section className="view">
@@ -581,6 +693,13 @@ function SessionView({
         لم تُقرأ لهم بعد: {unread} من {list.length} · الفصل {term}
       </div>
 
+      {!reading && (
+        <div className="note warn">
+          لا معيار قراءة في إعداداتك، فالمحاولات تُسجَّل ولا تدخل التقويم
+          المستمر. أضف معيارًا من الإعدادات إن أردت أن تُحسب.
+        </div>
+      )}
+
       {picked.length === 0 ? (
         <div className="card empty">
           <h3>جاهز للحصة</h3>
@@ -597,7 +716,7 @@ function SessionView({
                 </span>
               </div>
               <div className="scorerow">
-                {ADDITIONS.map((n) => (
+                {scale.map((n) => (
                   <button
                     key={n}
                     aria-pressed={scores[student.id] === n}
@@ -709,24 +828,30 @@ function StatsView({
   );
 }
 
+const TP_PRESETS = ["الأعمال التطبيقية", "التعبير الشفوي"];
+
 function SettingsView({
-  criteria, components, email, onCriterion, onComponent, onImport, onSignOut,
+  criteria, components, email,
+  onCriterion, onAddCriterion, onDeleteCriterion, onComponent, onImport, onSignOut,
 }: {
   criteria: Criterion[];
   components: Component[];
   email: string;
-  onCriterion: (id: string, ceiling: number, isDeduct: boolean) => void;
-  onComponent: (id: string, weight: number) => void;
+  onCriterion: (id: string, patch: Partial<Criterion>) => void;
+  onAddCriterion: () => void;
+  onDeleteCriterion: (c: Criterion) => void;
+  onComponent: (id: string, patch: Partial<Component>) => void;
   onImport: () => void;
   onSignOut: () => void;
 }) {
-  const ceiling = criteria.reduce((sum, c) => sum + Number(c.ceiling), 0);
+  const check = checkTotal(criteria);
+
   return (
     <section className="view">
       <div className="vhead">
         <div>
           <h2>الإعدادات</h2>
-          <p>تسري على كل الأقسام والفصول.</p>
+          <p>تسري على كل الأقسام والفصول الثلاثة.</p>
         </div>
       </div>
 
@@ -734,59 +859,166 @@ function SettingsView({
         <div className="srow2">
           <b>معايير التقويم المستمر</b>
           <div className="hspace" />
-          <span className="pill">المجموع {ceiling}</span>
+          <span className={check.exact ? "pill ok" : "pill warn"}>
+            المجموع {Number(check.total.toFixed(2))} / 20
+          </span>
         </div>
+
+        {check.warning && <div className="note warn">{check.warning}</div>}
+
         {criteria.map((c) => (
-          <div key={c.id} className="srow2">
-            <div className="k">
-              {c.label}
-              <small>
-                {c.kind === "deduct"
-                  ? `خصم من ${c.base} — الفارغ يعني العلامة الكاملة`
-                  : c.kind === "auto"
-                    ? "محسوب من محاولات القراءة"
-                    : "إضافة من 0"}
-              </small>
+          <div key={c.id} className="crit">
+            <div className="critop">
+              <input
+                className="cname"
+                id={`label-${c.code}`}
+                defaultValue={c.label}
+                aria-label="تسمية المعيار"
+                onBlur={(e) => {
+                  const text = e.target.value.trim();
+                  if (text && text !== c.label) onCriterion(c.id, { label: text });
+                  else e.target.value = c.label;
+                }}
+              />
+              <label className="cceil">
+                <span>السقف</span>
+                <input
+                  id={`ceiling-${c.code}`}
+                  type="number"
+                  min={0.5}
+                  max={20}
+                  step={0.5}
+                  defaultValue={Number(c.ceiling)}
+                  onBlur={(e) => {
+                    const value = Number(e.target.value);
+                    if (value > 0 && value <= 20) onCriterion(c.id, { ceiling: value });
+                    else e.target.value = String(Number(c.ceiling));
+                  }}
+                />
+              </label>
+              <button
+                className="icbtn danger"
+                aria-label={`حذف ${c.label}`}
+                onClick={() => onDeleteCriterion(c)}
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+                  <path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13" />
+                </svg>
+              </button>
             </div>
-            <input
-              id={`criterion-${c.code}`}
-              type="number"
-              min={1}
-              max={20}
-              step={1}
-              defaultValue={c.ceiling}
-              onBlur={(e) => {
-                const value = Number(e.target.value);
-                if (value > 0) onCriterion(c.id, value, c.kind === "deduct");
-                else e.target.value = String(c.ceiling);
-              }}
-            />
+
+            <div className="kinds" role="group" aria-label="نقطة الانطلاق">
+              <button
+                aria-pressed={c.kind === "deduct"}
+                onClick={() => onCriterion(c.id, { kind: "deduct" })}
+              >
+                يبدأ كاملًا ({Number(c.ceiling)}) ويُخصم منه
+              </button>
+              <button
+                aria-pressed={c.kind === "add"}
+                onClick={() => onCriterion(c.id, { kind: "add" })}
+              >
+                يبدأ من 0 ويُضاف إليه
+              </button>
+              <button
+                aria-pressed={c.kind === "auto"}
+                onClick={() => onCriterion(c.id, { kind: "auto" })}
+              >
+                من محاولات القراءة
+              </button>
+            </div>
+            <small className="chint">
+              {c.kind === "deduct"
+                ? "يُحسب لكل تلميذ دائمًا: الخانة الفارغة تعني العلامة الكاملة."
+                : c.kind === "auto"
+                  ? "نقطة محسوبة من متوسط محاولات القراءة، لا تُدخلها بيدك."
+                  : "لا يُحسب حتى تُنقّطه: الخانة الفارغة تخرج من القسمة ولا تُحسب صفرًا."}
+            </small>
           </div>
         ))}
+
+        <button className="btn soft full" onClick={onAddCriterion}>+ معيار</button>
       </div>
 
       <div className="card">
         <div className="srow2">
-          <b>معاملات معدل المادة</b>
+          <b>مركّبات معدل المادة</b>
         </div>
-        {components.map((c) => (
-          <div key={c.id} className="srow2">
-            <div className="k">{c.label}</div>
-            <input
-              id={`component-${c.code}`}
-              type="number"
-              min={0}
-              max={10}
-              step={0.5}
-              defaultValue={c.weight}
-              onBlur={(e) => {
-                const value = Number(e.target.value);
-                if (value >= 0) onComponent(c.id, value);
-                else e.target.value = String(c.weight);
-              }}
-            />
-          </div>
-        ))}
+        <div className="note">
+          المركّبة المطفأة تخرج من القسمة تمامًا، وكذلك غير المنقَّطة.
+        </div>
+
+        {components.map((c) => {
+          const fixed = c.code === "cc";
+          return (
+            <div key={c.id} className={c.active || fixed ? "crit" : "crit off"}>
+              <div className="critop">
+                {fixed ? (
+                  <div className="k" style={{ flex: 1 }}>
+                    {c.label}
+                    <small>محصّلة المعايير أعلاه</small>
+                  </div>
+                ) : (
+                  <input
+                    className="cname"
+                    id={`clabel-${c.code}`}
+                    defaultValue={c.label}
+                    aria-label="تسمية المركّبة"
+                    onBlur={(e) => {
+                      const text = e.target.value.trim();
+                      if (text && text !== c.label) onComponent(c.id, { label: text });
+                      else e.target.value = c.label;
+                    }}
+                  />
+                )}
+                <label className="cceil">
+                  <span>المعامل</span>
+                  <input
+                    id={`weight-${c.code}`}
+                    type="number"
+                    min={0}
+                    max={10}
+                    step={0.5}
+                    defaultValue={Number(c.weight)}
+                    disabled={!c.active && !fixed}
+                    onBlur={(e) => {
+                      const value = Number(e.target.value);
+                      if (value >= 0 && value <= 10) onComponent(c.id, { weight: value });
+                      else e.target.value = String(Number(c.weight));
+                    }}
+                  />
+                </label>
+                {!fixed && (
+                  <button
+                    className={c.active ? "sw on" : "sw"}
+                    role="switch"
+                    aria-checked={c.active}
+                    aria-label={`${c.label}: ${c.active ? "مفعّلة" : "مطفأة"}`}
+                    onClick={() => onComponent(c.id, { active: !c.active })}
+                  >
+                    <i />
+                  </button>
+                )}
+              </div>
+              {c.code === "tp" && c.active && (
+                <div className="kinds" role="group" aria-label="تسمية سريعة">
+                  {TP_PRESETS.map((preset) => (
+                    <button
+                      key={preset}
+                      aria-pressed={c.label === preset}
+                      onClick={() => onComponent(c.id, { label: preset })}
+                    >
+                      {preset}
+                    </button>
+                  ))}
+                </div>
+              )}
+              {!fixed && !c.active && (
+                <small className="chint">مطفأة: لا تظهر للتلاميذ ولا تدخل المعدل.</small>
+              )}
+            </div>
+          );
+        })}
       </div>
 
       <div className="card">
@@ -809,6 +1041,34 @@ function SettingsView({
   );
 }
 
+function ConfirmCriterionSheet({
+  criterion, onCancel, onConfirm,
+}: {
+  criterion: Criterion;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <>
+      <div className="scrim" onClick={onCancel} />
+      <div className="sheet">
+        <div className="shead">
+          <h3>حذف معيار {criterion.label}</h3>
+        </div>
+        <p className="lead">
+          سيخرج من التقويم المستمر في كل الأقسام والفصول، وتُستبعد العلامات
+          المسجَّلة فيه من الحساب. بقية المعايير تبقى كما هي.
+        </p>
+        <div className="srow2">
+          <button className="btn ghost" onClick={onCancel}>تراجع</button>
+          <div className="hspace" />
+          <button className="btn danger" onClick={onConfirm}>احذف المعيار</button>
+        </div>
+      </div>
+    </>
+  );
+}
+
 /* ================= sheets ================= */
 
 function StudentSheet({
@@ -821,11 +1081,15 @@ function StudentSheet({
   components: Component[];
   onClose: () => void;
   onCriterion: (code: string, value: number | null) => void;
-  onMark: (field: "tp" | "devoir" | "exam", value: number | null) => void;
+  onMark: (field: MarkField, value: number | null) => void;
   onRemoveReading: (id: string) => void;
 }) {
   const cc = continuousMark(criteria, record, readings);
   const average = termAverage(components, componentValues(criteria, record, readings));
+  const ccLabel = components.find((c) => c.code === "cc")?.label ?? "التقويم المستمر";
+  // لا تُعرض إلا المركّبات المفعّلة: المطفأة خارجة من المعدل، فعرض خانة لها
+  // يعني أن يُنقّط الأستاذ نقطة لا تُحسب.
+  const marks = components.filter((c) => c.code !== "cc" && c.active);
 
   return (
     <>
@@ -867,9 +1131,9 @@ function StudentSheet({
           const current = record?.criteria?.[c.code];
           const value = typeof current === "number" ? current : null;
           const shown = c.kind === "deduct"
-            ? Math.max(0, Number(c.base) + (value ?? 0))
+            ? Math.max(0, Math.min(Number(c.ceiling), Number(c.base) + (value ?? 0)))
             : value;
-          const options = c.kind === "deduct" ? DEDUCTIONS : ADDITIONS;
+          const options = optionsFor(c);
           return (
             <div key={c.id} className="fld">
               <div className="flab">
@@ -896,12 +1160,13 @@ function StudentSheet({
           );
         })}
 
-        {([["tp", "الأعمال التطبيقية"], ["devoir", "الفرض"], ["exam", "الاختبار"]] as const).map(
-          ([field, label]) => (
-            <div key={field} className="fld">
+        {marks.map((component) => {
+          const field = component.code as MarkField;
+          return (
+            <div key={component.id} className="fld">
               <div className="flab">
-                <b>{label}</b>
-                <small>من 0 إلى 20</small>
+                <b>{component.label}</b>
+                <small>من 0 إلى 20 · معامل {Number(component.weight)}</small>
               </div>
               <div className="mk">
                 <input
@@ -924,11 +1189,11 @@ function StudentSheet({
                 />
               </div>
             </div>
-          ),
-        )}
+          );
+        })}
 
         <div className="totals">
-          <Stat value={fmt(cc)} label="التقويم المستمر" />
+          <Stat value={fmt(cc)} label={ccLabel} />
           <Stat value={fmt(average)} label="معدل المادة" />
           <Stat value={grade(average) || "—"} label="التقدير" />
         </div>

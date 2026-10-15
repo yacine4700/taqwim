@@ -202,6 +202,42 @@ textarea.inp { width: 100%; min-height: 150px; resize: vertical; line-height: 1.
 .note { font-size: 12px; color: var(--muted); background: var(--surface-2); border-radius: var(--radius-sm); padding: 10px 12px; }
 .note.warn { background: var(--sand-soft); color: var(--sand); }
 .note.bad { background: var(--danger-soft); color: var(--danger); }
+
+/* صفّ معيار واحد في الإعدادات: تسمية وسقف وحذف، ثم نوعه وشرحه */
+.crit { padding: 13px; border-bottom: 1px solid var(--line); display: flex; flex-direction: column; gap: 9px; }
+.crit:last-of-type { border-bottom: 0; }
+.crit.off { opacity: 0.55; }
+.critop { display: flex; align-items: center; gap: 8px; }
+.cname {
+  flex: 1; min-width: 0; font-size: 14px; font-weight: 600;
+  background: var(--surface-2); border: 1px solid var(--line);
+  border-radius: var(--radius-sm); padding: 8px 10px;
+}
+.cceil { flex: none; display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--faint); }
+.cceil input { width: 58px; text-align: center; background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 7px 4px; font-variant-numeric: tabular-nums; }
+.cceil input:disabled { opacity: 0.5; }
+.icbtn.danger { color: var(--danger); }
+.icbtn.danger:hover { background: var(--danger-soft); }
+.icbtn svg { width: 17px; height: 17px; }
+.chint { color: var(--faint); font-size: 11px; line-height: 1.6; }
+.kinds { display: flex; gap: 6px; flex-wrap: wrap; }
+.kinds button {
+  padding: 7px 11px; border-radius: 999px; background: var(--surface-2);
+  font-size: 12px; font-weight: 600; border: 1px solid transparent; color: var(--muted);
+}
+.kinds button[aria-pressed="true"] { background: var(--primary); color: var(--on-primary); border-color: var(--primary); }
+.sw { flex: none; width: 42px; height: 25px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--line); padding: 2px; display: flex; }
+.sw i { width: 19px; height: 19px; border-radius: 50%; background: var(--faint); transition: transform 0.15s ease, background 0.15s ease; }
+.sw.on { background: var(--primary-soft); border-color: var(--primary); }
+.sw.on i { background: var(--primary); transform: translateX(-17px); }
+.btn.full { width: calc(100% - 26px); margin: 11px 13px 13px; }
+.btn.danger { background: var(--danger); color: #fff; }
+.pill.ok { background: var(--primary-soft); color: var(--primary); }
+.pill.warn { background: var(--sand-soft); color: var(--sand); }
+
+@media (prefers-reduced-motion: reduce) {
+  .sw i { transition: none; }
+}
 .toast { position: fixed; inset-inline: 0; bottom: calc(76px + env(safe-area-inset-bottom, 0px)); z-index: 70; display: flex; justify-content: center; pointer-events: none; padding-inline: 16px; }
 .toast div { background: var(--ink); color: var(--bg); padding: 9px 16px; border-radius: 999px; font-size: 13px; font-weight: 500; box-shadow: var(--shadow); }
 

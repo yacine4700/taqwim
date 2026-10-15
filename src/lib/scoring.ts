@@ -30,6 +30,8 @@ export type Component = {
   label: string;
   weight: number;
   position: number;
+  /** المركّبة المطفأة تخرج من معدل المادة بسطًا ومقامًا. */
+  active: boolean;
 };
 
 export type RecordRow = {
@@ -90,12 +92,11 @@ export function continuousMark(
   return ceiling ? (raw / ceiling) * 20 : null;
 }
 
-export type ComponentValues = {
-  cc: number | null;
-  tp: number | null;
-  devoir: number | null;
-  exam: number | null;
-};
+/** المركّبات الأربع التي يحفظها جدول العلامات. */
+export const MARK_FIELDS = ["tp", "devoir", "exam"] as const;
+export type MarkField = (typeof MARK_FIELDS)[number];
+
+export type ComponentValues = Record<string, number | null>;
 
 export function componentValues(
   criteria: Criterion[],
@@ -110,7 +111,10 @@ export function componentValues(
   };
 }
 
-/** معدل المادة: المركّبة غير المنقَّطة تخرج من القسمة. */
+/**
+ * معدل المادة: تخرج من القسمة المركّبة المطفأة والمركّبة غير المنقَّطة معًا.
+ * نفس ما يفعله منظر v_term_average في القاعدة.
+ */
 export function termAverage(
   components: Component[],
   values: ComponentValues,
@@ -118,10 +122,13 @@ export function termAverage(
   let weighted = 0;
   let weights = 0;
   for (const component of components) {
-    const value = values[component.code as keyof ComponentValues];
+    if (!component.active) continue;
+    const value = values[component.code];
     if (value === null || value === undefined) continue;
-    weighted += value * component.weight;
-    weights += component.weight;
+    const weight = Number(component.weight);
+    if (!Number.isFinite(weight)) continue;
+    weighted += value * weight;
+    weights += weight;
   }
   return weights ? weighted / weights : null;
 }
@@ -219,4 +226,59 @@ export function pickForSession<T extends { id: string }>(
 
 export function fmt(value: number | null, digits = 2): string {
   return value === null || value === undefined ? "—" : value.toFixed(digits);
+}
+
+/* ---------- إعداد المعايير ---------- */
+
+/** مجموع سقوف المعايير كما ضبطها الأستاذ. المعتاد 20. */
+export function criteriaTotal(criteria: Criterion[]): number {
+  return criteria.reduce((sum, c) => sum + Number(c.ceiling), 0);
+}
+
+export type TotalCheck = {
+  total: number;
+  exact: boolean;
+  /** نص التنبيه، أو سلسلة فارغة إن كان المجموع 20 بالضبط. */
+  warning: string;
+};
+
+/**
+ * المجموع لا يلزم أن يكون 20: الحساب يقسم على مجموع سقوف المعايير المحسوبة
+ * ثم يضرب في 20، فالنقطة تُحوَّل إلى 20 في كل الأحوال. لكن الأستاذ يحتاج أن
+ * يعرف أن التحويل يجري، لأن «خصم نقطة» من مجموع 25 ليس خصم نقطة من 20.
+ */
+export function checkTotal(criteria: Criterion[]): TotalCheck {
+  const total = criteriaTotal(criteria);
+  const exact = Math.abs(total - 20) < 1e-9;
+  if (criteria.length === 0) {
+    return { total, exact: false, warning: "لا معايير: التقويم المستمر لن يُحسب." };
+  }
+  if (exact) return { total, exact, warning: "" };
+  const side = total < 20 ? "أقل" : "أكثر";
+  return {
+    total,
+    exact,
+    warning:
+      `المجموع ${trim(total)} وهو ${side} من 20، ` +
+      `فسيحوّل البرنامج النقطة إلى 20 (× ${trim(20 / total)}).`,
+  };
+}
+
+function trim(value: number): string {
+  return Number(value.toFixed(2)).toString();
+}
+
+/**
+ * خيارات التنقيط لمعيار واحد، مولَّدة من سقفه لا من قائمة ثابتة:
+ * معيار الخصم يعطي 0 ثم قيمًا سالبة حتى −السقف، ومعيار الإضافة من 0 إلى السقف.
+ * الخطوة تكبر مع السقف حتى لا تمتلئ الشاشة بأزرار.
+ */
+export function optionsFor(criterion: Criterion): number[] {
+  const span = Number(criterion.ceiling);
+  if (!Number.isFinite(span) || span <= 0) return [0];
+  const step = span <= 5 ? 0.5 : span <= 10 ? 1 : 2;
+  const out: number[] = [];
+  for (let v = 0; v <= span + 1e-9; v += step) out.push(Number(v.toFixed(2)));
+  if (out[out.length - 1] !== span) out.push(span);
+  return criterion.kind === "deduct" ? out.map((v) => (v === 0 ? 0 : -v)) : out;
 }
