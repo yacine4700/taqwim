@@ -120,6 +120,9 @@ export default function AppClient({
   const [importing, setImporting] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [printing, setPrinting] = useState<string | null>(null);
+  /* اختيار تبويب الحصة يُحفظ مع بقية المكان: الأستاذ يقرأ لقسم واحد في الحصة */
+  const [sessionClass, setSessionClass] = useState("");
+  const [sessionCount, setSessionCount] = useState(5);
   const [confirmDelete, setConfirmDelete] = useState<Klass | null>(null);
   const [confirmCriterion, setConfirmCriterion] = useState<Criterion | null>(null);
   const [confirmStudent, setConfirmStudent] = useState<Student | null>(null);
@@ -252,10 +255,20 @@ export default function AppClient({
     if (restoredRef.current || !classes.length) return;
     restoredRef.current = true;
     void (async () => {
-      const saved = await kvGet<{ tab: Tab; term: number; openClass: string | null }>(whereKey);
+      const saved = await kvGet<{
+        tab: Tab;
+        term: number;
+        openClass: string | null;
+        sessionClass?: string;
+        sessionCount?: number;
+      }>(whereKey);
       if (!saved) return;
       if (saved.term >= 1 && saved.term <= 3) setTerm(saved.term);
       if (saved.tab) setTab(saved.tab);
+      if (saved.sessionClass && classes.some((c) => c.id === saved.sessionClass)) {
+        setSessionClass(saved.sessionClass);
+      }
+      if (saved.sessionCount && saved.sessionCount >= 3) setSessionCount(saved.sessionCount);
       // القسم قد يكون حُذف من جهاز آخر، فلا يُفتح إلا إن كان ما يزال موجودًا.
       if (saved.openClass && classes.some((c) => c.id === saved.openClass)) {
         setOpenClass(saved.openClass);
@@ -265,8 +278,8 @@ export default function AppClient({
 
   useEffect(() => {
     if (!restoredRef.current) return;
-    void kvSet(whereKey, { tab, term, openClass });
-  }, [tab, term, openClass, whereKey]);
+    void kvSet(whereKey, { tab, term, openClass, sessionClass, sessionCount });
+  }, [tab, term, openClass, sessionClass, sessionCount, whereKey]);
 
   /* عودة الشبكة: أعد القراءة من الخادم مرة واحدة، لا عند كل تبدّل حالة */
   const onlineRef = useRef(true);
@@ -680,6 +693,10 @@ export default function AppClient({
               attemptsOf={(id) => readingsOf(id).length}
               term={term}
               reading={criteria.find((c) => c.kind === "auto")}
+              classId={sessionClass}
+              onClassId={setSessionClass}
+              count={sessionCount}
+              onCount={setSessionCount}
               onSave={addReadings}
             />
           )}
@@ -1276,7 +1293,8 @@ function RowMark({
 }
 
 function SessionView({
-  classes, studentsOf, attemptsOf, term, reading, onSave,
+  classes, studentsOf, attemptsOf, term, reading,
+  classId, onClassId, count, onCount, onSave,
 }: {
   classes: Klass[];
   studentsOf: (id: string) => Student[];
@@ -1284,17 +1302,20 @@ function SessionView({
   term: number;
   /** معيار القراءة المحسوب تلقائيًا، إن أبقاه الأستاذ في معاييره. */
   reading: Criterion | undefined;
+  /** القسم والعدد محفوظان في الجهاز، فلا يُعادان في كل حصة. */
+  classId: string;
+  onClassId: (id: string) => void;
+  count: number;
+  onCount: (n: number) => void;
   onSave: (entries: Array<{ studentId: string; score: number }>) => Promise<boolean>;
 }) {
-  const [classId, setClassId] = useState(classes[0]?.id ?? "");
-  const [count, setCount] = useState(5);
   const [picked, setPicked] = useState<Student[]>([]);
   const [scores, setScores] = useState<Record<string, number | "skip">>({});
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    if (!classId && classes.length) setClassId(classes[0].id);
-  }, [classes, classId]);
+    if (!classId && classes.length) onClassId(classes[0].id);
+  }, [classes, classId, onClassId]);
 
   if (!classes.length) {
     return (
@@ -1315,6 +1336,23 @@ function SessionView({
   const list = studentsOf(classId);
   const unread = list.filter((s) => attemptsOf(s.id) === 0).length;
   const chosen = picked.filter((s) => typeof scores[s.id] === "number").length;
+
+  /** يستبدل تلميذًا بالتالي في العدل: الأقل محاولات ممن ليسوا في القائمة. */
+  function swap(student: Student) {
+    const already = new Set(picked.map((p) => p.id));
+    const [next] = pickForSession(
+      list.filter((s) => !already.has(s.id)),
+      attemptsOf,
+      1,
+    );
+    if (!next) return;
+    setPicked((ps) => ps.map((p) => (p.id === student.id ? next : p)));
+    setScores((s) => {
+      const rest = { ...s };
+      delete rest[student.id];
+      return rest;
+    });
+  }
   // سلّم التنقيط من سقف معيار القراءة نفسه، فلو رفعه الأستاذ إلى 6 ظهرت 6.
   const scale = reading ? optionsFor({ ...reading, kind: "add" }) : [0, 1, 2, 3, 4];
 
@@ -1332,7 +1370,7 @@ function SessionView({
           id="session-class"
           value={classId}
           onChange={(e) => {
-            setClassId(e.target.value);
+            onClassId(e.target.value);
             setPicked([]);
             setScores({});
           }}
@@ -1341,7 +1379,7 @@ function SessionView({
             <option key={c.id} value={c.id}>{c.name}</option>
           ))}
         </select>
-        <select id="session-count" value={count} onChange={(e) => setCount(Number(e.target.value))}>
+        <select id="session-count" value={count} onChange={(e) => onCount(Number(e.target.value))}>
           {[3, 4, 5, 6, 7, 8].map((n) => (
             <option key={n} value={n}>{n}</option>
           ))}
@@ -1382,6 +1420,8 @@ function SessionView({
                 <span className="pill">
                   {attemptsOf(student.id) ? `${attemptsOf(student.id)} محاولات` : "أول محاولة"}
                 </span>
+                {/* الاسم يخرج والقائمة لا تُعاد: الغائب لا يُنقص الحصة واحدًا */}
+                <button className="clearb" onClick={() => swap(student)}>بدّله</button>
               </div>
               <div className="scorerow">
                 {scale.map((n) => (

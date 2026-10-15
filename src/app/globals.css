@@ -145,10 +145,13 @@ select, .inp { background: var(--surface); border: 1px solid var(--line); border
 .pcard { padding: 13px; display: flex; flex-direction: column; gap: 10px; }
 .pcard .pn { display: flex; align-items: center; gap: 9px; }
 .pcard .pn b { flex: 1; min-width: 0; font-weight: 600; font-size: 15px; }
-.scorerow { display: flex; gap: 6px; }
-.scorerow button { flex: 1; padding: 12px 0; border-radius: var(--radius-sm); background: var(--surface-2); font-weight: 700; font-variant-numeric: tabular-nums; font-size: 16px; border: 1px solid transparent; }
+/* سلّم التنقيط يلتفّ على سطرين عند الحاجة: سقف 4 بخطوة نصف يعطي تسعة أزرار،
+   فكانت في سطر واحد بعرض 31 بكسل — إصبعٌ واقفٌ في قاعة لا يصيبها. */
+.scorerow { display: flex; gap: 6px; flex-wrap: wrap; }
+.scorerow button { flex: 1 0 48px; padding: 12px 0; border-radius: var(--radius-sm); background: var(--surface-2); font-weight: 700; font-variant-numeric: tabular-nums; font-size: 16px; border: 1px solid transparent; }
 .scorerow button[aria-pressed="true"] { background: var(--primary); color: var(--on-primary); border-color: var(--primary); }
-.scorerow button.skip { flex: 0 0 62px; font-size: 13px; font-weight: 600; color: var(--muted); }
+.scorerow button.skip { flex: 1 0 62px; font-size: 13px; font-weight: 600; color: var(--muted); }
+.pcard .pn .clearb { flex: none; }
 .scorerow button.skip[aria-pressed="true"] { background: var(--surface-2); color: var(--ink); border-color: var(--line); }
 
 .scrim { position: fixed; inset: 0; background: rgba(8, 18, 14, 0.5); z-index: 40; }
