@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { isDurable, kvDel, kvGet, kvSet } from "@/lib/localdb";
+import ExportSheet from "./ExportSheet";
 import { useOutbox } from "@/lib/useOutbox";
 import {
   applyReadings,
@@ -108,6 +109,7 @@ export default function AppClient({
   const [openClass, setOpenClass] = useState<string | null>(null);
   const [openStudentId, setOpenStudentId] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<Klass | null>(null);
   const [confirmCriterion, setConfirmCriterion] = useState<Criterion | null>(null);
   const [confirmStudent, setConfirmStudent] = useState<Student | null>(null);
@@ -628,6 +630,7 @@ export default function AppClient({
               onDeleteCriterion={setConfirmCriterion}
               onComponent={saveComponent}
               onImport={() => setImporting(true)}
+              onExport={() => setExporting(true)}
               onSignOut={() => (waiting.total ? setConfirmSignOut(true) : void signOut())}
             />
           )}
@@ -665,6 +668,20 @@ export default function AppClient({
             setImporting(false);
             await createClassWithStudents(name, names);
           }}
+        />
+      )}
+
+      {exporting && (
+        <ExportSheet
+          classes={classes}
+          studentsOf={studentsOf}
+          criteria={criteria}
+          components={components}
+          recordOf={recordOf}
+          readingsOf={readingsOf}
+          term={term}
+          say={say}
+          onClose={() => setExporting(false)}
         />
       )}
 
@@ -1285,7 +1302,7 @@ const TP_PRESETS = ["الأعمال التطبيقية", "التعبير الش�
 
 function SettingsView({
   criteria, components, email,
-  onCriterion, onAddCriterion, onDeleteCriterion, onComponent, onImport, onSignOut,
+  onCriterion, onAddCriterion, onDeleteCriterion, onComponent, onImport, onExport, onSignOut,
 }: {
   criteria: Criterion[];
   components: Component[];
@@ -1295,6 +1312,7 @@ function SettingsView({
   onDeleteCriterion: (c: Criterion) => void;
   onComponent: (id: string, patch: Partial<Component>) => void;
   onImport: () => void;
+  onExport: () => void;
   onSignOut: () => void;
 }) {
   const check = checkTotal(criteria);
@@ -1481,6 +1499,13 @@ function SettingsView({
             <small>ملف الإشراف التربوي أو لصق الأسماء</small>
           </div>
           <button className="btn soft" onClick={onImport}>استيراد</button>
+        </div>
+        <div className="srow2">
+          <div className="k">
+            ملء وثيقة حجز النقاط
+            <small>ارفع وثيقتك فتُملأ خاناتها بعلامات أقسامك</small>
+          </div>
+          <button className="btn soft" onClick={onExport}>ملء</button>
         </div>
         <div className="srow2">
           <div className="k">

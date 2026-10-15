@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "check": "node scripts/check-scoring.mjs && node scripts/check-outbox.mjs"
+    "check": "node scripts/check-scoring.mjs && node scripts/check-outbox.mjs && node scripts/check-ministry.mjs"
   },
   "dependencies": {
     "@supabase/ssr": "0.5.2",
