@@ -1,0 +1,47 @@
+/**
+ * منطق الدخول الصغير الذي يستحق اختبارًا بالأرقام (scripts/check-auth.mjs
+ * نسخة حرفية منه): الوجهة بعد رابط البريد، وتحقّق كلمة السر الجديدة.
+ */
+
+export const MIN_PASSWORD = 6;
+
+/**
+ * الوجهة بعد تبديل الرمز. تُقبل مسارات التطبيق وحدها: وجهة تأتي من الرابط
+ * لا يجوز أن تقود إلى موقع آخر (إعادة توجيه مفتوحة).
+ */
+export function safeNext(value: string | null | undefined): string {
+  if (!value) return "/app";
+  if (!value.startsWith("/") || value.startsWith("//") || value.includes("\\")) {
+    return "/app";
+  }
+  const allowed = ["/app", "/reset"];
+  const ok = allowed.some((p) => value === p || value.startsWith(`${p}?`));
+  return ok ? value : "/app";
+}
+
+/** رسالة بالعربية إن كانت كلمتا السر غير صالحتين، وإلا null. */
+export function passwordProblem(password: string, again: string): string | null {
+  if (password.length < MIN_PASSWORD) {
+    return `كلمة السر قصيرة: ${MIN_PASSWORD} أحرف على الأقل.`;
+  }
+  if (password !== again) return "الكلمتان غير متطابقتين.";
+  return null;
+}
+
+export function translateAuthError(message: string): string {
+  const m = message.toLowerCase();
+  if (m.includes("invalid login")) return "البريد أو كلمة السر غير صحيحة.";
+  if (m.includes("already registered")) return "هذا البريد مسجّل. سجّل الدخول به.";
+  if (m.includes("rate limit") || m.includes("too many") || m.includes("seconds")) {
+    return "طلبات كثيرة في وقت قصير. انتظر دقيقة ثم أعد المحاولة.";
+  }
+  if (m.includes("different from the old")) {
+    return "اختر كلمة سر مختلفة عن القديمة.";
+  }
+  if (m.includes("session") && m.includes("missing")) {
+    return "انتهت صلاحية الرابط. اطلب رابطًا جديدًا.";
+  }
+  if (m.includes("password")) return `كلمة السر لا تصلح: ${MIN_PASSWORD} أحرف على الأقل.`;
+  if (m.includes("email")) return "راجع صيغة البريد الإلكتروني.";
+  return message;
+}

@@ -129,6 +129,11 @@ const addRead = (id, student, score) => ({
 const delRead = (id, student) => ({ ...base(), kind: "reading-del", reading_id: id, student_id: student });
 const stu = (student, patch) => ({ ...base(), kind: "student", student_id: student, patch });
 
+function savedNotice(queue) {
+  if (!pending(queue).total) return "";
+  return `${pendingLabel(queue)} بعد. هي محفوظة على هذا الجهاز ولن تضيع، وتُرسل تلقائيًا حين تعود الصفحة إلى العمل.`;
+}
+
 let pass = 0, fail = 0;
 function t(name, got, want) {
   const same = JSON.stringify(got) === JSON.stringify(want);
@@ -240,6 +245,11 @@ t("36 تلميذًا × 5 جولات = 36 عملية", heavy.length, 36);
 t("وكلّها آخر قيمة", heavy.every((o) => o.criteria.part === 4), true);
 const applied = applyRecords([], heavy);
 t("وتظهر كلها في الشاشة", applied.length, 36);
+
+console.log("\n12. شاشة الخطأ: العلامات المعلّقة محفوظة، ولا وعد بلا أساس");
+t("طابور فارغ → لا رسالة", savedNotice([]), "");
+t("علامتان معلّقتان", savedNotice([rec("s1", 1, {}), rec("s2", 1, {})]).startsWith("علامتان لم تُرسل بعد."), true);
+t("تذكر الحفظ على الجهاز", savedNotice([rec("s1", 1, {})]).includes("محفوظة على هذا الجهاز"), true);
 
 console.log(`\n${pass} ناجح · ${fail} فاشل\n`);
 process.exit(fail ? 1 : 0);

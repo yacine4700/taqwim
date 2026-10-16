@@ -1,12 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { translateAuthError as translate } from "@/lib/auth";
 
 export default function LoginPage() {
   const router = useRouter();
-  const [mode, setMode] = useState<"in" | "up">("in");
+  const [mode, setMode] = useState<"in" | "up" | "forgot">("in");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
@@ -14,12 +15,38 @@ export default function LoginPage() {
   const [message, setMessage] = useState("");
   const [bad, setBad] = useState(false);
 
+  /* ما يصل من الصفحات الأخرى: رابط استعادة فاسد، أو طلب رابط جديد */
+  useEffect(() => {
+    const query = new URLSearchParams(window.location.search);
+    if (query.get("forgot")) setMode("forgot");
+    if (query.get("error") === "link") {
+      setBad(true);
+      setMessage("تعذّر فتح الرابط: انتهت صلاحيته أو فُتح في جهاز آخر. اطلب رابطًا جديدًا.");
+      setMode("forgot");
+    }
+  }, []);
+
   async function submit(event: React.FormEvent) {
     event.preventDefault();
     setBusy(true);
     setMessage("");
     setBad(false);
     const supabase = createClient();
+
+    if (mode === "forgot") {
+      const { error } = await supabase.auth.resetPasswordForEmail(email, {
+        redirectTo: `${window.location.origin}/auth/callback?next=/reset`,
+      });
+      if (error) {
+        setBad(true);
+        setMessage(translate(error.message));
+      } else {
+        // جواب واحد سواء أكان البريد مسجّلًا أم لا، فلا يُستعمل النموذج للتخمين
+        setMessage("إن كان هذا البريد مسجّلًا فقد أرسلنا إليه رابط الاستعادة. افتحه من الجهاز نفسه.");
+      }
+      setBusy(false);
+      return;
+    }
 
     if (mode === "up") {
       const { data, error } = await supabase.auth.signUp({
@@ -61,7 +88,9 @@ export default function LoginPage() {
           <p className="lead">
             {mode === "in"
               ? "سجّل الدخول لتصل إلى أقسامك وعلاماتك."
-              : "أنشئ حسابك، وتُجهَّز لك المعايير والمعاملات تلقائيًا."}
+              : mode === "up"
+                ? "أنشئ حسابك، وتُجهَّز لك المعايير والمعاملات تلقائيًا."
+                : "اكتب بريدك لنرسل إليه رابطًا تعيّن به كلمة سر جديدة. علاماتك محفوظة ولا تتأثر."}
           </p>
         </div>
 
@@ -91,6 +120,7 @@ export default function LoginPage() {
           />
         </label>
 
+        {mode !== "forgot" && (
         <label>
           كلمة السر
           <input
@@ -104,12 +134,33 @@ export default function LoginPage() {
             required
           />
         </label>
+        )}
 
         {message && <div className={bad ? "note bad" : "note"}>{message}</div>}
 
         <button className="btn" type="submit" disabled={busy}>
-          {busy ? "لحظة…" : mode === "in" ? "دخول" : "إنشاء الحساب"}
+          {busy
+            ? "لحظة…"
+            : mode === "in"
+              ? "دخول"
+              : mode === "up"
+                ? "إنشاء الحساب"
+                : "أرسل رابط الاستعادة"}
         </button>
+
+        {mode === "in" && (
+          <button
+            type="button"
+            className="swap"
+            onClick={() => {
+              setMode("forgot");
+              setMessage("");
+              setBad(false);
+            }}
+          >
+            نسيت كلمة السر؟
+          </button>
+        )}
 
         <button
           type="button"
@@ -120,18 +171,9 @@ export default function LoginPage() {
             setBad(false);
           }}
         >
-          {mode === "in" ? "ليس لي حساب بعد" : "لي حساب، أريد الدخول"}
+          {mode === "in" ? "ليس لي حساب بعد" : mode === "up" ? "لي حساب، أريد الدخول" : "رجوع إلى الدخول"}
         </button>
       </form>
     </div>
   );
-}
-
-function translate(message: string): string {
-  const m = message.toLowerCase();
-  if (m.includes("invalid login")) return "البريد أو كلمة السر غير صحيحة.";
-  if (m.includes("already registered")) return "هذا البريد مسجّل. سجّل الدخول به.";
-  if (m.includes("password")) return "كلمة السر قصيرة: ستة أحرف على الأقل.";
-  if (m.includes("email")) return "راجع صيغة البريد الإلكتروني.";
-  return message;
 }

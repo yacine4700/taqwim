@@ -102,3 +102,16 @@ export async function kvClear(): Promise<void> {
   memory.clear();
   await run("readwrite", (store) => store.clear());
 }
+
+/** المفاتيح التي تبدأ ببادئة: لشاشة الخطأ، وهي لا تعرف معرّف الأستاذ. */
+export async function kvKeys(prefix: string): Promise<string[]> {
+  const stored = (await run<IDBValidKey[]>("readonly", (store) => store.getAllKeys())) ?? [];
+  const names = new Set<string>();
+  for (const key of stored) {
+    if (typeof key === "string" && key.startsWith(prefix)) names.add(key);
+  }
+  for (const key of memory.keys()) {
+    if (key.startsWith(prefix)) names.add(key);
+  }
+  return [...names];
+}

@@ -1,0 +1,81 @@
+/* نسخة حرفية من منطق src/lib/auth.ts، لاختباره بالأرقام.
+   النسختان يجب أن تبقيا متطابقتين، كما في check-scoring.mjs. */
+
+const MIN_PASSWORD = 6;
+
+function safeNext(value) {
+  if (!value) return "/app";
+  if (!value.startsWith("/") || value.startsWith("//") || value.includes("\\")) {
+    return "/app";
+  }
+  const allowed = ["/app", "/reset"];
+  const ok = allowed.some((p) => value === p || value.startsWith(`${p}?`));
+  return ok ? value : "/app";
+}
+
+function passwordProblem(password, again) {
+  if (password.length < MIN_PASSWORD) {
+    return `كلمة السر قصيرة: ${MIN_PASSWORD} أحرف على الأقل.`;
+  }
+  if (password !== again) return "الكلمتان غير متطابقتين.";
+  return null;
+}
+
+function translateAuthError(message) {
+  const m = message.toLowerCase();
+  if (m.includes("invalid login")) return "البريد أو كلمة السر غير صحيحة.";
+  if (m.includes("already registered")) return "هذا البريد مسجّل. سجّل الدخول به.";
+  if (m.includes("rate limit") || m.includes("too many") || m.includes("seconds")) {
+    return "طلبات كثيرة في وقت قصير. انتظر دقيقة ثم أعد المحاولة.";
+  }
+  if (m.includes("different from the old")) {
+    return "اختر كلمة سر مختلفة عن القديمة.";
+  }
+  if (m.includes("session") && m.includes("missing")) {
+    return "انتهت صلاحية الرابط. اطلب رابطًا جديدًا.";
+  }
+  if (m.includes("password")) return `كلمة السر لا تصلح: ${MIN_PASSWORD} أحرف على الأقل.`;
+  if (m.includes("email")) return "راجع صيغة البريد الإلكتروني.";
+  return message;
+}
+
+let pass = 0;
+let fail = 0;
+function eq(name, got, want) {
+  if (got === want) pass++;
+  else {
+    fail++;
+    console.error(`✗ ${name}\n   حصلنا: ${JSON.stringify(got)}\n   المتوقع: ${JSON.stringify(want)}`);
+  }
+}
+
+/* الوجهة بعد الرابط: لا إعادة توجيه إلى خارج التطبيق */
+eq("بلا وجهة", safeNext(null), "/app");
+eq("وجهة فارغة", safeNext(""), "/app");
+eq("/reset تُقبل", safeNext("/reset"), "/reset");
+eq("/app تُقبل", safeNext("/app"), "/app");
+eq("/app مع استعلام", safeNext("/app?tab=docs"), "/app?tab=docs");
+eq("موقع خارجي", safeNext("https://evil.example"), "/app");
+eq("بروتوكول نسبي //", safeNext("//evil.example"), "/app");
+eq("شرطة معكوسة", safeNext("/\\evil.example"), "/app");
+eq("مسار غير مسموح", safeNext("/api/roster"), "/app");
+eq("بادئة تشبه المسموح", safeNext("/reset-evil"), "/app");
+eq("بادئة /application", safeNext("/application"), "/app");
+
+/* كلمة السر الجديدة */
+eq("قصيرة", passwordProblem("12345", "12345"), "كلمة السر قصيرة: 6 أحرف على الأقل.");
+eq("غير متطابقتين", passwordProblem("secret1", "secret2"), "الكلمتان غير متطابقتين.");
+eq("سليمة", passwordProblem("secret1", "secret1"), null);
+eq("حدّ الطول", passwordProblem("123456", "123456"), null);
+eq("القصر قبل التطابق", passwordProblem("12", "34"), "كلمة السر قصيرة: 6 أحرف على الأقل.");
+
+/* الرسائل */
+eq("دخول خاطئ", translateAuthError("Invalid login credentials"), "البريد أو كلمة السر غير صحيحة.");
+eq("حدّ البريد", translateAuthError("email rate limit exceeded"), "طلبات كثيرة في وقت قصير. انتظر دقيقة ثم أعد المحاولة.");
+eq("كلمة قديمة", translateAuthError("New password should be different from the old password."), "اختر كلمة سر مختلفة عن القديمة.");
+eq("جلسة مفقودة", translateAuthError("Auth session missing!"), "انتهت صلاحية الرابط. اطلب رابطًا جديدًا.");
+eq("كلمة قصيرة من الخادم", translateAuthError("Password should be at least 6 characters"), "كلمة السر لا تصلح: 6 أحرف على الأقل.");
+eq("رسالة مجهولة تمرّ كما هي", translateAuthError("boom"), "boom");
+
+console.log(`auth: ${pass} نجح، ${fail} فشل`);
+if (fail) process.exit(1);
