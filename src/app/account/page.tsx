@@ -49,7 +49,14 @@ export default function AccountPage() {
     const supabase = createClient();
     const { error } = await supabase.rpc("delete_my_account");
     if (error) {
-      setMessage(translateAuthError(error.message));
+      // الدالة لم تُطبَّق بعد في القاعدة: لا شيء حُذف، والرسالة تقول ذلك بدل نصّ خام
+      const missing =
+        error.code === "PGRST202" || error.message.toLowerCase().includes("could not find");
+      setMessage(
+        missing
+          ? "الحذف غير مُفعَّل على الخادم بعد، ولم يُحذف شيء. أبلغ صاحب التطبيق."
+          : translateAuthError(error.message),
+      );
       setBusy(false);
       return;
     }
