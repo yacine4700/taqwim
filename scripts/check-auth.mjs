@@ -116,8 +116,8 @@ eq("جزء من البريد", confirmMatches("a@b", "a@b.com"), false);
 /* الموافقة على الخصوصية عند إنشاء الحساب */
 eq("بلا موافقة تُرفض", consentProblem(false), "للمتابعة وافق على سياسة الخصوصية.");
 eq("بموافقة تمرّ", consentProblem(true), null);
-const meta = signupMetadata("ياسين", new Date("2026-10-16T13:00:00.000Z"));
-eq("الاسم يُحفظ", meta.full_name, "ياسين");
+const meta = signupMetadata("أستاذ تجريبي", new Date("2026-10-16T13:00:00.000Z"));
+eq("الاسم يُحفظ", meta.full_name, "أستاذ تجريبي");
 eq("نسخة السياسة تُحفظ", meta.privacy_version, "2026-10-16");
 eq("تاريخ الموافقة بصيغة ISO", meta.privacy_accepted_at, "2026-10-16T13:00:00.000Z");
 

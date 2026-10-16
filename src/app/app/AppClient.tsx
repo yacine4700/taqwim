@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { MIN_PASSWORD, changePasswordProblem, translateAuthError } from "@/lib/auth";
 import { isDurable, kvDel, kvGet, kvSet } from "@/lib/localdb";
 import { nameMatches } from "@/lib/names";
 import ExportSheet from "./ExportSheet";
@@ -1981,6 +1982,7 @@ function SettingsView({
   onSignOut: () => void;
 }) {
   const [part, setPart] = useState<"scoring" | "schools" | "me">("scoring");
+  const [pwdOpen, setPwdOpen] = useState(false);
   const check = checkTotal(criteria);
 
   return (
@@ -2198,13 +2200,13 @@ function SettingsView({
           <span className="pill">تظهر في الكشف المطبوع</span>
         </div>
         {([
-          ["full_name", "الاسم واللقب", "مثال: كوزريت ياسين"],
+          ["full_name", "الاسم واللقب", ""],
           ["subject", "المادة", "مثال: علوم الطبيعة والحياة"],
         ] as const).map(([field, label, hint]) => (
           <div key={field} className="srow2">
             <div className="k">
               {label}
-              <small>{hint}</small>
+              {hint && <small>{hint}</small>}
             </div>
             <input
               id={`profile-${field}`}
@@ -2236,7 +2238,7 @@ function SettingsView({
             كلمة السر
             <small>غيّرها وأنت داخل حسابك</small>
           </div>
-          <a className="btn ghost" href="/password">تغيير</a>
+          <button className="btn ghost" onClick={() => setPwdOpen(true)}>تغيير</button>
         </div>
         <div className="srow2">
           <div className="k">
@@ -2255,7 +2257,109 @@ function SettingsView({
       </div>
       </>
       )}
+      {pwdOpen && <ChangePasswordSheet email={email} onClose={() => setPwdOpen(false)} />}
     </section>
+  );
+}
+
+/**
+ * تغيير كلمة السر في نافذة منبثقة، دون مغادرة الإعدادات. تُطلب الحالية ويُتحقَّق
+ * منها أولًا: هاتف مفتوح تركه صاحبه على الطاولة لا يكفي لأخذ حساب فيه علامات
+ * فصل كامل. (ومن نسي كلمته فطريقه شاشة الدخول ← «نسيت كلمة السر؟».)
+ */
+function ChangePasswordSheet({ email, onClose }: { email: string; onClose: () => void }) {
+  const [current, setCurrent] = useState("");
+  const [next, setNext] = useState("");
+  const [again, setAgain] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const [done, setDone] = useState(false);
+
+  async function submit() {
+    const problem = changePasswordProblem(current, next, again);
+    if (problem) {
+      setMessage(problem);
+      return;
+    }
+    setBusy(true);
+    setMessage("");
+    const client = createClient();
+
+    const check = await client.auth.signInWithPassword({ email, password: current });
+    if (check.error) {
+      const wrong = check.error.message.toLowerCase().includes("invalid login");
+      setMessage(wrong ? "كلمة السر الحالية غير صحيحة." : translateAuthError(check.error.message));
+      setBusy(false);
+      return;
+    }
+
+    const { error } = await client.auth.updateUser({ password: next });
+    setBusy(false);
+    if (error) {
+      setMessage(translateAuthError(error.message));
+      return;
+    }
+    setDone(true);
+  }
+
+  return (
+    <>
+      <div className="scrim" onClick={onClose} />
+      <div className="sheet" role="dialog" aria-label="تغيير كلمة السر">
+        <div className="shead">
+          <h3>{done ? "تغيّرت كلمة السر" : "تغيير كلمة السر"}</h3>
+          <button className="icbtn" onClick={onClose} aria-label="إغلاق">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+              <path d="M6 6l12 12M18 6L6 18" />
+            </svg>
+          </button>
+        </div>
+
+        {done ? (
+          <>
+            <p className="lead">استعملها في دخولك القادم. علاماتك كما هي.</p>
+            <button className="btn full" onClick={onClose}>تمّ</button>
+          </>
+        ) : (
+          <>
+            {(
+              [
+                ["الحالية", current, setCurrent, "current-password"],
+                ["الجديدة", next, setNext, "new-password"],
+                ["أعد كتابة الجديدة", again, setAgain, "new-password"],
+              ] as const
+            ).map(([label, value, set, auto]) => (
+              <div key={label} className="fld">
+                <div className="flab">
+                  <b>{label === "أعد كتابة الجديدة" ? label : `كلمة السر ${label}`}</b>
+                </div>
+                <input
+                  className="inp"
+                  type="password"
+                  style={{ width: "100%" }}
+                  dir="ltr"
+                  value={value}
+                  autoComplete={auto}
+                  minLength={label === "الحالية" ? undefined : MIN_PASSWORD}
+                  onChange={(e) => set(e.target.value)}
+                />
+              </div>
+            ))}
+
+            {message && <div className="note bad">{message}</div>}
+
+            <button
+              className="btn"
+              style={{ marginTop: 14 }}
+              disabled={busy || !current || !next || !again}
+              onClick={() => void submit()}
+            >
+              {busy ? "لحظة…" : "حفظ كلمة السر"}
+            </button>
+          </>
+        )}
+      </div>
+    </>
   );
 }
 
@@ -3368,7 +3472,7 @@ function ImportSheet({
             style={{ minHeight: source === "paste" ? 150 : 110 }}
             value={text}
             onChange={(e) => setText(e.target.value)}
-            placeholder={"بن عمر أمين\nالحاج موسى ابراهيم\n…"}
+            placeholder={"اللقب الاسم\nاللقب الاسم\n…"}
           />
         </div>
 
