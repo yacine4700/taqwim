@@ -215,18 +215,18 @@ export default function AppClient({
         onDo: () => setTab("settings"),
       });
     }
-    // المؤسسة من شأن القسم: تُطلب حين يوجد قسم بلا واحدة، لا قبل ذلك.
-    if (classes.length > 0 && classes.some((c) => !c.school_id)) {
+    // المؤسسة تُختار عند استيراد القسم، فلا خطوة هنا تُصلح قسمًا بلا مؤسسة.
+    if (schools.length === 0 && classes.length > 0) {
       steps.push({
         key: "schools",
-        label: "انسب أقسامك إلى مؤسساتها",
+        label: "أضف مؤسستك",
         hint: "اسم الثانوية يُطبع في ترويسة كشف كل قسم",
         action: "المؤسسات",
         onDo: () => setTab("settings"),
       });
     }
     return steps;
-  }, [hideStart, classes, criteria, profile]);
+  }, [hideStart, classes, schools, criteria, profile]);
 
   /** عملٌ يحتاج الخادم: إنشاء، حذف، تغيير إعدادات. التنقيط وحده يعمل دون شبكة. */
   const needsNetwork = useCallback(() => {
@@ -657,21 +657,6 @@ export default function AppClient({
     say(`حُذفت ${school.name} — أقسامها باقية بلا مؤسسة`);
   }
 
-  async function setClassSchool(classId: string, schoolId: string | null) {
-    if (!needsNetwork()) return;
-    setClasses((cs) =>
-      cs.map((c) => (c.id === classId ? { ...c, school_id: schoolId } : c)),
-    );
-    const { error } = await supabase
-      .from("classes")
-      .update({ school_id: schoolId })
-      .eq("id", classId);
-    if (error) {
-      say("تعذّر نقل القسم");
-      void load();
-    }
-  }
-
   async function createClassWithStudents(
     name: string,
     names: string[],
@@ -869,7 +854,6 @@ export default function AppClient({
               onAddSchool={addSchool}
               onRenameSchool={renameSchool}
               onDeleteSchool={deleteSchool}
-              onMoveClass={setClassSchool}
               onSignOut={() => (waiting.total ? setConfirmSignOut(true) : void signOut())}
             />
           )}
@@ -1061,13 +1045,22 @@ function ClassesView({
   onDismissStart: () => void;
 }) {
   const groups = groupBySchool(classes, schools);
+  /** المؤسسة المعروضة وحدها، أو "" لكل الأقسام. */
+  const [only, setOnly] = useState("");
+  const shown = groups.filter((g) => !only || g.key === only);
+  const current = groups.find((g) => g.key === only) ?? null;
+
   return (
     <section className="view">
       <div className="vhead">
         <div>
           <h2>أقسامي</h2>
           {classes.length > 0 && (
-            <p>{studentCount} تلميذًا في {classes.length} أقسام</p>
+            <p>
+              {current
+                ? `${current.name} · ${countWord(current.classes.length, "قسم واحد", "قسمان", "أقسام", "قسمًا")}`
+                : `${studentCount} تلميذًا في ${countWord(classes.length, "قسم واحد", "قسمان", "أقسام", "قسمًا")}`}
+            </p>
           )}
         </div>
         <div className="hspace" />
@@ -1087,11 +1080,42 @@ function ClassesView({
           <button className="btn" onClick={onImport}>استيراد قائمة</button>
         </div>
       ) : (
-        /* العناوين لا تظهر إلا لمن له أكثر من مؤسسة: من يدرّس في واحدة لا
-           يحتاج أن يُقال له في كل شاشة أين هو. */
-        groups.map((group) => (
+        <>
+        {/* بطاقات المؤسسات: من يدرّس في ثانويتين يفتح التطبيق وهو في إحداهما،
+            فنقرةٌ تُظهر أقسامها وحدها. ولا تظهر لمن له مؤسسة واحدة. */}
+        {groups.length > 1 && (
+          <div className="schooltiles">
+            {groups.map((group) => {
+              // تقدّم التنقيط في المؤسسة كلها: الرقم الذي يُسأل عنه عند بابها
+              const stats = group.classes.map((k) => statsOf(k.id));
+              const students = stats.reduce((sum, st) => sum + st.total, 0);
+              const scored = stats.reduce((sum, st) => sum + st.scored, 0);
+              return (
+                <button
+                  key={group.key}
+                  className="tile"
+                  aria-pressed={only === group.key}
+                  onClick={() => setOnly(only === group.key ? "" : group.key)}
+                >
+                  <b>{group.name}</b>
+                  <span className="hspace" />
+                  <i className="num">{scored}/{students}</i>
+                  <small>منقَّطون</small>
+                  <div className="bar">
+                    <i style={{ width: `${students ? Math.round((scored / students) * 100) : 0}%` }} />
+                  </div>
+                  <small>
+                    {countWord(group.classes.length, "قسم واحد", "قسمان", "أقسام", "قسمًا")}
+                  </small>
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        {shown.map((group) => (
           <div key={group.key} className="schoolgroup">
-            {groups.length > 1 && (
+            {groups.length > 1 && !only && (
               <div className="grouphead">
                 <b>{group.name}</b>
                 <span className="pill">
@@ -1122,7 +1146,8 @@ function ClassesView({
               })}
             </div>
           </div>
-        ))
+        ))}
+        </>
       )}
     </section>
   );
@@ -1839,7 +1864,6 @@ function DocsView({
             {missingSchool && (
               <div className="note warn">
                 بعض أقسامك بلا مؤسسة، فتُطبع ترويستها بلا اسم ثانوية.
-                انسبها من الإعدادات ← المؤسسات.
               </div>
             )}
             <div className="pickbar">
@@ -1899,7 +1923,7 @@ const TP_PRESETS = ["الأعمال التطبيقية", "التعبير الش�
 function SettingsView({
   criteria, components, email, profile, schools, classes,
   onCriterion, onAddCriterion, onDeleteCriterion, onComponent, onProfile,
-  onAddSchool, onRenameSchool, onDeleteSchool, onMoveClass, onSignOut,
+  onAddSchool, onRenameSchool, onDeleteSchool, onSignOut,
 }: {
   criteria: Criterion[];
   components: Component[];
@@ -1915,7 +1939,6 @@ function SettingsView({
   onAddSchool: (name: string) => Promise<School | null>;
   onRenameSchool: (id: string, name: string) => void;
   onDeleteSchool: (school: School) => void;
-  onMoveClass: (classId: string, schoolId: string | null) => void;
   onSignOut: () => void;
 }) {
   const [part, setPart] = useState<"scoring" | "schools" | "me">("scoring");
@@ -2122,7 +2145,6 @@ function SettingsView({
           onAdd={onAddSchool}
           onRename={onRenameSchool}
           onDelete={onDeleteSchool}
-          onMove={onMoveClass}
         />
       )}
 
@@ -2184,14 +2206,14 @@ function SettingsView({
  * سطرٌ في مكانه لا ورقة منبثقة: لا علامة تضيع.
  */
 function SchoolsSettings({
-  schools, classes, onAdd, onRename, onDelete, onMove,
+  schools, classes, onAdd, onRename, onDelete,
 }: {
   schools: School[];
+  /** للعدّ وحده: مؤسسة القسم تُختار مرة عند استيراده. */
   classes: Klass[];
   onAdd: (name: string) => Promise<School | null>;
   onRename: (id: string, name: string) => void;
   onDelete: (school: School) => void;
-  onMove: (classId: string, schoolId: string | null) => void;
 }) {
   const [adding, setAdding] = useState("");
   const [confirm, setConfirm] = useState<string | null>(null);
@@ -2252,7 +2274,7 @@ function SchoolsSettings({
                 <div className="srow2">
                   <div className="k">
                     {count
-                      ? `${countWord(count, "قسم واحد يبقى", "قسمان يبقيان", "أقسام تبقى", "قسمًا يبقى")} بلا مؤسسة، ولا تضيع علامة.`
+                      ? `${countWord(count, "قسم واحد يبقى", "قسمان يبقيان", "أقسام تبقى", "قسمًا يبقى")} بلا مؤسسة — لا تضيع علامة، لكن ترويسة كشفه تُطبع بلا اسم ثانوية.`
                       : "لا أقسام فيها."}
                   </div>
                   <button className="btn ghost" onClick={() => setConfirm(null)}>تراجع</button>
@@ -2271,10 +2293,9 @@ function SchoolsSettings({
           );
         })}
 
-        <div className="srow2">
+        <div className="srow2 addrow">
           <input
             id="school-new"
-            style={{ flex: 1, width: "auto" }}
             value={adding}
             aria-label="مؤسسة جديدة"
             placeholder="أضف مؤسسة: ثانوية…"
@@ -2293,31 +2314,6 @@ function SchoolsSettings({
         </div>
       </div>
 
-      {classes.length > 0 && (
-        <div className="card">
-          <div className="srow2">
-            <b>أقسامي</b>
-            <div className="hspace" />
-            <span className="pill">انقل قسمًا بين مؤسستيك</span>
-          </div>
-          {classes.map((klass) => (
-            <div key={klass.id} className="srow2">
-              <div className="k">{klass.name}</div>
-              <select
-                aria-label={`مؤسسة ${klass.name}`}
-                value={klass.school_id ?? ""}
-                style={{ maxWidth: 170 }}
-                onChange={(e) => onMove(klass.id, e.target.value || null)}
-              >
-                {schools.map((s) => (
-                  <option key={s.id} value={s.id}>{s.name}</option>
-                ))}
-                <option value="">بلا مؤسسة</option>
-              </select>
-            </div>
-          ))}
-        </div>
-      )}
     </>
   );
 }

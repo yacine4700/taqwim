@@ -224,6 +224,13 @@ select, .inp { background: var(--surface); border: 1px solid var(--line); border
 .srow2 .k { flex: 1; min-width: 0; font-size: 14px; }
 .srow2 .k small { display: block; color: var(--faint); font-size: 11px; }
 .srow2 input { width: 74px; text-align: center; background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 7px; }
+/* سطر الإضافة: حقل نصّي يمتدّ وزرّ بجانبه.
+   الحقل المرن يأخذ min-width تلقائيًا بمقدار نصّه، فكان النصّ الطويل يدفع
+   الزرّ خارج الشاشة. و min-width: 0 هو ما يسمح له بالانكماش. */
+.addrow input {
+  flex: 1; width: auto; min-width: 0; text-align: start;
+}
+.addrow .btn { flex: none; }
 textarea.inp { width: 100%; min-height: 150px; resize: vertical; line-height: 1.7; }
 .empty { padding: 34px 18px; text-align: center; display: flex; flex-direction: column; gap: 12px; align-items: center; }
 .empty h3 { font-size: 17px; }
@@ -410,6 +417,29 @@ nav.tabs svg { width: 21px; height: 21px; }
   font-weight: 600; color: var(--muted);
 }
 .segmented button[aria-pressed="true"] { background: var(--surface); color: var(--primary); box-shadow: var(--shadow); }
+
+/* بطاقات المؤسسات: مربّعات تُنتقى بنقرة فتُعرض أقسامها وحدها */
+.schooltiles { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+.tile {
+  aspect-ratio: 1 / 1; min-height: 128px;
+  display: flex; flex-direction: column; text-align: start;
+  padding: 14px; gap: 6px;
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--radius); box-shadow: var(--shadow);
+}
+.tile b { font-size: 15px; font-weight: 600; line-height: 1.4; }
+.tile small { font-size: 11px; color: var(--faint); }
+.tile i { font-size: 20px; font-weight: 700; font-style: normal; line-height: 1; }
+.tile .bar { width: 100%; margin-block: 4px 2px; }
+.tile[aria-pressed="true"] {
+  background: var(--primary-soft); border-color: var(--primary);
+}
+.tile[aria-pressed="true"] b { color: var(--primary); }
+.tile[aria-pressed="true"] small { color: var(--primary); opacity: 0.85; }
+/* المربّع يصير شريطًا على الشاشات الضيّقة جدًا: مربّعان بعرض 150 لا يسعان */
+@media (max-width: 340px) {
+  .tile { aspect-ratio: auto; min-height: 0; }
+}
 
 /* الأقسام مجموعة بمؤسساتها */
 .schoolgroup { display: flex; flex-direction: column; gap: 10px; }
