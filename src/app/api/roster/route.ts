@@ -15,7 +15,12 @@ import { createClient } from "@/lib/supabase/server";
 /** قراءة صورة فيها ستّة وثلاثون اسمًا تتجاوز المهلة الافتراضية. */
 export const maxDuration = 60;
 
-const MODEL = "gemini-3.8-flash";
+/**
+ * النموذج الافتراضي مجاني في الطبقة المجانية، وهو أدقّ ما يُعتمد عليه في خطّ
+ * اليد. و GEMINI_MODEL يبدّله دون تعديل الشفرة — إن ضاقت الحصة مثلًا فـ
+ * gemini-3.5-flash-lite أخفّ وهو مجاني كذلك.
+ */
+const MODEL = process.env.GEMINI_MODEL || "gemini-3.8-flash";
 const ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`;
 
 /** حدّ الصورة بعد الترميز. الواجهة تصغّرها قبل الإرسال، وهذا حارس أخير. */
