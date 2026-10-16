@@ -45,6 +45,27 @@ function confirmMatches(typed, email) {
   return typed.trim().toLowerCase() === want;
 }
 
+const PRIVACY_VERSION = "2026-10-16";
+
+function consentProblem(accepted) {
+  return accepted ? null : "للمتابعة وافق على سياسة الخصوصية.";
+}
+
+function signupMetadata(name, now) {
+  return {
+    full_name: name,
+    privacy_version: PRIVACY_VERSION,
+    privacy_accepted_at: now.toISOString(),
+  };
+}
+
+function changePasswordProblem(current, next, again) {
+  const basic = passwordProblem(next, again);
+  if (basic) return basic;
+  if (next === current) return "الكلمة الجديدة مطابقة للقديمة. اختر كلمة مختلفة.";
+  return null;
+}
+
 let pass = 0;
 let fail = 0;
 function eq(name, got, want) {
@@ -91,6 +112,20 @@ eq("بريد آخر", confirmMatches("x@b.com", "a@b.com"), false);
 eq("فارغ", confirmMatches("", "a@b.com"), false);
 eq("بريد الحساب فارغ لا يُطابق الفارغ", confirmMatches("", ""), false);
 eq("جزء من البريد", confirmMatches("a@b", "a@b.com"), false);
+
+/* الموافقة على الخصوصية عند إنشاء الحساب */
+eq("بلا موافقة تُرفض", consentProblem(false), "للمتابعة وافق على سياسة الخصوصية.");
+eq("بموافقة تمرّ", consentProblem(true), null);
+const meta = signupMetadata("ياسين", new Date("2026-10-16T13:00:00.000Z"));
+eq("الاسم يُحفظ", meta.full_name, "ياسين");
+eq("نسخة السياسة تُحفظ", meta.privacy_version, "2026-10-16");
+eq("تاريخ الموافقة بصيغة ISO", meta.privacy_accepted_at, "2026-10-16T13:00:00.000Z");
+
+/* تغيير كلمة السر من داخل الحساب */
+eq("جديدة قصيرة", changePasswordProblem("oldpass1", "12345", "12345"), "كلمة السر قصيرة: 6 أحرف على الأقل.");
+eq("غير متطابقتين", changePasswordProblem("oldpass1", "newpass1", "newpass2"), "الكلمتان غير متطابقتين.");
+eq("كالقديمة", changePasswordProblem("samepass", "samepass", "samepass"), "الكلمة الجديدة مطابقة للقديمة. اختر كلمة مختلفة.");
+eq("سليمة", changePasswordProblem("oldpass1", "newpass1", "newpass1"), null);
 
 console.log(`auth: ${pass} نجح، ${fail} فشل`);
 if (fail) process.exit(1);

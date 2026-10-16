@@ -56,3 +56,35 @@ export function confirmMatches(typed: string, email: string): boolean {
   if (!want) return false;
   return typed.trim().toLowerCase() === want;
 }
+
+/**
+ * نسخة سياسة الخصوصية التي يوافق عليها المسجِّل. تُسجَّل مع الموافقة في بيانات
+ * المستخدم، فإذا تغيّرت السياسة جوهريًا غُيّر هذا الرقم وعُرف من وافق على أي نسخة.
+ */
+export const PRIVACY_VERSION = "2026-10-16";
+
+/** الموافقة شرط إنشاء الحساب: لا تُملأ عنه، ولا يكفيها وسم HTML وحده. */
+export function consentProblem(accepted: boolean): string | null {
+  return accepted ? null : "للمتابعة وافق على سياسة الخصوصية.";
+}
+
+/** بيانات المستخدم عند إنشاء الحساب: الاسم، وأثر الموافقة (النسخة والتاريخ). */
+export function signupMetadata(name: string, now: Date) {
+  return {
+    full_name: name,
+    privacy_version: PRIVACY_VERSION,
+    privacy_accepted_at: now.toISOString(),
+  };
+}
+
+/** تغيير كلمة السر من داخل الحساب: القصر ثم التطابق ثم ألّا تكون كالقديمة. */
+export function changePasswordProblem(
+  current: string,
+  next: string,
+  again: string,
+): string | null {
+  const basic = passwordProblem(next, again);
+  if (basic) return basic;
+  if (next === current) return "الكلمة الجديدة مطابقة للقديمة. اختر كلمة مختلفة.";
+  return null;
+}

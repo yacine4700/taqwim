@@ -571,3 +571,8 @@ nav.tabs svg { width: 21px; height: 21px; }
 
 /* رابط يُعرض كزرّ أو كنصّ تنقّل: بلا تسطير المتصفّح */
 a.btn, a.swap { text-decoration: none; }
+
+/* خانة الموافقة: صفّ أفقي لا عمود، والمربّع لا يتمدّد كحقول النصّ */
+.authbox label.consent { flex-direction: row; align-items: flex-start; gap: 10px; font-weight: 400; font-size: 13px; line-height: 1.8; }
+.authbox label.consent input { flex: none; width: 20px; height: 20px; padding: 0; margin-top: 4px; accent-color: var(--primary); }
+.authbox label.consent a { color: var(--primary); font-weight: 600; }

@@ -2233,6 +2233,13 @@ function SettingsView({
         </div>
         <div className="srow2">
           <div className="k">
+            كلمة السر
+            <small>غيّرها وأنت داخل حسابك</small>
+          </div>
+          <a className="btn ghost" href="/password">تغيير</a>
+        </div>
+        <div className="srow2">
+          <div className="k">
             الخصوصية
             <small>أين تُحفظ بيانات تلاميذك ومن يراها</small>
           </div>

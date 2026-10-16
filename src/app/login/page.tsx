@@ -3,7 +3,11 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
-import { translateAuthError as translate } from "@/lib/auth";
+import {
+  consentProblem,
+  signupMetadata,
+  translateAuthError as translate,
+} from "@/lib/auth";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -11,6 +15,7 @@ export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
+  const [accepted, setAccepted] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [bad, setBad] = useState(false);
@@ -50,10 +55,17 @@ export default function LoginPage() {
     }
 
     if (mode === "up") {
+      const refused = consentProblem(accepted);
+      if (refused) {
+        setBad(true);
+        setMessage(refused);
+        setBusy(false);
+        return;
+      }
       const { data, error } = await supabase.auth.signUp({
         email,
         password,
-        options: { data: { full_name: name } },
+        options: { data: signupMetadata(name, new Date()) },
       });
       if (error) {
         setBad(true);
@@ -135,6 +147,24 @@ export default function LoginPage() {
             required
           />
         </label>
+        )}
+
+        {mode === "up" && (
+          <label className="consent">
+            <input
+              type="checkbox"
+              checked={accepted}
+              onChange={(e) => setAccepted(e.target.checked)}
+              required
+            />
+            <span>
+              قرأتُ{" "}
+              <a href="/privacy" target="_blank" rel="noopener">
+                سياسة الخصوصية
+              </a>{" "}
+              وأوافق عليها: أنا مسؤول عن أسماء التلاميذ التي أُدخلها.
+            </span>
+          </label>
         )}
 
         {message && <div className={bad ? "note bad" : "note"}>{message}</div>}
