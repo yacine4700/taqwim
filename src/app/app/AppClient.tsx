@@ -6,6 +6,7 @@ import { createClient } from "@/lib/supabase/client";
 import { MIN_PASSWORD, changePasswordProblem, translateAuthError } from "@/lib/auth";
 import { isDurable, kvDel, kvGet, kvSet } from "@/lib/localdb";
 import { nameMatches } from "@/lib/names";
+import { firstClassOf, groupBySchool, groupOf, resolveSessionClass } from "@/lib/schools";
 import ExportSheet from "./ExportSheet";
 import PrintView from "./PrintView";
 import { useOutbox } from "@/lib/useOutbox";
@@ -835,6 +836,7 @@ export default function AppClient({
           {tab === "session" && (
             <SessionView
               classes={classes}
+              schools={schools}
               studentsOf={studentsOf}
               attemptsOf={(id) => readingsOf(id).length}
               term={term}
@@ -1191,35 +1193,6 @@ function ClassesView({
       )}
     </section>
   );
-}
-
-/**
- * الأقسام مرتَّبة بمؤسساتها، والمؤسسة الفارغة لا تُعرض.
- * وقسمٌ بلا مؤسسة يُجمَع في آخر مجموعة باسم صريح، فلا يضيع بين الأقسام.
- */
-function groupBySchool(
-  classes: Klass[],
-  schools: School[],
-): Array<{ key: string; name: string; classes: Klass[] }> {
-  const groups = schools
-    .map((school) => ({
-      key: school.id,
-      name: school.name,
-      classes: classes.filter((c) => c.school_id === school.id),
-    }))
-    .filter((group) => group.classes.length > 0);
-
-  const loose = classes.filter(
-    (c) => !c.school_id || !schools.some((s) => s.id === c.school_id),
-  );
-  if (loose.length) {
-    groups.push({
-      key: "none",
-      name: groups.length ? "بلا مؤسسة" : "أقسامي",
-      classes: loose,
-    });
-  }
-  return groups;
 }
 
 /** سطر الحالة الخاصة كما يظهر تحت الاسم: الحالات الجاهزة ثم الملاحظة الحرة. */
@@ -1589,10 +1562,11 @@ function RowMark({
 }
 
 function SessionView({
-  classes, studentsOf, attemptsOf, term, reading,
+  classes, schools, studentsOf, attemptsOf, term, reading,
   classId, onClassId, count, onCount, onSave,
 }: {
   classes: Klass[];
+  schools: School[];
   studentsOf: (id: string) => Student[];
   attemptsOf: (id: string) => number;
   term: number;
@@ -1609,9 +1583,11 @@ function SessionView({
   const [scores, setScores] = useState<Record<string, number | "skip">>({});
   const [saving, setSaving] = useState(false);
 
+  /* القسم المحفوظ قد يُحذف من جهاز آخر: لا تبقى الحصة على قسم لا وجود له */
   useEffect(() => {
-    if (!classId && classes.length) onClassId(classes[0].id);
-  }, [classes, classId, onClassId]);
+    const wanted = resolveSessionClass(groupBySchool(classes, schools), classId);
+    if (wanted !== classId) onClassId(wanted);
+  }, [classes, schools, classId, onClassId]);
 
   if (!classes.length) {
     return (
@@ -1629,6 +1605,11 @@ function SessionView({
     );
   }
 
+  /* المؤسسة قبل القسم، كما في شاشة الأقسام: أسماء الأقسام تتشابه بين ثانويتين،
+     ومن يقف أمام تلاميذ مؤسسة لا يريد أن يقرأ في قائمة سبعة أقسام معًا.
+     مؤسسة واحدة: لا معنى لقائمة بخيار واحد، فلا تظهر. */
+  const groups = groupBySchool(classes, schools);
+  const group = groupOf(groups, classId) ?? groups[0];
   const list = studentsOf(classId);
   const unread = list.filter((s) => attemptsOf(s.id) === 0).length;
   const chosen = picked.filter((s) => typeof scores[s.id] === "number").length;
@@ -1662,8 +1643,26 @@ function SessionView({
       </div>
 
       <div className="pickbar">
+        {groups.length > 1 && (
+          <select
+            id="session-school"
+            aria-label="المؤسسة"
+            style={{ flex: "1 1 100%" }}
+            value={group.key}
+            onChange={(e) => {
+              onClassId(firstClassOf(groups, e.target.value));
+              setPicked([]);
+              setScores({});
+            }}
+          >
+            {groups.map((g) => (
+              <option key={g.key} value={g.key}>{g.name}</option>
+            ))}
+          </select>
+        )}
         <select
           id="session-class"
+          aria-label="القسم"
           value={classId}
           onChange={(e) => {
             onClassId(e.target.value);
@@ -1671,7 +1670,7 @@ function SessionView({
             setScores({});
           }}
         >
-          {classes.map((c) => (
+          {group.classes.map((c) => (
             <option key={c.id} value={c.id}>{c.name}</option>
           ))}
         </select>
