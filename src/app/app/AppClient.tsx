@@ -132,6 +132,7 @@ export default function AppClient({
   const [openStudentId, setOpenStudentId] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [newSchool, setNewSchool] = useState(false);
   const [printing, setPrinting] = useState<string | null>(null);
   /* اختيار تبويب الحصة يُحفظ مع بقية المكان: الأستاذ يقرأ لقسم واحد في الحصة */
   const [sessionClass, setSessionClass] = useState("");
@@ -822,6 +823,7 @@ export default function AppClient({
                 statsOf={statsOf}
                 onOpen={setOpenClass}
                 onImport={() => setImporting(true)}
+                onNewSchool={() => setNewSchool(true)}
                 openSchool={openSchool}
                 onOpenSchool={setOpenSchool}
                 start={startSteps}
@@ -921,6 +923,10 @@ export default function AppClient({
           onAddSchool={addSchool}
           onAssign={assignSchool}
         />
+      )}
+
+      {newSchool && (
+        <NewSchoolSheet onClose={() => setNewSchool(false)} onAdd={addSchool} />
       )}
 
       {importing && (
@@ -1065,7 +1071,7 @@ function StartCard({
 }
 
 function ClassesView({
-  loading, classes, schools, studentCount, statsOf, onOpen, onImport,
+  loading, classes, schools, studentCount, statsOf, onOpen, onImport, onNewSchool,
   openSchool, onOpenSchool, start, onDismissStart,
 }: {
   loading: boolean;
@@ -1075,6 +1081,7 @@ function ClassesView({
   statsOf: (id: string) => ReturnType<typeof classStats>;
   onOpen: (id: string) => void;
   onImport: () => void;
+  onNewSchool: () => void;
   /** المؤسسة المفتوحة، أو null فتُعرض بطاقاتها. */
   openSchool: string | null;
   onOpenSchool: (key: string | null) => void;
@@ -1109,6 +1116,9 @@ function ClassesView({
         <div className="hspace" />
         {/* الاستيراد من شاشة المؤسسات لا من داخل واحدة: القسم الجديد قد
             يكون لأيّهما، ومؤسسته تُختار في ورقة الاستيراد نفسها. */}
+        {!current ? (
+          <button className="btn soft" onClick={onNewSchool}>+ مؤسسة</button>
+        ) : null}
         {!current || single ? (
           <button className="btn soft" onClick={onImport}>+ قسم</button>
         ) : null}
@@ -2228,6 +2238,61 @@ function SettingsView({
   );
 }
 
+/** إضافة مؤسسة من شاشة المؤسسات نفسها، دون المرور بالإعدادات. */
+function NewSchoolSheet({
+  onClose, onAdd,
+}: {
+  onClose: () => void;
+  onAdd: (name: string) => Promise<School | null>;
+}) {
+  const [name, setName] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  return (
+    <>
+      <div className="scrim" onClick={onClose} />
+      <div className="sheet">
+        <div className="shead">
+          <h3>مؤسسة جديدة</h3>
+          <button className="icbtn" onClick={onClose} aria-label="إغلاق">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+              <path d="M6 6l12 12M18 6L6 18" />
+            </svg>
+          </button>
+        </div>
+        <div className="fld">
+          <div className="flab">
+            <b>اسم الثانوية</b>
+            <small>يُطبع في ترويسة كشف أقسامها</small>
+          </div>
+          <input
+            id="new-school"
+            className="inp"
+            style={{ width: "100%" }}
+            value={name}
+            autoFocus
+            placeholder="مثال: ثانوية رمضان حمود"
+            onChange={(e) => setName(e.target.value)}
+          />
+        </div>
+        <button
+          className="btn"
+          style={{ marginTop: 14 }}
+          disabled={busy || !name.trim()}
+          onClick={async () => {
+            setBusy(true);
+            const created = await onAdd(name.trim());
+            setBusy(false);
+            if (created) onClose();
+          }}
+        >
+          {busy ? "جارٍ الإضافة…" : "أضفها"}
+        </button>
+      </div>
+    </>
+  );
+}
+
 /**
  * إصلاح قسم بلا مؤسسة.
  *
@@ -3035,6 +3100,9 @@ async function shrinkImage(file: File): Promise<{ data: string; mime: string }> 
 
 type Source = "photo" | "file" | "paste";
 
+/** ورقة القسم صفحتان على الأكثر، وهو ما يقبله الخادم أيضًا. */
+const MAX_SHOTS = 2;
+
 /**
  * استيراد قسم من ثلاثة أبواب: صورة الورقة، أو ملف الإشراف التربوي، أو لصق
  * الأسماء. وكانت الثلاثة مكدّسة في ورقة واحدة طويلة، والأستاذ يستعمل بابًا
@@ -3057,10 +3125,14 @@ function ImportSheet({
   const [name, setName] = useState("");
   const [schoolId, setSchoolId] = useState<string>(defaultSchool ?? schools[0]?.id ?? "");
   const [newSchool, setNewSchool] = useState("");
+  /** حقل المؤسسة الجديدة مفتوح، ولو كان للأستاذ مؤسسات. */
+  const [adding, setAdding] = useState(schools.length === 0);
   const [text, setText] = useState("");
   const [status, setStatus] = useState("");
   const [reading, setReading] = useState(false);
   const [busy, setBusy] = useState(false);
+  /** صور الورقة: صفحة أو صفحتان، تُقرآن معًا. */
+  const [shots, setShots] = useState<Array<{ url: string; data: string; mime: string }>>([]);
 
   async function readFile(file: File) {
     setReading(true);
@@ -3088,15 +3160,40 @@ function ImportSheet({
     }
   }
 
-  async function readPhoto(file: File) {
+  /** تُضاف الصور إلى ما اختير، حتى صفحتين: ورقة القسم قد تكون صفحتين. */
+  async function addShots(files: File[]) {
+    const room = MAX_SHOTS - shots.length;
+    if (room <= 0) {
+      setStatus(`صفحتان على الأكثر. احذف واحدة لتضيف غيرها.`);
+      return;
+    }
+    const taken = files.slice(0, room);
+    const ready = await Promise.all(
+      taken.map(async (file) => {
+        const { data, mime } = await shrinkImage(file).catch(() => fileAsBase64(file));
+        return { url: `data:${mime};base64,${data}`, data, mime };
+      }),
+    );
+    setShots((before) => [...before, ...ready]);
+    setStatus(
+      files.length > room
+        ? "صفحتان على الأكثر: أخذتُ الأولى."
+        : "",
+    );
+  }
+
+  /** الصفحتان تُقرآن في طلب واحد: النموذج يرى القائمة كاملة فلا يكرّر ولا يقطع. */
+  async function readShots() {
+    if (!shots.length) return;
     setReading(true);
-    setStatus("جارٍ قراءة الصورة…");
+    setStatus("جارٍ قراءة الصور…");
     try {
-      const { data, mime } = await shrinkImage(file).catch(() => fileAsBase64(file));
       const response = await fetch("/api/roster", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ image: data, mime }),
+        body: JSON.stringify({
+          images: shots.map((shot) => ({ data: shot.data, mime: shot.mime })),
+        }),
       });
       const payload = (await response.json()) as {
         cls?: string;
@@ -3104,20 +3201,19 @@ function ImportSheet({
         error?: string;
       };
       if (!response.ok) {
-        setStatus(payload.error ?? "تعذّرت قراءة الصورة.");
+        setStatus(payload.error ?? "تعذّرت قراءة الصور.");
         return;
       }
       const found = payload.names ?? [];
       if (!found.length) {
-        setStatus("لم أجد أسماء في الصورة. صوّر الورقة كاملة وواضحة.");
+        setStatus("لم أجد أسماء. صوّر الورقة كاملة وواضحة.");
         return;
       }
       if (payload.cls && !name) setName(payload.cls);
-      // تُضاف إلى ما سبق: ورقة القسم قد تكون صفحتين تُصوَّران واحدة بعد أخرى.
-      setText((before) => (before.trim() ? `${before.trim()}\n${found.join("\n")}` : found.join("\n")));
+      setText(found.join("\n"));
       setStatus(`قرأتُ ${found.length} اسمًا — راجعها قبل الإنشاء.`);
     } catch {
-      setStatus("تعذّرت قراءة الصورة. أعد المحاولة أو الصق الأسماء.");
+      setStatus("تعذّرت قراءة الصور. أعد المحاولة أو الصق الأسماء.");
     } finally {
       setReading(false);
     }
@@ -3153,29 +3249,67 @@ function ImportSheet({
         {source === "photo" && (
           <div className="fld">
             <div className="flab">
-              <b>صوّر ورقة القسم</b>
-              <small>مطبوعة أو بخطّ اليد — تُقرأ الأسماء منها</small>
+              <b>ورقة القسم</b>
+              <small>مطبوعة أو بخطّ اليد · صفحتان على الأكثر</small>
             </div>
-            <label className="shot">
-              <input
-                id="import-photo"
-                type="file"
-                accept="image/*"
-                capture="environment"
+
+            {shots.length > 0 && (
+              <div className="shotrow">
+                {shots.map((shot, index) => (
+                  <div key={shot.url} className="thumb">
+                    {/* صورة محلّية لم تُرفع بعد: next/image لا يعالج data: */}
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={shot.url} alt={`صفحة ${index + 1}`} />
+                    <button
+                      className="icbtn danger"
+                      aria-label={`احذف صفحة ${index + 1}`}
+                      onClick={() => setShots((before) => before.filter((_, i) => i !== index))}
+                    >
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                        <path d="M6 6l12 12M18 6L6 18" />
+                      </svg>
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* بلا capture: الهاتف يعرض الكاميرا والمعرض معًا فيختار الأستاذ */}
+            {shots.length < MAX_SHOTS && (
+              <label className={shots.length ? "shot small" : "shot"}>
+                <input
+                  id="import-photo"
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  disabled={reading}
+                  onChange={(e) => {
+                    const files: File[] = e.target.files ? Array.from(e.target.files) : [];
+                    e.target.value = "";
+                    if (files.length) void addShots(files);
+                  }}
+                />
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M3 8h3.5L8 6h8l1.5 2H21v11H3z" />
+                  <circle cx="12" cy="13.5" r="3.5" />
+                </svg>
+                <b>{shots.length ? "أضف الصفحة الثانية" : "صوّر الورقة أو اخترها من المعرض"}</b>
+                {!shots.length && <small>من الكاميرا أو من صورك</small>}
+              </label>
+            )}
+
+            {shots.length > 0 && (
+              <button
+                className="btn full"
+                style={{ marginTop: 10 }}
                 disabled={reading}
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  e.target.value = "";
-                  if (file) void readPhoto(file);
-                }}
-              />
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M3 8h3.5L8 6h8l1.5 2H21v11H3z" />
-                <circle cx="12" cy="13.5" r="3.5" />
-              </svg>
-              <b>{reading ? "جارٍ القراءة…" : "التقط صورة أو اخترها"}</b>
-              <small>صفحة بعد صفحة إن كانت الورقة صفحتين</small>
-            </label>
+                onClick={() => void readShots()}
+              >
+                {reading
+                  ? "جارٍ القراءة…"
+                  : `اقرأ الأسماء من ${countWord(shots.length, "الصورة", "الصورتين", "الصور", "الصور")}`}
+              </button>
+            )}
           </div>
         )}
 
@@ -3238,25 +3372,37 @@ function ImportSheet({
             <b>المؤسسة</b>
             <small>لازمة — تظهر في ترويسة كشف هذا القسم</small>
           </div>
-          {schools.length > 0 ? (
-            <select
-              id="import-school"
-              style={{ width: "100%" }}
-              value={schoolId}
-              onChange={(e) => setSchoolId(e.target.value)}
-            >
-              {schools.map((s) => (
-                <option key={s.id} value={s.id}>{s.name}</option>
-              ))}
-            </select>
-          ) : (
+          {schools.length > 0 && !adding && (
+            <div className="pickbar">
+              <select
+                id="import-school"
+                style={{ flex: 1, minWidth: 0 }}
+                value={schoolId}
+                onChange={(e) => setSchoolId(e.target.value)}
+              >
+                {schools.map((s) => (
+                  <option key={s.id} value={s.id}>{s.name}</option>
+                ))}
+              </select>
+              {/* مؤسسة جديدة دون مغادرة الورقة: الأستاذ يستورد قسم ثانوية
+                  لم يُدخلها بعد، فلا يُطرد إلى الإعدادات ثم يعود. */}
+              <button
+                className="btn soft"
+                onClick={() => setAdding(true)}
+                aria-label="أضف مؤسسة"
+              >
+                + مؤسسة
+              </button>
+            </div>
+          )}
+          {(schools.length === 0 || adding) && (
             <div className="pickbar addrow">
               <input
                 id="import-newschool"
                 className="inp"
                 value={newSchool}
                 onChange={(e) => setNewSchool(e.target.value)}
-                placeholder="اسم ثانويتك"
+                placeholder="اسم الثانوية"
               />
               <button
                 className="btn soft"
@@ -3266,11 +3412,15 @@ function ImportSheet({
                   if (created) {
                     setSchoolId(created.id);
                     setNewSchool("");
+                    setAdding(false);
                   }
                 }}
               >
                 أضفها
               </button>
+              {schools.length > 0 && (
+                <button className="clearb" onClick={() => setAdding(false)}>تراجع</button>
+              )}
             </div>
           )}
         </div>

@@ -431,6 +431,21 @@ nav.tabs svg { width: 21px; height: 21px; }
 .shot b { font-size: 14px; font-weight: 600; }
 .shot small { font-size: 11px; color: var(--faint); }
 .shot:has(input:disabled) { opacity: 0.6; cursor: default; }
+.shot.small { padding: 12px; flex-direction: row; gap: 9px; }
+.shot.small svg { width: 20px; height: 20px; }
+
+/* صفحتا الورقة: مصغّرتان تُحذف الواحدة بزرّها */
+.shotrow { display: flex; gap: 9px; margin-bottom: 10px; }
+.thumb { position: relative; flex: 1; min-width: 0; max-width: 140px; }
+.thumb img {
+  width: 100%; aspect-ratio: 3 / 4; object-fit: cover;
+  border-radius: var(--radius-sm); border: 1px solid var(--line); display: block;
+}
+.thumb .icbtn {
+  position: absolute; inset-block-start: 4px; inset-inline-end: 4px;
+  width: 26px; height: 26px; background: var(--surface); box-shadow: var(--shadow);
+}
+.thumb .icbtn svg { width: 14px; height: 14px; }
 
 /* بطاقات المؤسسات: مربّعات تُنتقى بنقرة فتُعرض أقسامها وحدها */
 .schooltiles { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }

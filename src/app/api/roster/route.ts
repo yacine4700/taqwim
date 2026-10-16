@@ -23,12 +23,15 @@ export const maxDuration = 60;
 const MODEL = process.env.GEMINI_MODEL || "gemini-3.8-flash";
 const ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`;
 
-/** حدّ الصورة بعد الترميز. الواجهة تصغّرها قبل الإرسال، وهذا حارس أخير. */
-const MAX_BASE64 = 8 * 1024 * 1024;
+/** حدّ المجموع بعد الترميز. الواجهة تصغّر الصور قبل الإرسال، وهذا حارس أخير. */
+const MAX_BASE64 = 12 * 1024 * 1024;
+
+/** ورقة القسم صفحتان على الأكثر. */
+const MAX_IMAGES = 2;
 
 const ALLOWED = new Set(["image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"]);
 
-const PROMPT = `هذه صورة قائمة تلاميذ قسم في ثانوية جزائرية: ورقة مطبوعة أو مكتوبة بخطّ اليد.
+const PROMPT = `هذه صور قائمة تلاميذ قسم في ثانوية جزائرية: ورقة مطبوعة أو مكتوبة بخطّ اليد. وقد تكون صورتين لصفحتين من القائمة نفسها، فاقرأهما بالترتيب واجمع أسماءهما في قائمة واحدة متّصلة.
 
 استخرج:
 1. اسم القسم إن كان مكتوبًا في الصورة (مثل: أولى ثانوي جذع مشترك علوم وتكنولوجيا 3). إن لم يكن مكتوبًا فاتركه فارغًا.
@@ -39,7 +42,8 @@ const PROMPT = `هذه صورة قائمة تلاميذ قسم في ثانوية
 - اللقب والاسم في سطر واحد كما في الورقة.
 - احذف أرقام الترتيب وتواريخ الميلاد وأرقام التعريف والملاحظات ورؤوس الجدول: الأسماء وحدها.
 - لا تخترع اسمًا أبدًا. ما لم تستطع قراءته اتركه خارج القائمة.
-- إن لم تكن الصورة قائمة تلاميذ فأرجع قائمة فارغة.`;
+- لا تكرّر اسمًا ظهر في الصفحتين معًا (كأن يكون سطرًا مقطوعًا بينهما).
+- إن لم تكن الصور قائمة تلاميذ فأرجع قائمة فارغة.`;
 
 type Parsed = { class_name?: unknown; students?: unknown };
 
@@ -79,18 +83,31 @@ export async function POST(request: Request) {
     );
   }
 
-  let body: { image?: unknown; mime?: unknown };
+  let body: { images?: unknown };
   try {
     body = await request.json();
   } catch {
     return badRequest("طلب غير مفهوم.");
   }
 
-  const image = typeof body.image === "string" ? body.image : "";
-  const mime = typeof body.mime === "string" ? body.mime : "image/jpeg";
-  if (!image) return badRequest("لا صورة في الطلب.");
-  if (!ALLOWED.has(mime)) return badRequest("صيغة الصورة غير مدعومة.");
-  if (image.length > MAX_BASE64) return badRequest("الصورة كبيرة. صوّرها بدقّة أقل.");
+  const raw = Array.isArray(body.images) ? body.images : [];
+  const images = raw
+    .slice(0, MAX_IMAGES)
+    .map((item) => {
+      const part = item as { data?: unknown; mime?: unknown };
+      return {
+        data: typeof part.data === "string" ? part.data : "",
+        mime: typeof part.mime === "string" ? part.mime : "image/jpeg",
+      };
+    })
+    .filter((part) => part.data.length > 0);
+
+  if (!images.length) return badRequest("لا صورة في الطلب.");
+  if (images.some((part) => !ALLOWED.has(part.mime))) {
+    return badRequest("صيغة الصورة غير مدعومة.");
+  }
+  const total = images.reduce((sum, part) => sum + part.data.length, 0);
+  if (total > MAX_BASE64) return badRequest("الصور كبيرة. صوّرها بدقّة أقل.");
 
   let response: Response;
   try {
@@ -101,8 +118,12 @@ export async function POST(request: Request) {
       body: JSON.stringify({
         contents: [
           {
+            // الصور أولًا ثم التعليمات: الصفحتان تُقرآن في طلب واحد فيرى
+            // النموذج القائمة كاملة، ولا يُدفع ثمن التعليمات مرتين.
             parts: [
-              { inline_data: { mime_type: mime, data: image } },
+              ...images.map((part) => ({
+                inline_data: { mime_type: part.mime, data: part.data },
+              })),
               { text: PROMPT },
             ],
           },
@@ -144,6 +165,7 @@ export async function POST(request: Request) {
     payload.candidates?.[0]?.content?.parts?.map((p) => p.text ?? "").join("") ?? "";
   const parsed = parseJson(text);
   if (!parsed) return badRequest("لم أفهم ما في الصورة. جرّب صورة أوضح.", 422);
+
 
   const names = Array.isArray(parsed.students)
     ? parsed.students
