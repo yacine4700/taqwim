@@ -128,6 +128,7 @@ export default function AppClient({
   /** وقت حفظ النسخة المعروضة إن كانت من الجهاز لا من الخادم. */
   const [cachedAt, setCachedAt] = useState<number | null>(null);
   const [openClass, setOpenClass] = useState<string | null>(null);
+  const [openSchool, setOpenSchool] = useState<string | null>(null);
   const [openStudentId, setOpenStudentId] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -167,6 +168,12 @@ export default function AppClient({
   const students = useMemo(() => applyStudents(baseStudents, queue), [baseStudents, queue]);
   const records = useMemo(() => applyRecords(baseRecords, queue), [baseRecords, queue]);
   const readings = useMemo(() => applyReadings(baseReadings, queue), [baseReadings, queue]);
+
+  /** أقسام بلا مؤسسة: حالة لا يُفترض أن تبقى، فتُصلَح بإلزام. */
+  const orphans = useMemo(
+    () => classes.filter((c) => !c.school_id || !schools.some((s) => s.id === c.school_id)),
+    [classes, schools],
+  );
 
   const openStudent = useMemo(
     () => students.find((s) => s.id === openStudentId) ?? null,
@@ -215,18 +222,8 @@ export default function AppClient({
         onDo: () => setTab("settings"),
       });
     }
-    // المؤسسة تُختار عند استيراد القسم، فلا خطوة هنا تُصلح قسمًا بلا مؤسسة.
-    if (schools.length === 0 && classes.length > 0) {
-      steps.push({
-        key: "schools",
-        label: "أضف مؤسستك",
-        hint: "اسم الثانوية يُطبع في ترويسة كشف كل قسم",
-        action: "المؤسسات",
-        onDo: () => setTab("settings"),
-      });
-    }
     return steps;
-  }, [hideStart, classes, schools, criteria, profile]);
+  }, [hideStart, classes, criteria, profile]);
 
   /** عملٌ يحتاج الخادم: إنشاء، حذف، تغيير إعدادات. التنقيط وحده يعمل دون شبكة. */
   const needsNetwork = useCallback(() => {
@@ -327,6 +324,7 @@ export default function AppClient({
         sessionClass?: string;
         sessionCount?: number;
         hideStart?: boolean;
+        openSchool?: string | null;
       }>(whereKey);
       if (!saved) return;
       if (saved.term >= 1 && saved.term <= 3) setTerm(saved.term);
@@ -336,6 +334,7 @@ export default function AppClient({
       }
       if (saved.sessionCount && saved.sessionCount >= 3) setSessionCount(saved.sessionCount);
       if (saved.hideStart) setHideStart(true);
+      if (saved.openSchool) setOpenSchool(saved.openSchool);
       // القسم قد يكون حُذف من جهاز آخر، فلا يُفتح إلا إن كان ما يزال موجودًا.
       if (saved.openClass && classes.some((c) => c.id === saved.openClass)) {
         setOpenClass(saved.openClass);
@@ -345,8 +344,10 @@ export default function AppClient({
 
   useEffect(() => {
     if (!restoredRef.current) return;
-    void kvSet(whereKey, { tab, term, openClass, sessionClass, sessionCount, hideStart });
-  }, [tab, term, openClass, sessionClass, sessionCount, hideStart, whereKey]);
+    void kvSet(whereKey, {
+      tab, term, openClass, openSchool, sessionClass, sessionCount, hideStart,
+    });
+  }, [tab, term, openClass, openSchool, sessionClass, sessionCount, hideStart, whereKey]);
 
   /* عودة الشبكة: أعد القراءة من الخادم مرة واحدة، لا عند كل تبدّل حالة */
   const onlineRef = useRef(true);
@@ -657,10 +658,27 @@ export default function AppClient({
     say(`حُذفت ${school.name} — أقسامها باقية بلا مؤسسة`);
   }
 
+  /** نسبة قسم إلى مؤسسة. لا تُستعمل إلا في إصلاح قسم وُجد بلا واحدة. */
+  async function assignSchool(classId: string, schoolId: string) {
+    if (!needsNetwork()) return false;
+    const { error } = await supabase
+      .from("classes")
+      .update({ school_id: schoolId })
+      .eq("id", classId);
+    if (error) {
+      say("تعذّر حفظ المؤسسة");
+      return false;
+    }
+    setClasses((cs) =>
+      cs.map((c) => (c.id === classId ? { ...c, school_id: schoolId } : c)),
+    );
+    return true;
+  }
+
   async function createClassWithStudents(
     name: string,
     names: string[],
-    schoolId: string | null,
+    schoolId: string,
   ) {
     if (!needsNetwork()) return;
     const { data: created, error } = await supabase
@@ -736,6 +754,7 @@ export default function AppClient({
               setTab("classes");
               setOpenClass(null);
               setOpenStudentId(null);
+              setOpenSchool(null);
             }}
           >
             دفتر <span>التقويم</span>
@@ -803,6 +822,8 @@ export default function AppClient({
                 statsOf={statsOf}
                 onOpen={setOpenClass}
                 onImport={() => setImporting(true)}
+                openSchool={openSchool}
+                onOpenSchool={setOpenSchool}
                 start={startSteps}
                 onDismissStart={() => setHideStart(true)}
               />
@@ -887,6 +908,18 @@ export default function AppClient({
             const next = neighbours.list[neighbours.index + step];
             if (next) setOpenStudentId(next.id);
           }}
+        />
+      )}
+
+      {/* قسم بلا مؤسسة لا يُترك: ترويسة كشفه تُطبع ناقصة والأقسام لا تُجمع
+          به. فيُسأل عنه أول ما يُفتح التطبيق — وحين تكون الشبكة قائمة، فلا
+          يُحبس الأستاذ عن التنقيط في قاعة لا تغطية فيها. */}
+      {!loading && outbox.online && orphans.length > 0 && !importing && (
+        <SchoolFixSheet
+          orphans={orphans}
+          schools={schools}
+          onAddSchool={addSchool}
+          onAssign={assignSchool}
         />
       )}
 
@@ -1032,7 +1065,8 @@ function StartCard({
 }
 
 function ClassesView({
-  loading, classes, schools, studentCount, statsOf, onOpen, onImport, start, onDismissStart,
+  loading, classes, schools, studentCount, statsOf, onOpen, onImport,
+  openSchool, onOpenSchool, start, onDismissStart,
 }: {
   loading: boolean;
   classes: Klass[];
@@ -1041,30 +1075,43 @@ function ClassesView({
   statsOf: (id: string) => ReturnType<typeof classStats>;
   onOpen: (id: string) => void;
   onImport: () => void;
+  /** المؤسسة المفتوحة، أو null فتُعرض بطاقاتها. */
+  openSchool: string | null;
+  onOpenSchool: (key: string | null) => void;
   start: Array<{ key: string; label: string; hint: string; action: string; onDo: () => void }>;
   onDismissStart: () => void;
 }) {
   const groups = groupBySchool(classes, schools);
-  /** المؤسسة المعروضة وحدها، أو "" لكل الأقسام. */
-  const [only, setOnly] = useState("");
-  const shown = groups.filter((g) => !only || g.key === only);
-  const current = groups.find((g) => g.key === only) ?? null;
+  /** مؤسسة واحدة: لا معنى لشاشة بطاقة واحدة، فتُعرض أقسامها رأسًا. */
+  const single = groups.length === 1 ? groups[0] : null;
+  const current = single ?? groups.find((g) => g.key === openSchool) ?? null;
 
   return (
     <section className="view">
       <div className="vhead">
+        {current && !single && (
+          <button className="icbtn" onClick={() => onOpenSchool(null)} aria-label="رجوع إلى المؤسسات">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M9 6l6 6-6 6" />
+            </svg>
+          </button>
+        )}
         <div>
-          <h2>أقسامي</h2>
+          <h2>{current && !single ? current.name : "أقسامي"}</h2>
           {classes.length > 0 && (
             <p>
               {current
-                ? `${current.name} · ${countWord(current.classes.length, "قسم واحد", "قسمان", "أقسام", "قسمًا")}`
+                ? `${countWord(current.classes.length, "قسم واحد", "قسمان", "أقسام", "قسمًا")} · ${current.classes.reduce((sum, k) => sum + statsOf(k.id).total, 0)} تلميذًا`
                 : `${studentCount} تلميذًا في ${countWord(classes.length, "قسم واحد", "قسمان", "أقسام", "قسمًا")}`}
             </p>
           )}
         </div>
         <div className="hspace" />
-        <button className="btn soft" onClick={onImport}>+ قسم</button>
+        {/* الاستيراد من شاشة المؤسسات لا من داخل واحدة: القسم الجديد قد
+            يكون لأيّهما، ومؤسسته تُختار في ورقة الاستيراد نفسها. */}
+        {!current || single ? (
+          <button className="btn soft" onClick={onImport}>+ قسم</button>
+        ) : null}
       </div>
 
       {!loading && <StartCard steps={start} onDismiss={onDismissStart} />}
@@ -1079,75 +1126,57 @@ function ClassesView({
           <p>ارفع ملف الإشراف التربوي (xlsx) فيُنشأ القسم بأسماء تلاميذه، أو الصق الأسماء سطرًا لكل تلميذ.</p>
           <button className="btn" onClick={onImport}>استيراد قائمة</button>
         </div>
-      ) : (
-        <>
-        {/* بطاقات المؤسسات: من يدرّس في ثانويتين يفتح التطبيق وهو في إحداهما،
-            فنقرةٌ تُظهر أقسامها وحدها. ولا تظهر لمن له مؤسسة واحدة. */}
-        {groups.length > 1 && (
-          <div className="schooltiles">
-            {groups.map((group) => {
-              // تقدّم التنقيط في المؤسسة كلها: الرقم الذي يُسأل عنه عند بابها
-              const stats = group.classes.map((k) => statsOf(k.id));
-              const students = stats.reduce((sum, st) => sum + st.total, 0);
-              const scored = stats.reduce((sum, st) => sum + st.scored, 0);
-              return (
-                <button
-                  key={group.key}
-                  className="tile"
-                  aria-pressed={only === group.key}
-                  onClick={() => setOnly(only === group.key ? "" : group.key)}
-                >
-                  <b>{group.name}</b>
-                  <span className="hspace" />
-                  <i className="num">{scored}/{students}</i>
-                  <small>منقَّطون</small>
-                  <div className="bar">
-                    <i style={{ width: `${students ? Math.round((scored / students) * 100) : 0}%` }} />
-                  </div>
-                  <small>
-                    {countWord(group.classes.length, "قسم واحد", "قسمان", "أقسام", "قسمًا")}
-                  </small>
-                </button>
-              );
-            })}
-          </div>
-        )}
-
-        {shown.map((group) => (
-          <div key={group.key} className="schoolgroup">
-            {groups.length > 1 && !only && (
-              <div className="grouphead">
+      ) : !current ? (
+        /* شاشة المؤسسات: بطاقاتها وحدها، تُفتح الواحدة فتُعرض أقسامها.
+           لا تُعرض الأقسام هنا، فصاحب ثانويتين يرى ثانويتيه لا سبعة أقسام. */
+        <div className="schooltiles">
+          {groups.map((group) => {
+            const stats = group.classes.map((k) => statsOf(k.id));
+            const students = stats.reduce((sum, st) => sum + st.total, 0);
+            const scored = stats.reduce((sum, st) => sum + st.scored, 0);
+            return (
+              <button
+                key={group.key}
+                className="tile"
+                onClick={() => onOpenSchool(group.key)}
+              >
                 <b>{group.name}</b>
-                <span className="pill">
+                <span className="hspace" />
+                <i className="num">{scored}/{students}</i>
+                <small>منقَّطون</small>
+                <div className="bar">
+                  <i style={{ width: `${students ? Math.round((scored / students) * 100) : 0}%` }} />
+                </div>
+                <small>
                   {countWord(group.classes.length, "قسم واحد", "قسمان", "أقسام", "قسمًا")}
-                </span>
-              </div>
-            )}
-            <div className="grid">
-              {group.classes.map((klass) => {
-                const st = statsOf(klass.id);
-                const covered = st.total - st.unread;
-                return (
-                  <button key={klass.id} className="card clscard" onClick={() => onOpen(klass.id)}>
-                    <div className="top">
-                      <h3>{klass.name}</h3>
-                      <span className="pill">{st.total} تلميذًا</span>
-                    </div>
-                    <div className="statrow">
-                      <Stat value={fmt(st.mean)} label="معدل القسم" />
-                      <Stat value={`${st.scored}/${st.total}`} label="منقَّطون" />
-                      <Stat value={`${covered}/${st.total}`} label="قُرئ لهم" />
-                    </div>
-                    <div className="bar">
-                      <i style={{ width: `${st.total ? Math.round((covered / st.total) * 100) : 0}%` }} />
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        ))}
-        </>
+                </small>
+              </button>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="grid">
+          {current.classes.map((klass) => {
+            const st = statsOf(klass.id);
+            const covered = st.total - st.unread;
+            return (
+              <button key={klass.id} className="card clscard" onClick={() => onOpen(klass.id)}>
+                <div className="top">
+                  <h3>{klass.name}</h3>
+                  <span className="pill">{st.total} تلميذًا</span>
+                </div>
+                <div className="statrow">
+                  <Stat value={fmt(st.mean)} label="معدل القسم" />
+                  <Stat value={`${st.scored}/${st.total}`} label="منقَّطون" />
+                  <Stat value={`${covered}/${st.total}`} label="قُرئ لهم" />
+                </div>
+                <div className="bar">
+                  <i style={{ width: `${st.total ? Math.round((covered / st.total) * 100) : 0}%` }} />
+                </div>
+              </button>
+            );
+          })}
+        </div>
       )}
     </section>
   );
@@ -2200,6 +2229,110 @@ function SettingsView({
 }
 
 /**
+ * إصلاح قسم بلا مؤسسة.
+ *
+ * ورقة لا تُغلق بنقرة خارجها ولا بزرّ إغلاق: المؤسسة صارت إلزامية، وقسمٌ
+ * بلا واحدة يطبع ترويسة ناقصة ولا يظهر تحت أيّ بطاقة. والحالة تنشأ من
+ * حسابات أُنشئت قبل المؤسسات، أو من مؤسسة حُذفت بأقسامها.
+ *
+ * ومن لا مؤسسة له أصلًا يكتبها هنا، فلا يُحال إلى شاشة أخرى وهو محبوس.
+ */
+function SchoolFixSheet({
+  orphans, schools, onAddSchool, onAssign,
+}: {
+  orphans: Klass[];
+  schools: School[];
+  onAddSchool: (name: string) => Promise<School | null>;
+  onAssign: (classId: string, schoolId: string) => Promise<boolean>;
+}) {
+  const [name, setName] = useState("");
+  const [busy, setBusy] = useState(false);
+  const klass = orphans[0];
+  const [picked, setPicked] = useState("");
+  const chosen = picked || schools[0]?.id || "";
+
+  return (
+    <>
+      <div className="scrim" />
+      <div className="sheet">
+        <div className="shead">
+          <h3>مؤسسة {klass.name}</h3>
+        </div>
+        <p className="lead">
+          كل قسم ينتمي إلى مؤسسة: اسمها يُطبع في ترويسة كشفه، وبها تُجمع
+          الأقسام. وهذا القسم بلا واحدة.
+          {orphans.length > 1 &&
+            ` وبعده ${countWord(orphans.length - 1, "قسم واحد", "قسمان", "أقسام", "قسمًا")}.`}
+        </p>
+
+        {schools.length > 0 && (
+          <div className="fld">
+            <div className="flab">
+              <b>اخترها من مؤسساتك</b>
+            </div>
+            <div className="pickbar">
+              <select
+                id="fix-school"
+                style={{ flex: 1 }}
+                value={chosen}
+                aria-label="المؤسسة"
+                onChange={(e) => setPicked(e.target.value)}
+              >
+                {schools.map((s) => (
+                  <option key={s.id} value={s.id}>{s.name}</option>
+                ))}
+              </select>
+              <button
+                className="btn"
+                disabled={busy || !chosen}
+                onClick={async () => {
+                  setBusy(true);
+                  await onAssign(klass.id, chosen);
+                  setBusy(false);
+                }}
+              >
+                {busy ? "جارٍ الحفظ…" : "احفظ"}
+              </button>
+            </div>
+          </div>
+        )}
+
+        <div className="fld">
+          <div className="flab">
+            <b>{schools.length ? "أو أضف مؤسسة جديدة" : "اكتب اسم مؤسستك"}</b>
+          </div>
+          <div className="pickbar addrow">
+            <input
+              id="fix-newschool"
+              className="inp"
+              value={name}
+              placeholder="مثال: ثانوية رمضان حمود"
+              aria-label="مؤسسة جديدة"
+              onChange={(e) => setName(e.target.value)}
+            />
+            <button
+              className={schools.length ? "btn soft" : "btn"}
+              disabled={busy || !name.trim()}
+              onClick={async () => {
+                setBusy(true);
+                const created = await onAddSchool(name.trim());
+                if (created) {
+                  await onAssign(klass.id, created.id);
+                  setName("");
+                }
+                setBusy(false);
+              }}
+            >
+              أضفها
+            </button>
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
+
+/**
  * المؤسسات وأقسامها.
  *
  * حذف المؤسسة لا يحذف أقسامها — تبقى بلا مؤسسة وتُنسب من جديد — فالتأكيد
@@ -2274,7 +2407,7 @@ function SchoolsSettings({
                 <div className="srow2">
                   <div className="k">
                     {count
-                      ? `${countWord(count, "قسم واحد يبقى", "قسمان يبقيان", "أقسام تبقى", "قسمًا يبقى")} بلا مؤسسة — لا تضيع علامة، لكن ترويسة كشفه تُطبع بلا اسم ثانوية.`
+                      ? `لا تضيع علامة، لكن ${countWord(count, "قسمًا واحدًا سيُسأل", "قسمين سيُسألان", "أقسام ستُسأل", "قسمًا سيُسأل")} عن مؤسسة جديدة.`
                       : "لا أقسام فيها."}
                   </div>
                   <button className="btn ghost" onClick={() => setConfirm(null)}>تراجع</button>
@@ -2875,7 +3008,7 @@ function ImportSheet({
   onClose, onCreate, schools, defaultSchool, onAddSchool,
 }: {
   onClose: () => void;
-  onCreate: (name: string, names: string[], schoolId: string | null) => void;
+  onCreate: (name: string, names: string[], schoolId: string) => void;
   schools: School[];
   /** مؤسسة آخر قسم استُورد: الأستاذ يستورد أقسام ثانوية في جلسة واحدة. */
   defaultSchool: string | null;
@@ -2979,7 +3112,7 @@ function ImportSheet({
         <div className="fld">
           <div className="flab">
             <b>المؤسسة</b>
-            <small>تظهر في ترويسة كشف هذا القسم</small>
+            <small>لازمة — تظهر في ترويسة كشف هذا القسم</small>
           </div>
           {schools.length > 0 ? (
             <select
@@ -2991,14 +3124,12 @@ function ImportSheet({
               {schools.map((s) => (
                 <option key={s.id} value={s.id}>{s.name}</option>
               ))}
-              <option value="">بلا مؤسسة</option>
             </select>
           ) : (
-            <div className="pickbar">
+            <div className="pickbar addrow">
               <input
                 id="import-newschool"
                 className="inp"
-                style={{ flex: 1 }}
                 value={newSchool}
                 onChange={(e) => setNewSchool(e.target.value)}
                 placeholder="اسم ثانويتك"
@@ -3029,8 +3160,10 @@ function ImportSheet({
           onClick={() => {
             if (!name.trim()) return setStatus("اكتب اسم القسم.");
             if (!names.length) return setStatus("لا أسماء. ارفع ملفًا أو الصق الأسماء.");
+            // المؤسسة إلزامية: قسمٌ بلا واحدة يطبع ترويسة ناقصة.
+            if (!schoolId) return setStatus("اختر مؤسسة القسم أو أضفها.");
             setBusy(true);
-            onCreate(name.trim(), names, schoolId || null);
+            onCreate(name.trim(), names, schoolId);
           }}
         >
           {busy ? "جارٍ الإنشاء…" : `إنشاء القسم (${names.length} تلميذًا)`}
