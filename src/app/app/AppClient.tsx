@@ -3004,6 +3004,45 @@ function StudentSheet({
   );
 }
 
+/** الملف كما هو، حين يعجز المتصفّح عن فكّ ترميز الصورة (HEIC من آيفون مثلًا). */
+function fileAsBase64(file: File): Promise<{ data: string; mime: string }> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("read"));
+    reader.onload = () => {
+      const url = String(reader.result ?? "");
+      resolve({ data: url.slice(url.indexOf(",") + 1), mime: file.type || "image/jpeg" });
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+/** يصغّر الصورة قبل إرسالها: صورة الهاتف 4 ميغا تُبطئ الرفع ولا تزيد دقّة. */
+async function shrinkImage(file: File): Promise<{ data: string; mime: string }> {
+  const bitmap = await createImageBitmap(file);
+  const long = Math.max(bitmap.width, bitmap.height);
+  const scale = long > 1600 ? 1600 / long : 1;
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.round(bitmap.width * scale);
+  canvas.height = Math.round(bitmap.height * scale);
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("canvas");
+  context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  bitmap.close();
+  const url = canvas.toDataURL("image/jpeg", 0.85);
+  return { data: url.slice(url.indexOf(",") + 1), mime: "image/jpeg" };
+}
+
+type Source = "photo" | "file" | "paste";
+
+/**
+ * استيراد قسم من ثلاثة أبواب: صورة الورقة، أو ملف الإشراف التربوي، أو لصق
+ * الأسماء. وكانت الثلاثة مكدّسة في ورقة واحدة طويلة، والأستاذ يستعمل بابًا
+ * واحدًا في المرة — فصارت تُختار أولًا ولا يظهر إلا بابها.
+ *
+ * والأسماء في النهاية نصّ واحد مهما كان مصدرها: ما يُقرأ من صورة أو ملف
+ * يبقى قابلًا للتصحيح باليد قبل الإنشاء، فلا تُحفظ قراءة خاطئة.
+ */
 function ImportSheet({
   onClose, onCreate, schools, defaultSchool, onAddSchool,
 }: {
@@ -3014,16 +3053,18 @@ function ImportSheet({
   defaultSchool: string | null;
   onAddSchool: (name: string) => Promise<School | null>;
 }) {
+  const [source, setSource] = useState<Source>("photo");
   const [name, setName] = useState("");
   const [schoolId, setSchoolId] = useState<string>(defaultSchool ?? schools[0]?.id ?? "");
   const [newSchool, setNewSchool] = useState("");
   const [text, setText] = useState("");
-  const [status, setStatus] = useState("لم يُختر ملف بعد.");
+  const [status, setStatus] = useState("");
+  const [reading, setReading] = useState(false);
   const [busy, setBusy] = useState(false);
-  const fileRef = useRef<HTMLInputElement>(null);
 
   async function readFile(file: File) {
-    setStatus("جارٍ القراءة…");
+    setReading(true);
+    setStatus("جارٍ قراءة الملف…");
     try {
       const XLSX = await import("xlsx");
       const buffer = await file.arrayBuffer();
@@ -3042,6 +3083,43 @@ function ImportSheet({
       setStatus(`وجدت ${best.names.length} اسمًا${best.cls ? ` للقسم: ${best.cls}` : ""}`);
     } catch {
       setStatus("الملف غير مقروء. جرّب لصق الأسماء.");
+    } finally {
+      setReading(false);
+    }
+  }
+
+  async function readPhoto(file: File) {
+    setReading(true);
+    setStatus("جارٍ قراءة الصورة…");
+    try {
+      const { data, mime } = await shrinkImage(file).catch(() => fileAsBase64(file));
+      const response = await fetch("/api/roster", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ image: data, mime }),
+      });
+      const payload = (await response.json()) as {
+        cls?: string;
+        names?: string[];
+        error?: string;
+      };
+      if (!response.ok) {
+        setStatus(payload.error ?? "تعذّرت قراءة الصورة.");
+        return;
+      }
+      const found = payload.names ?? [];
+      if (!found.length) {
+        setStatus("لم أجد أسماء في الصورة. صوّر الورقة كاملة وواضحة.");
+        return;
+      }
+      if (payload.cls && !name) setName(payload.cls);
+      // تُضاف إلى ما سبق: ورقة القسم قد تكون صفحتين تُصوَّران واحدة بعد أخرى.
+      setText((before) => (before.trim() ? `${before.trim()}\n${found.join("\n")}` : found.join("\n")));
+      setStatus(`قرأتُ ${found.length} اسمًا — راجعها قبل الإنشاء.`);
+    } catch {
+      setStatus("تعذّرت قراءة الصورة. أعد المحاولة أو الصق الأسماء.");
+    } finally {
+      setReading(false);
     }
   }
 
@@ -3052,7 +3130,7 @@ function ImportSheet({
       <div className="scrim" onClick={onClose} />
       <div className="sheet">
         <div className="shead">
-          <h3>استيراد قسم</h3>
+          <h3>قسم جديد</h3>
           <button className="icbtn" onClick={onClose} aria-label="إغلاق">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
               <path d="M6 6l12 12M18 6L6 18" />
@@ -3060,33 +3138,79 @@ function ImportSheet({
           </button>
         </div>
 
-        <div className="fld">
-          <div className="flab">
-            <b>ملف الإشراف التربوي</b>
-            <small>xlsx — يُقرأ اسم القسم والأسماء تلقائيًا</small>
-          </div>
-          <input
-            id="import-file"
-            ref={fileRef}
-            className="inp"
-            style={{ width: "100%" }}
-            type="file"
-            accept=".xlsx,.xls"
-            onChange={(e) => {
-              const file = e.target.files?.[0];
-              if (file) void readFile(file);
-            }}
-          />
+        <div className="segmented" role="group" aria-label="مصدر الأسماء">
+          <button aria-pressed={source === "photo"} onClick={() => setSource("photo")}>
+            صورة
+          </button>
+          <button aria-pressed={source === "file"} onClick={() => setSource("file")}>
+            ملف الإشراف
+          </button>
+          <button aria-pressed={source === "paste"} onClick={() => setSource("paste")}>
+            لصق
+          </button>
         </div>
+
+        {source === "photo" && (
+          <div className="fld">
+            <div className="flab">
+              <b>صوّر ورقة القسم</b>
+              <small>مطبوعة أو بخطّ اليد — تُقرأ الأسماء منها</small>
+            </div>
+            <label className="shot">
+              <input
+                id="import-photo"
+                type="file"
+                accept="image/*"
+                capture="environment"
+                disabled={reading}
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  e.target.value = "";
+                  if (file) void readPhoto(file);
+                }}
+              />
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M3 8h3.5L8 6h8l1.5 2H21v11H3z" />
+                <circle cx="12" cy="13.5" r="3.5" />
+              </svg>
+              <b>{reading ? "جارٍ القراءة…" : "التقط صورة أو اخترها"}</b>
+              <small>صفحة بعد صفحة إن كانت الورقة صفحتين</small>
+            </label>
+          </div>
+        )}
+
+        {source === "file" && (
+          <div className="fld">
+            <div className="flab">
+              <b>ملف الإشراف التربوي</b>
+              <small>xlsx — يُقرأ اسم القسم والأسماء تلقائيًا</small>
+            </div>
+            <input
+              id="import-file"
+              className="inp"
+              style={{ width: "100%" }}
+              type="file"
+              accept=".xlsx,.xls"
+              disabled={reading}
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) void readFile(file);
+              }}
+            />
+          </div>
+        )}
+
+        {status && <div className="note">{status}</div>}
 
         <div className="fld">
           <div className="flab">
-            <b>أو الصق الأسماء</b>
-            <small>سطر لكل تلميذ</small>
+            <b>{source === "paste" ? "الصق الأسماء" : "الأسماء"}</b>
+            <small>سطر لكل تلميذ · {names.length}</small>
           </div>
           <textarea
             id="import-names"
             className="inp"
+            style={{ minHeight: source === "paste" ? 150 : 110 }}
             value={text}
             onChange={(e) => setText(e.target.value)}
             placeholder={"بن عمر أمين\nالحاج موسى ابراهيم\n…"}
@@ -3151,22 +3275,20 @@ function ImportSheet({
           )}
         </div>
 
-        <div className="note">{status}</div>
-
         <button
           className="btn"
           style={{ marginTop: 14 }}
-          disabled={busy}
+          disabled={busy || reading}
           onClick={() => {
             if (!name.trim()) return setStatus("اكتب اسم القسم.");
-            if (!names.length) return setStatus("لا أسماء. ارفع ملفًا أو الصق الأسماء.");
+            if (!names.length) return setStatus("لا أسماء بعد: صوّر الورقة أو ارفع الملف أو الصقها.");
             // المؤسسة إلزامية: قسمٌ بلا واحدة يطبع ترويسة ناقصة.
             if (!schoolId) return setStatus("اختر مؤسسة القسم أو أضفها.");
             setBusy(true);
             onCreate(name.trim(), names, schoolId);
           }}
         >
-          {busy ? "جارٍ الإنشاء…" : `إنشاء القسم (${names.length} تلميذًا)`}
+          {busy ? "جارٍ الإنشاء…" : `أنشئ القسم (${names.length} تلميذًا)`}
         </button>
       </div>
     </>
