@@ -2,7 +2,7 @@
  * فتح ملف xlsx وإعادة بنائه دون المساس بما لم نكتبه.
  *
  * لماذا لا نستعمل مكتبة xlsx التي يستوردها الاستيراد؟ لأنها تقرأ القيم وتكتب
- * ملفًا جديدًا، فيضيع كل ما في وثيقة حجز النقاط من تنسيق وحماية وترويسات
+ * ملفًا جديدًا، فيضيع كل ما في وثيقة حجز النقاط من تنسيق وحماية ورؤوس
  * وزارية. والوثيقة تُرسل كما هي، فلا يجوز أن يعيدها التطبيق «مشابهة».
  *
  * فالمسلك هنا: الملف أرشيف zip، نفكّه ونعيد تركيبه بنسخ كل مدخلة كما هي
@@ -15,7 +15,7 @@
 
 export type ZipEntry = {
   name: string;
-  /** أعلام الترويسة، منزوعًا منها علم واصف البيانات (bit 3). */
+  /** أعلام ترويسة ZIP نفسها، منزوعًا منها علم واصف البيانات (bit 3). */
   flags: number;
   /** 0 مخزَّن، 8 مضغوط. */
   method: number;
@@ -72,7 +72,7 @@ export function readZip(bytes: Uint8Array): ZipEntry[] {
 
   const entries: ZipEntry[] = [];
   for (let i = 0; i < count; i++) {
-    if (view.getUint32(offset, true) !== CENTRAL) throw new ZipError("فهرس الأرشيف تالف");
+    if (view.getUint32(offset, true) !== CENTRAL) throw new ZipError("الملف تالف: تعذّر فتحه.");
     const flags = view.getUint16(offset + 8, true);
     const method = view.getUint16(offset + 10, true);
     const time = view.getUint16(offset + 12, true);
@@ -88,7 +88,7 @@ export function readZip(bytes: Uint8Array): ZipEntry[] {
       bytes.subarray(offset + 46, offset + 46 + nameLength),
     );
 
-    if (view.getUint32(localOffset, true) !== LOCAL) throw new ZipError("ترويسة مدخلة تالفة");
+    if (view.getUint32(localOffset, true) !== LOCAL) throw new ZipError("الملف تالف: تعذّر فتحه.");
     const localNameLength = view.getUint16(localOffset + 26, true);
     const localExtraLength = view.getUint16(localOffset + 28, true);
     const start = localOffset + 30 + localNameLength + localExtraLength;

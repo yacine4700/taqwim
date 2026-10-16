@@ -385,7 +385,7 @@ nav.tabs svg { width: 21px; height: 21px; }
 .psign { display: flex; justify-content: space-between; margin-top: 26px; font-size: 12px; font-weight: 600; padding-inline: 10mm; }
 
 @media print {
-  /* لا يُطبع إلا الكشف: الترويسة والتبويبات والأوراق المنبثقة تُخفى */
+  /* لا يُطبع إلا الكشف: رأس التطبيق والتبويبات والأوراق المنبثقة تُخفى */
   header, main, nav.tabs, .toast, .scrim, .sheet, .printbar { display: none !important; }
   .printwrap { position: static; overflow: visible; background: #fff; }
   .paper {
