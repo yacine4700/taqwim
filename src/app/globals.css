@@ -403,6 +403,21 @@ nav.tabs svg { width: 21px; height: 21px; }
   @page { size: A4 portrait; margin: 12mm; }
 }
 
+/* أبواب الإعدادات: ثلاثة بدل صفحة واحدة تُمرَّر */
+.segmented { display: flex; background: var(--surface-2); border-radius: var(--radius-sm); padding: 3px; gap: 2px; }
+.segmented button {
+  flex: 1; padding: 8px 6px; border-radius: 7px; font-size: 13px;
+  font-weight: 600; color: var(--muted);
+}
+.segmented button[aria-pressed="true"] { background: var(--surface); color: var(--primary); box-shadow: var(--shadow); }
+
+/* الأقسام مجموعة بمؤسساتها */
+.schoolgroup { display: flex; flex-direction: column; gap: 10px; }
+.grouphead { display: flex; align-items: center; gap: 9px; padding-top: 4px; }
+.grouphead b { font-size: 13px; font-weight: 700; color: var(--muted); }
+.grouphead::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+.grouphead .pill { order: 3; }
+
 /* بطاقة البداية: خطوة تختفي كلّما تمّت، والبطاقة كلّها حين تتمّ كلّها */
 .startcard { border-color: var(--primary-soft); }
 .startcard > .srow2:first-child b { font-size: 14px; font-weight: 600; }

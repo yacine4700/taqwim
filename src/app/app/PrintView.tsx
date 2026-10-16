@@ -25,18 +25,22 @@ import {
   type RecordRow,
 } from "@/lib/scoring";
 
-type Klass = { id: string; name: string };
+type Klass = { id: string; name: string; school_id: string | null };
+type School = { id: string; name: string };
 type Student = { id: string; full_name: string };
-type Profile = { full_name: string; subject: string | null; school_name: string | null };
+type Profile = { full_name: string; subject: string | null };
 
 export default function PrintView({
-  klass, students, criteria, components, profile, term, recordOf, readingsOf, onClose,
+  klass, students, criteria, components, profile, schools, term,
+  recordOf, readingsOf, onClose,
 }: {
   klass: Klass;
   students: Student[];
   criteria: Criterion[];
   components: Component[];
   profile: Profile;
+  /** المؤسسة تأتي من القسم المطبوع لا من الأستاذ: قد يدرّس في ثانويتين. */
+  schools: School[];
   term: number;
   recordOf: (studentId: string) => RecordRow | undefined;
   readingsOf: (studentId: string) => Reading[];
@@ -74,6 +78,7 @@ export default function PrintView({
     rows.filter((r) => r.readings.length === 0).length,
   );
 
+  const school = schools.find((s) => s.id === klass.school_id)?.name ?? "";
   const today = new Date();
   const stamp = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
 
@@ -101,7 +106,7 @@ export default function PrintView({
         <div className="phead">
           <div className="pline">الجمهورية الجزائرية الديمقراطية الشعبية</div>
           <div className="pline">وزارة التربية الوطنية</div>
-          {profile.school_name && <div className="pline strong">{profile.school_name}</div>}
+          {school && <div className="pline strong">{school}</div>}
           <h1>كشف نقاط القسم</h1>
           <div className="pmeta">
             <span><b>القسم:</b> {klass.name}</span>
