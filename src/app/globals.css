@@ -557,3 +557,17 @@ nav.tabs svg { width: 21px; height: 21px; }
   from { opacity: 0; transform: translateY(3px); }
   to { opacity: 1; transform: none; }
 }
+
+/* صفحات نصّية طويلة (الخصوصية): عمود مقروء لا يتمدّد على عرض الحاسوب */
+.legal { max-width: 680px; margin-inline: auto; padding: 28px 18px 56px; line-height: 1.95; font-size: 15px; }
+.legal h1 { font-size: 24px; margin: 0 0 6px; }
+.legal h2 { font-size: 17px; margin: 26px 0 6px; color: var(--primary); }
+.legal p { margin: 0 0 10px; }
+.legal ul { margin: 0 0 10px; padding-inline-start: 22px; }
+.legal li { margin-bottom: 6px; }
+.legal .meta { color: var(--muted); font-size: 13px; }
+.legal a { color: var(--primary); font-weight: 600; }
+.legal .back { display: inline-block; margin-bottom: 14px; font-size: 14px; }
+
+/* رابط يُعرض كزرّ أو كنصّ تنقّل: بلا تسطير المتصفّح */
+a.btn, a.swap { text-decoration: none; }

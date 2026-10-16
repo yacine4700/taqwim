@@ -19,6 +19,7 @@ export default function LoginPage() {
   useEffect(() => {
     const query = new URLSearchParams(window.location.search);
     if (query.get("forgot")) setMode("forgot");
+    if (query.get("deleted")) setMessage("حُذف حسابك وكل بياناتك.");
     if (query.get("error") === "link") {
       setBad(true);
       setMessage("تعذّر فتح الرابط: انتهت صلاحيته أو فُتح في جهاز آخر. اطلب رابطًا جديدًا.");
@@ -173,6 +174,10 @@ export default function LoginPage() {
         >
           {mode === "in" ? "ليس لي حساب بعد" : mode === "up" ? "لي حساب، أريد الدخول" : "رجوع إلى الدخول"}
         </button>
+
+        <a className="swap" href="/privacy" style={{ fontWeight: 400 }}>
+          الخصوصية: أين تُحفظ البيانات ومن يراها
+        </a>
       </form>
     </div>
   );

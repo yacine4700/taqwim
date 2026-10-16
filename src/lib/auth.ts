@@ -45,3 +45,14 @@ export function translateAuthError(message: string): string {
   if (m.includes("email")) return "راجع صيغة البريد الإلكتروني.";
   return message;
 }
+
+/**
+ * تأكيد الحذف بكتابة البريد: عملية لا رجعة فيها لا تكفيها نقرة. المقارنة لا
+ * تفرّق بين حالة الأحرف ولا تعبأ بالفراغ المحيط، فلوحة المفاتيح في الهاتف
+ * تكبّر الحرف الأول وتضيف فراغًا.
+ */
+export function confirmMatches(typed: string, email: string): boolean {
+  const want = email.trim().toLowerCase();
+  if (!want) return false;
+  return typed.trim().toLowerCase() === want;
+}

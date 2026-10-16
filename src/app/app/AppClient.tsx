@@ -2231,6 +2231,20 @@ function SettingsView({
           </div>
           <button className="btn ghost" onClick={onSignOut}>خروج</button>
         </div>
+        <div className="srow2">
+          <div className="k">
+            الخصوصية
+            <small>أين تُحفظ بيانات تلاميذك ومن يراها</small>
+          </div>
+          <a className="btn ghost" href="/privacy">اقرأ</a>
+        </div>
+        <div className="srow2">
+          <div className="k">
+            حذف الحساب
+            <small>يمحو كل أقسامك وعلاماتك نهائيًا</small>
+          </div>
+          <a className="btn warn" href="/account">حذف…</a>
+        </div>
       </div>
       </>
       )}

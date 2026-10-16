@@ -39,6 +39,12 @@ function translateAuthError(message) {
   return message;
 }
 
+function confirmMatches(typed, email) {
+  const want = email.trim().toLowerCase();
+  if (!want) return false;
+  return typed.trim().toLowerCase() === want;
+}
+
 let pass = 0;
 let fail = 0;
 function eq(name, got, want) {
@@ -76,6 +82,15 @@ eq("كلمة قديمة", translateAuthError("New password should be different f
 eq("جلسة مفقودة", translateAuthError("Auth session missing!"), "انتهت صلاحية الرابط. اطلب رابطًا جديدًا.");
 eq("كلمة قصيرة من الخادم", translateAuthError("Password should be at least 6 characters"), "كلمة السر لا تصلح: 6 أحرف على الأقل.");
 eq("رسالة مجهولة تمرّ كما هي", translateAuthError("boom"), "boom");
+
+/* تأكيد الحذف */
+eq("البريد نفسه", confirmMatches("a@b.com", "a@b.com"), true);
+eq("حالة الأحرف لا تهمّ", confirmMatches("A@B.com", "a@b.com"), true);
+eq("فراغ محيط", confirmMatches("  a@b.com ", "a@b.com"), true);
+eq("بريد آخر", confirmMatches("x@b.com", "a@b.com"), false);
+eq("فارغ", confirmMatches("", "a@b.com"), false);
+eq("بريد الحساب فارغ لا يُطابق الفارغ", confirmMatches("", ""), false);
+eq("جزء من البريد", confirmMatches("a@b", "a@b.com"), false);
 
 console.log(`auth: ${pass} نجح، ${fail} فشل`);
 if (fail) process.exit(1);
