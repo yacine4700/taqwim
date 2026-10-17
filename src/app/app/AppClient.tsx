@@ -1299,8 +1299,19 @@ function ClassView({
           مرة ثم يُنزَل على الأسماء بعدّاد لكل سطر. */}
       {students.length > 0 && columns.length > 0 && (
         <div className="colbar">
-          <span className="collab">نقّط عمودًا:</span>
+          <span className="collab">عرض:</span>
           <div className="chips">
+            {/* العودة إلى الحالة العامة بزرّ ظاهر: إعادة النقر على العمود المختار
+                تُلغيه، لكن أحدًا لا يخمّن ذلك. */}
+            <button
+              aria-pressed={column === null}
+              onClick={() => {
+                setColumn(null);
+                setFilter("all");
+              }}
+            >
+              الكل
+            </button>
             {columns.map((c) => (
               <button
                 key={c.key}
