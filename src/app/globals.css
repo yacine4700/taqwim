@@ -612,3 +612,5 @@ a.btn, a.swap { text-decoration: none; }
 .grouphead h3 { font-size: 16px; }
 .delta { color: var(--primary); font-weight: 600; font-variant-numeric: tabular-nums; }
 .delta.down { color: var(--danger); }
+.termnote { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
+.termnote span { flex: 1 1 160px; }

@@ -7,6 +7,7 @@ import { MIN_PASSWORD, changePasswordProblem, translateAuthError } from "@/lib/a
 import { isDurable, kvDel, kvGet, kvSet } from "@/lib/localdb";
 import { nameMatches } from "@/lib/names";
 import { useBackLayers } from "@/lib/useBackLayers";
+import { currentTerm } from "@/lib/terms";
 import { nextPositions, splitNewNames } from "@/lib/roster";
 import { firstClassOf, groupBySchool, groupOf, resolveSessionClass } from "@/lib/schools";
 import { assignment, cleanGroupName, shuffled, type Group } from "@/lib/groups";
@@ -189,6 +190,8 @@ export default function AppClient({
     { criterion: Criterion; patch: Partial<Criterion>; marked: number } | null
   >(null);
   const [settingsTick, setSettingsTick] = useState(0);
+  /** الفصل الذي أخفى الأستاذ تنبيهه («الفصل المختار غير الجاري») في هذه الجلسة. */
+  const [termDismissed, setTermDismissed] = useState<number | null>(null);
   const [confirmStudent, setConfirmStudent] = useState<Student | null>(null);
   const [showPending, setShowPending] = useState(false);
   const [confirmSignOut, setConfirmSignOut] = useState(false);
@@ -1168,6 +1171,9 @@ export default function AppClient({
     router.refresh();
   }
 
+  /** الفصل الجاري بتاريخ اليوم، أو null في العطلة فلا تنبيه. */
+  const curTerm = currentTerm(new Date());
+
   /* ---------- زرّ الرجوع ---------- */
   /**
    * الطبقات المفتوحة من الأعلى إلى الأسفل: النوافذ ثم بطاقة التلميذ ثم الشاشات.
@@ -1254,6 +1260,26 @@ export default function AppClient({
               عند عودة الشبكة.
             </div>
           )}
+
+          {/* التنبيه حيث تُكتب العلامات فقط، ولا يمنع شيئًا: الأستاذ قد يُدخل علامات فصل سابق عن قصد */}
+          {((tab === "classes" && openClass) || tab === "session") &&
+            curTerm !== null &&
+            term !== curTerm &&
+            termDismissed !== term && (
+              <div className="note warn termnote" role="status">
+                <span>تنقّط في الفصل {term}، والفصل الجاري {curTerm}.</span>
+                <button className="clearb" onClick={() => setTerm(curTerm)}>
+                  انتقل إلى الفصل {curTerm}
+                </button>
+                <button
+                  className="clearb"
+                  aria-label="أخفِ التنبيه"
+                  onClick={() => setTermDismissed(term)}
+                >
+                  ×
+                </button>
+              </div>
+            )}
 
           {tab === "classes" &&
             (openClass && classSection === "groups" && tpReady ? (
