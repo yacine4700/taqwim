@@ -1,4 +1,5 @@
 /* دفتر التقويم المستمر — نظام التنسيق
+   التباين: --faint محسوب ≥ 4.5:1 على --bg و--surface و--surface-2 (فاتحًا وداكنًا)، و--sand كذلك على --sand-soft؛ بقية الألوان لم تُراجَع.
    التخطيط: عمود واحد للهاتف وشريط تبويبات ثابت أسفل الشاشة، يتّسع على الحاسوب.
    الألوان: أخضر اليخضور للمادة، ورملي غرداية للتنبيه، ومحايدات مائلة إلى الخضرة. */
 :root {
@@ -8,11 +9,11 @@
   --line: #dce5e0;
   --ink: #122019;
   --muted: #5d6f67;
-  --faint: #8a9a93;
+  --faint: #61716a;
   --primary: #0e6a56;
   --primary-soft: #dcefe8;
   --on-primary: #ffffff;
-  --sand: #9a6418;
+  --sand: #946017;
   --sand-soft: #f6ecdc;
   --danger: #a52218;
   --danger-soft: #fbe6e3;
@@ -29,7 +30,7 @@
     --line: #27352e;
     --ink: #e7efea;
     --muted: #94a69e;
-    --faint: #6f817a;
+    --faint: #7d8e87;
     --primary: #53c9ac;
     --primary-soft: #14312a;
     --on-primary: #06201a;
@@ -48,7 +49,7 @@
   --line: #27352e;
   --ink: #e7efea;
   --muted: #94a69e;
-  --faint: #6f817a;
+  --faint: #7d8e87;
   --primary: #53c9ac;
   --primary-soft: #14312a;
   --on-primary: #06201a;
@@ -325,6 +326,7 @@ nav.tabs svg { width: 21px; height: 21px; }
 .authbox { width: 100%; max-width: 380px; display: flex; flex-direction: column; gap: 14px; }
 .authbox h1 { font-size: 23px; }
 .authbox p.lead { margin: 0; color: var(--muted); font-size: 14px; }
+.authbox p.about { margin: 10px 0 0; padding: 10px 12px; border-radius: var(--radius-sm); background: var(--primary-soft); color: var(--ink); font-size: 13px; line-height: 1.8; }
 .authbox label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; font-weight: 600; }
 .authbox input { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 11px; }
 .authbox .swap { font-size: 13px; color: var(--primary); font-weight: 600; text-align: center; }
@@ -602,3 +604,9 @@ a.btn, a.swap { text-decoration: none; }
 .srow2.tprow { padding-block: 5px; }
 .srow2.tprow .tpin { padding: 6px; }
 .srow2.tprow .clearb { padding: 6px 10px; }
+
+/* الإحصاء مجمّع بالمؤسسة */
+.statgroup { display: flex; flex-direction: column; gap: 12px; }
+.statgroup + .statgroup { margin-top: 18px; }
+.grouphead { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding-top: 4px; }
+.grouphead h3 { font-size: 16px; }

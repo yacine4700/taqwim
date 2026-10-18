@@ -864,8 +864,10 @@ export default function AppClient({
       ).length;
       if (marked) {
         say(`تنبيه: ${marked} علامة مسجَّلة في هذا المعيار صار معناها مختلفًا`);
+        return;
       }
     }
+    say("حُفظ المعيار");
   }
 
   /**
@@ -948,7 +950,9 @@ export default function AppClient({
     if (error) {
       say("تعذّر حفظ بياناتك");
       void load();
+      return;
     }
+    say("حُفظت بياناتك");
   }
 
   async function saveComponent(id: string, patch: Partial<Component>) {
@@ -958,7 +962,9 @@ export default function AppClient({
     if (error) {
       say("تعذّر حفظ المركّبة");
       void load();
+      return;
     }
+    say("حُفظت المركّبة");
   }
 
   /** الاسم والحالة الخاصة يُكتبان في الحصة، فيمرّان بالطابور مثل العلامة. */
@@ -1010,7 +1016,9 @@ export default function AppClient({
     if (error) {
       say("تعذّر حفظ الاسم");
       void load();
+      return;
     }
+    say("حُفظ الاسم");
   }
 
   /** حذف المؤسسة لا يحذف أقسامها: تبقى بلا مؤسسة وتُنسب من جديد. */
@@ -1323,7 +1331,7 @@ export default function AppClient({
           )}
 
           {tab === "stats" && (
-            <StatsView classes={classes} statsOf={statsOf} term={term} />
+            <StatsView classes={classes} schools={schools} statsOf={statsOf} term={term} />
           )}
 
           {tab === "docs" && (
@@ -2369,12 +2377,54 @@ const BINS: Array<[number, number, string]> = [
 ];
 
 function StatsView({
-  classes, statsOf, term,
+  classes, schools, statsOf, term,
 }: {
   classes: Klass[];
+  schools: School[];
   statsOf: (id: string) => ReturnType<typeof classStats>;
   term: number;
 }) {
+  const groups = groupBySchool(classes, schools);
+
+  function statCard(klass: Klass) {
+    const st = statsOf(klass.id);
+    const counts = BINS.map(([lo, hi]) => st.values.filter((v) => v >= lo && v < hi).length);
+    const peak = Math.max(1, ...counts);
+    return (
+      <div key={klass.id} className="card">
+        <div className="srow2">
+          <div className="k">
+            <b>{klass.name}</b>
+            <small>{st.scored} منقَّطًا من {st.total}</small>
+          </div>
+          <span className="pill">{st.mean === null ? "—" : `${fmt(st.mean)} / 20`}</span>
+        </div>
+        {st.scored > 0 && (
+          <>
+            <div className="kpis">
+              <Kpi value={fmt(st.median)} label="الوسيط" />
+              <Kpi value={fmt(st.sd)} label="الانحراف" />
+              <Kpi value={fmt(st.max)} label="أعلى" />
+              <Kpi value={fmt(st.min)} label="أدنى" />
+              <Kpi value={st.passRate === null ? "—" : `${Math.round(st.passRate * 100)}%`} label="فاق 10" />
+            </div>
+            <div className="dist">
+              {BINS.map(([, , label], i) => (
+                <div key={label} className="drow">
+                  <span className="dl">{label}</span>
+                  <span className="db">
+                    <i style={{ width: `${Math.round((counts[i] / peak) * 100)}%` }} />
+                  </span>
+                  <span className="dn num">{counts[i]}</span>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
+    );
+  }
+
   return (
     <section className="view">
       <div className="vhead">
@@ -2389,41 +2439,22 @@ function StatsView({
           <p>استورد قسمًا أولًا.</p>
         </div>
       ) : (
-        classes.map((klass) => {
-          const st = statsOf(klass.id);
-          const counts = BINS.map(([lo, hi]) => st.values.filter((v) => v >= lo && v < hi).length);
-          const peak = Math.max(1, ...counts);
+        /* مجمّع بالمؤسسة كشاشة الأقسام: صاحب ثانويتين لا يقرأ سبعة أقسام متتالية
+           بأسماء متشابهة. مؤسسة واحدة: لا عنوان، فلا شيء يتغيّر عنده. */
+        groups.map((group) => {
+          const values = group.classes.flatMap((k) => statsOf(k.id).values);
+          const mean = values.length ? values.reduce((a, b) => a + b, 0) / values.length : null;
           return (
-            <div key={klass.id} className="card">
-              <div className="srow2">
-                <div className="k">
-                  <b>{klass.name}</b>
-                  <small>{st.scored} منقَّطًا من {st.total}</small>
+            <div key={group.key} className="statgroup">
+              {groups.length > 1 && (
+                <div className="grouphead">
+                  <h3>{group.name}</h3>
+                  <span className="pill">
+                    {values.length} منقَّطًا{mean === null ? "" : ` · معدلهم ${fmt(mean)}`}
+                  </span>
                 </div>
-                <span className="pill">{st.mean === null ? "—" : `${fmt(st.mean)} / 20`}</span>
-              </div>
-              {st.scored > 0 && (
-                <>
-                  <div className="kpis">
-                    <Kpi value={fmt(st.median)} label="الوسيط" />
-                    <Kpi value={fmt(st.sd)} label="الانحراف" />
-                    <Kpi value={fmt(st.max)} label="أعلى" />
-                    <Kpi value={fmt(st.min)} label="أدنى" />
-                    <Kpi value={st.passRate === null ? "—" : `${Math.round(st.passRate * 100)}%`} label="فاق 10" />
-                  </div>
-                  <div className="dist">
-                    {BINS.map(([, , label], i) => (
-                      <div key={label} className="drow">
-                        <span className="dl">{label}</span>
-                        <span className="db">
-                          <i style={{ width: `${Math.round((counts[i] / peak) * 100)}%` }} />
-                        </span>
-                        <span className="dn num">{counts[i]}</span>
-                      </div>
-                    ))}
-                  </div>
-                </>
               )}
+              {group.classes.map(statCard)}
             </div>
           );
         })
@@ -2650,8 +2681,9 @@ function SettingsView({
                   defaultValue={Number(c.ceiling)}
                   onBlur={(e) => {
                     const value = Number(e.target.value);
-                    if (value > 0 && value <= 20) onCriterion(c.id, { ceiling: value });
-                    else e.target.value = String(Number(c.ceiling));
+                    if (value > 0 && value <= 20) {
+                      if (value !== Number(c.ceiling)) onCriterion(c.id, { ceiling: value });
+                    } else e.target.value = String(Number(c.ceiling));
                   }}
                 />
               </label>
@@ -2742,8 +2774,9 @@ function SettingsView({
                     disabled={!c.active && !fixed}
                     onBlur={(e) => {
                       const value = Number(e.target.value);
-                      if (value >= 0 && value <= 10) onComponent(c.id, { weight: value });
-                      else e.target.value = String(Number(c.weight));
+                      if (value >= 0 && value <= 10) {
+                        if (value !== Number(c.weight)) onComponent(c.id, { weight: value });
+                      } else e.target.value = String(Number(c.weight));
                     }}
                   />
                 </label>
