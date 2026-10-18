@@ -101,3 +101,38 @@ export function assignment(
     block.map((student_id) => ({ student_id, group_id: groupIds[i] })),
   );
 }
+
+/* ---------- التواريخ والتسميات ---------- */
+
+/** تاريخ اليوم بتوقيت الجهاز. toISOString يعطي توقيت غرينتش، فيقدّم الحصة يومًا قبل الفجر. */
+export function todayISO(now: Date = new Date()): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+}
+
+/** «2026-10-18» ← «18/10». ما لا يُقرأ يُعاد كما هو بدل أن يختفي. */
+export function shortDate(iso: string): string {
+  const match = /^\d{4}-(\d{2})-(\d{2})$/.exec(iso);
+  return match ? `${match[2]}/${match[1]}` : iso;
+}
+
+/** عنوان الحصة في القائمة: ما كتبه الأستاذ، وإلا تاريخها. */
+export function sessionLabel(session: { title: string | null; held_on: string }): string {
+  const title = session.title?.trim();
+  return title ? title : `حصة ${shortDate(session.held_on)}`;
+}
+
+/** العنوان كما يُحفظ: الفراغ يصير null فيعود التاريخ عنوانًا. */
+export function cleanSessionTitle(raw: string): string | null {
+  const title = raw.replace(/\s+/g, " ").trim().slice(0, 60).trim();
+  return title === "" ? null : title;
+}
+
+/** علامة من 20 كما يكتبها الأستاذ: null للفراغ، NaN لما لا يصحّ، وإلا الرقم. */
+export function parseMark(text: string): number | null | "invalid" {
+  const raw = text.trim().replace(",", ".").replace("،", ".");
+  if (raw === "") return null;
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value < 0 || value > 20) return "invalid";
+  return Math.round(value * 100) / 100;
+}

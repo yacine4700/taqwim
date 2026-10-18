@@ -8,21 +8,28 @@ import { isDurable, kvDel, kvGet, kvSet } from "@/lib/localdb";
 import { nameMatches } from "@/lib/names";
 import { nextPositions, splitNewNames } from "@/lib/roster";
 import { firstClassOf, groupBySchool, groupOf, resolveSessionClass } from "@/lib/schools";
+import { assignment, cleanGroupName, shuffled, type Group } from "@/lib/groups";
 import ExportSheet from "./ExportSheet";
+import GroupsView from "./GroupsView";
 import PrintView from "./PrintView";
 import { useOutbox } from "@/lib/useOutbox";
 import {
   applyReadings,
   applyRecords,
   applyStudents,
+  applyTpMarks,
+  applyTpSessions,
   countWord,
   newOp,
+  opSessionId,
+  opStudentId,
   pending,
   pendingLabel,
   uid,
   type Op,
 } from "@/lib/outbox";
 import {
+  applyTpTarget,
   bump,
   checkTotal,
   classStats,
@@ -35,12 +42,18 @@ import {
   readingAverage,
   shownValue,
   stepFor,
+  targetCriterionCode,
   termAverage,
+  tpAverages,
+  TP_COMPONENT,
   type Component,
   type Criterion,
   type MarkField,
   type Reading,
   type RecordRow,
+  type TpMark,
+  type TpSession,
+  type TpTarget,
 } from "@/lib/scoring";
 
 type Klass = {
@@ -49,6 +62,8 @@ type Klass = {
   position: number;
   /** المؤسسة التي يُدرَّس فيها القسم، أو null لقسم لم يُنسب بعد. */
   school_id: string | null;
+  /** أين يذهب معدّل حصص الأعمال التطبيقية: null لا ربط، أو 'component'، أو 'criterion:<code>'. */
+  tp_target: TpTarget;
 };
 type School = { id: string; name: string; position: number };
 type Student = {
@@ -60,6 +75,8 @@ type Student = {
   tags: string[];
   /** ملاحظة حرة لما لا تغطّيه الحالات الجاهزة. لا تدخل أي حساب. */
   note: string | null;
+  /** فوجه في القسم، أو null إن لم يُوزَّع. لا يدخل أي حساب. */
+  group_id: string | null;
 };
 
 /**
@@ -95,6 +112,11 @@ type Snapshot = {
   components: Component[];
   records: RecordRow[];
   readings: Reading[];
+  /** الأفواج وحصص الأعمال التطبيقية: غائبة من نسخة أقدم من هذا الإصدار. */
+  groups?: Group[];
+  sessions?: TpSession[];
+  tpMarks?: TpMark[];
+  tpReady?: boolean;
   savedAt: number;
 };
 
@@ -126,6 +148,14 @@ export default function AppClient({
   const [baseStudents, setBaseStudents] = useState<Student[]>([]);
   const [baseRecords, setBaseRecords] = useState<RecordRow[]>([]);
   const [baseReadings, setBaseReadings] = useState<Reading[]>([]);
+  /* الأفواج تُدار والشبكة قائمة. الحصص وعلاماتها تمرّ بالطابور فتعمل دونها. */
+  const [groups, setGroups] = useState<Group[]>([]);
+  const [baseSessions, setBaseSessions] = useState<TpSession[]>([]);
+  const [baseTpMarks, setBaseTpMarks] = useState<TpMark[]>([]);
+  /** جداول الأفواج موجودة في القاعدة وقُرئت. إن لم تكن فالأفواج مخفيّة ولا يتأثّر غيرها. */
+  const [tpReady, setTpReady] = useState(false);
+  /** داخل القسم المفتوح: التلاميذ (الأصل) أو الأفواج. */
+  const [classSection, setClassSection] = useState<"students" | "groups">("students");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   /** وقت حفظ النسخة المعروضة إن كانت من الجهاز لا من الخادم. */
@@ -164,16 +194,25 @@ export default function AppClient({
   const onApplied = useCallback((op: Op) => {
     if (op.kind === "record") setBaseRecords((rows) => applyRecords(rows, [op]));
     else if (op.kind === "student") setBaseStudents((rows) => applyStudents(rows, [op]));
+    else if (op.kind === "tp-session") setBaseSessions((rows) => applyTpSessions(rows, [op]));
+    else if (op.kind === "tp-mark") setBaseTpMarks((rows) => applyTpMarks(rows, [op]));
     else setBaseReadings((rows) => applyReadings(rows, [op]));
   }, []);
 
   const outbox = useOutbox(supabase, teacherId, onApplied);
+
+  /* فتح قسم يبدأ من تلاميذه دائمًا، لا من آخر شاشة تُرك عندها قسم آخر */
+  useEffect(() => {
+    setClassSection("students");
+  }, [openClass]);
   const queue = outbox.queue;
   const waiting = useMemo(() => pending(queue), [queue]);
 
   const students = useMemo(() => applyStudents(baseStudents, queue), [baseStudents, queue]);
   const records = useMemo(() => applyRecords(baseRecords, queue), [baseRecords, queue]);
   const readings = useMemo(() => applyReadings(baseReadings, queue), [baseReadings, queue]);
+  const sessions = useMemo(() => applyTpSessions(baseSessions, queue), [baseSessions, queue]);
+  const tpMarks = useMemo(() => applyTpMarks(baseTpMarks, queue), [baseTpMarks, queue]);
 
   /** أقسام بلا مؤسسة: حالة لا يُفترض أن تبقى، فتُصلَح بإلزام. */
   const orphans = useMemo(
@@ -264,10 +303,48 @@ export default function AppClient({
     }
     servedRef.current = true;
     setError("");
+
+    /*
+     * الأفواج وحصصها تُقرأ على حدة ولا يُفشل غيابُها الباقي: إن لم تُهيَّأ
+     * جداولها في القاعدة بعدُ (أو انقطع الاتصال في منتصف القراءة) يعمل
+     * التطبيق كما كان، وتُخفى الأفواج بدل أن تُحجب علاماته.
+     */
+    const [gr, ss, tm, cg, sg] = await Promise.all([
+      supabase.from("class_groups").select("id,class_id,name,position").order("position"),
+      supabase.from("tp_sessions").select("id,class_id,group_id,term,held_on,title").order("held_on"),
+      supabase.from("tp_marks").select("session_id,student_id,score,absent"),
+      supabase.from("classes").select("id,tp_target"),
+      supabase.from("students").select("id,group_id"),
+    ]);
+    const ready = !gr.error && !ss.error && !tm.error && !cg.error && !sg.error;
+    const targetOfClass = new Map<string, TpTarget>(
+      (ready ? (cg.data ?? []) : []).map((row) => [row.id as string, (row.tp_target as TpTarget) ?? null]),
+    );
+    const groupOfStudent = new Map<string, string | null>(
+      (ready ? (sg.data ?? []) : []).map((row) => [row.id as string, (row.group_id as string | null) ?? null]),
+    );
+
     const snapshot: Snapshot = {
-      classes: (c.data ?? []) as Klass[],
+      classes: ((c.data ?? []) as Array<Omit<Klass, "tp_target">>).map((k) => ({
+        ...k,
+        tp_target: targetOfClass.get(k.id) ?? null,
+      })),
       schools: (sc.data ?? []) as School[],
-      students: (s.data ?? []) as Student[],
+      students: ((s.data ?? []) as Array<Omit<Student, "group_id">>).map((st) => ({
+        ...st,
+        group_id: groupOfStudent.get(st.id) ?? null,
+      })),
+      groups: ready ? ((gr.data ?? []) as Group[]) : [],
+      sessions: ready
+        ? ((ss.data ?? []) as TpSession[]).map((x) => ({ ...x, term: Number(x.term) }))
+        : [],
+      tpMarks: ready
+        ? ((tm.data ?? []) as TpMark[]).map((x) => ({
+            ...x,
+            score: x.score === null ? null : Number(x.score),
+          }))
+        : [],
+      tpReady: ready,
       criteria: (cr.data ?? []) as Criterion[],
       components: (cp.data ?? []) as Component[],
       records: (r.data ?? []) as RecordRow[],
@@ -283,6 +360,10 @@ export default function AppClient({
     setComponents(snapshot.components);
     setBaseRecords(snapshot.records);
     setBaseReadings(snapshot.readings);
+    setGroups(snapshot.groups ?? []);
+    setBaseSessions(snapshot.sessions ?? []);
+    setBaseTpMarks(snapshot.tpMarks ?? []);
+    setTpReady(snapshot.tpReady ?? false);
     setCachedAt(null);
     setLoading(false);
     void kvSet(snapKey, snapshot);
@@ -294,13 +375,17 @@ export default function AppClient({
       const saved = await kvGet<Snapshot>(snapKey);
       // إن سبق الخادمُ القراءةَ من الجهاز فالأحدث هو الباقي.
       if (!alive || !saved || servedRef.current) return;
-      setClasses(saved.classes ?? []);
+      setClasses((saved.classes ?? []).map((k) => ({ ...k, tp_target: k.tp_target ?? null })));
       setSchools(saved.schools ?? []);
-      setBaseStudents(saved.students ?? []);
+      setBaseStudents((saved.students ?? []).map((st) => ({ ...st, group_id: st.group_id ?? null })));
       setCriteria(saved.criteria ?? []);
       setComponents(saved.components ?? []);
       setBaseRecords(saved.records ?? []);
       setBaseReadings(saved.readings ?? []);
+      setGroups(saved.groups ?? []);
+      setBaseSessions(saved.sessions ?? []);
+      setBaseTpMarks(saved.tpMarks ?? []);
+      setTpReady(saved.tpReady ?? false);
       setProfile(saved.profile ?? NO_PROFILE);
       setCachedAt(saved.savedAt ?? 0);
       setLoading(false);
@@ -387,13 +472,45 @@ export default function AppClient({
     (studentId: string) => readings.filter((r) => r.student_id === studentId && r.term === term),
     [readings, term],
   );
+  /** معدّل حصص كل تلميذ في الفصل المعروض. يُحسب ولا يُخزَّن. */
+  const tpAverageById = useMemo(
+    () => tpAverages(tpMarks, sessions, term),
+    [tpMarks, sessions, term],
+  );
+  const classOfStudent = useMemo(
+    () => new Map(students.map((s) => [s.id, s.class_id])),
+    [students],
+  );
+  const targetOfClass = useCallback(
+    (classId: string): TpTarget => classes.find((c) => c.id === classId)?.tp_target ?? null,
+    [classes],
+  );
+  /**
+   * السجل **للعرض والحساب فقط**: معدّل الحصص يحلّ محل الخانة التي اختارها
+   * الأستاذ لقسمه. لا يُمرَّر إلى الكتابة أبدًا (saveRecord وsetCriterion يقرآن
+   * recordOf الخام)، وإلا ثبّت معدّل اليوم في الخانة وانفصلت عن الحصص.
+   */
+  const effectiveRecordOf = useCallback(
+    (studentId: string) => {
+      const classId = classOfStudent.get(studentId);
+      return applyTpTarget(
+        recordOf(studentId),
+        studentId,
+        term,
+        tpAverageById.get(studentId) ?? null,
+        classId ? targetOfClass(classId) : null,
+        criteria,
+      );
+    },
+    [recordOf, classOfStudent, term, tpAverageById, targetOfClass, criteria],
+  );
   const averageOf = useCallback(
     (studentId: string) =>
       termAverage(
         components,
-        componentValues(criteria, recordOf(studentId), readingsOf(studentId)),
+        componentValues(criteria, effectiveRecordOf(studentId), readingsOf(studentId)),
       ),
-    [components, criteria, recordOf, readingsOf],
+    [components, criteria, effectiveRecordOf, readingsOf],
   );
   const statsOf = useCallback(
     (classId: string) => {
@@ -467,6 +584,192 @@ export default function AppClient({
     const row = readings.find((r) => r.id === id);
     outbox.push(
       newOp("reading-del", { reading_id: id, student_id: row?.student_id ?? "" }),
+    );
+  }
+
+  /* ---------- الأفواج وحصص الأعمال التطبيقية ---------- */
+
+  /**
+   * أين يذهب معدّل حصص القسم. إعداد لا تنقيط، فيحتاج الخادم. تغييره لا يمسّ
+   * علامة كُتبت: القيمة اليدوية في الخانة القديمة تبقى كما هي.
+   */
+  async function setTpTarget(classId: string, target: TpTarget) {
+    if (!needsNetwork()) return;
+    const before = classes.find((c) => c.id === classId)?.tp_target ?? null;
+    setClasses((cs) => cs.map((c) => (c.id === classId ? { ...c, tp_target: target } : c)));
+    const { error } = await supabase.from("classes").update({ tp_target: target }).eq("id", classId);
+    if (error) {
+      setClasses((cs) => cs.map((c) => (c.id === classId ? { ...c, tp_target: before } : c)));
+      say("تعذّر حفظ الربط");
+      return;
+    }
+    say(target ? "رُبطت نقطة الأعمال التطبيقية" : "فُكّ الربط");
+    void load();
+  }
+
+  /** ترتيب الأفواج الحالية في قسم، كما يراها الأستاذ. */
+  const groupsOf = useCallback(
+    (classId: string) =>
+      groups
+        .filter((g) => g.class_id === classId)
+        .sort((a, b) => a.position - b.position),
+    [groups],
+  );
+
+  /** يكتب فوج كل تلميذ: تحديث واحد لكل فوج، لا تحديث لكل تلميذ. */
+  async function writeAssignment(plan: Array<{ student_id: string; group_id: string }>) {
+    const byGroup = new Map<string, string[]>();
+    for (const item of plan) {
+      const list = byGroup.get(item.group_id) ?? [];
+      list.push(item.student_id);
+      byGroup.set(item.group_id, list);
+    }
+    for (const [groupId, ids] of byGroup) {
+      const { error } = await supabase.from("students").update({ group_id: groupId }).in("id", ids);
+      if (error) return false;
+    }
+    return true;
+  }
+
+  /** قسم بلا أفواج يُقسَّم إلى `count` فوجًا ويُوزَّع تلاميذه كتلًا متقاربة. */
+  async function createGroups(classId: string, count: number, mode: "list" | "random") {
+    if (!needsNetwork()) return false;
+    if (groupsOf(classId).length > 0) return false;
+    const list = studentsOf(classId);
+    const rows = Array.from({ length: count }, (_, i) => ({
+      teacher_id: teacherId,
+      class_id: classId,
+      position: i + 1,
+    }));
+    const { data, error } = await supabase
+      .from("class_groups")
+      .insert(rows)
+      .select("id,class_id,name,position")
+      .order("position");
+    if (error || !data) {
+      say("تعذّر إنشاء الأفواج");
+      return false;
+    }
+    const created = data as Group[];
+    const ordered = mode === "random" ? shuffled(list) : list;
+    const ok = await writeAssignment(
+      assignment(ordered.map((s) => s.id), created.map((g) => g.id)),
+    );
+    say(ok ? `قُسّم القسم إلى ${count} أفواج` : "أُنشئت الأفواج لكن تعذّر توزيع بعض التلاميذ");
+    await load();
+    return ok;
+  }
+
+  /** إعادة توزيع كل التلاميذ على الأفواج القائمة. تمحو ما نُقل يدويًا، فتُؤكَّد قبلها. */
+  async function redistribute(classId: string, mode: "list" | "random") {
+    if (!needsNetwork()) return false;
+    const list = studentsOf(classId);
+    const current = groupsOf(classId);
+    if (current.length < 2) return false;
+    const ordered = mode === "random" ? shuffled(list) : list;
+    const ok = await writeAssignment(
+      assignment(ordered.map((s) => s.id), current.map((g) => g.id)),
+    );
+    say(ok ? "أُعيد التوزيع" : "تعذّر إعادة التوزيع");
+    await load();
+    return ok;
+  }
+
+  async function addGroup(classId: string) {
+    if (!needsNetwork()) return;
+    const position = groupsOf(classId).reduce((max, g) => Math.max(max, g.position), 0) + 1;
+    const { data, error } = await supabase
+      .from("class_groups")
+      .insert({ teacher_id: teacherId, class_id: classId, position })
+      .select("id,class_id,name,position")
+      .single();
+    if (error || !data) {
+      say("تعذّرت إضافة الفوج");
+      return;
+    }
+    setGroups((gs) => [...gs, data as Group]);
+    void load();
+  }
+
+  async function renameGroup(id: string, raw: string) {
+    if (!needsNetwork()) return;
+    const name = cleanGroupName(raw);
+    setGroups((gs) => gs.map((g) => (g.id === id ? { ...g, name } : g)));
+    const { error } = await supabase.from("class_groups").update({ name }).eq("id", id);
+    if (error) {
+      say("تعذّر حفظ الاسم");
+      void load();
+    }
+  }
+
+  /** حذف فوج لا يحذف تلاميذه ولا حصصه ولا علاماتها: يخرجون منه فقط. */
+  async function deleteGroup(group: Group) {
+    if (!needsNetwork()) return;
+    const { error } = await supabase.from("class_groups").delete().eq("id", group.id);
+    if (error) {
+      say("تعذّر حذف الفوج");
+      return;
+    }
+    setGroups((gs) => gs.filter((g) => g.id !== group.id));
+    setBaseStudents((ss) => ss.map((s) => (s.group_id === group.id ? { ...s, group_id: null } : s)));
+    setBaseSessions((ss) => ss.map((s) => (s.group_id === group.id ? { ...s, group_id: null } : s)));
+    say("حُذف الفوج — تلاميذه وحصصه باقية");
+    void load();
+  }
+
+  async function moveStudent(studentId: string, groupId: string | null) {
+    if (!needsNetwork()) return;
+    const before = baseStudents.find((s) => s.id === studentId)?.group_id ?? null;
+    setBaseStudents((ss) => ss.map((s) => (s.id === studentId ? { ...s, group_id: groupId } : s)));
+    const { error } = await supabase.from("students").update({ group_id: groupId }).eq("id", studentId);
+    if (error) {
+      setBaseStudents((ss) => ss.map((s) => (s.id === studentId ? { ...s, group_id: before } : s)));
+      say("تعذّر نقل التلميذ");
+    }
+  }
+
+  /**
+   * حصة جديدة تدخل الطابور: تُنشأ وتُنقَّط في قاعة بلا تغطية، ومعرّفها يُولَّد
+   * هنا فلا يكرّرها الإرسال. وتسبق علاماتِها في الطابور دائمًا.
+   */
+  function createTpSession(input: {
+    class_id: string;
+    group_id: string | null;
+    held_on: string;
+    title: string | null;
+  }): string {
+    const session: TpSession = { id: uid(), term, ...input };
+    outbox.push(newOp("tp-session", { session }));
+    return session.id;
+  }
+
+  function editTpSession(id: string, patch: { held_on?: string; title?: string | null }) {
+    const current = sessions.find((s) => s.id === id);
+    if (!current) return;
+    outbox.push(newOp("tp-session", { session: { ...current, ...patch } }));
+  }
+
+  /** حذف حصة وعلاماتها: يحتاج الخادم، وما لم يُرسل منها يُسقَط من الطابور أولًا. */
+  async function deleteTpSession(session: TpSession) {
+    if (!needsNetwork()) return;
+    for (const op of queue) {
+      if (opSessionId(op) === session.id) outbox.discard(op.id);
+    }
+    const { error } = await supabase.from("tp_sessions").delete().eq("id", session.id);
+    if (error) {
+      say("تعذّر حذف الحصة");
+      void load();
+      return;
+    }
+    setBaseSessions((ss) => ss.filter((s) => s.id !== session.id));
+    setBaseTpMarks((ms) => ms.filter((m) => m.session_id !== session.id));
+    say("حُذفت الحصة");
+  }
+
+  /** علامة تلميذ في حصة. بلا علامة ولا غياب = مسح: يعود «لم يُقيَّم» لا صفرًا. */
+  function setTpMark(sessionId: string, studentId: string, score: number | null, absent: boolean) {
+    outbox.push(
+      newOp("tp-mark", { session_id: sessionId, student_id: studentId, score, absent }),
     );
   }
 
@@ -572,6 +875,20 @@ export default function AppClient({
       void load();
       return;
     }
+    // قسمٌ كان هدفُه هذا المعيار يعود بلا ربط، فيُسأل الأستاذ من جديد
+    // بدل أن يبقى كود يشير إلى لا شيء.
+    const dangling = classes.filter((k) => k.tp_target === `criterion:${c.code}`);
+    if (dangling.length && tpReady) {
+      setClasses((cs) =>
+        cs.map((k) => (k.tp_target === `criterion:${c.code}` ? { ...k, tp_target: null } : k)),
+      );
+      await supabase
+        .from("classes")
+        .update({ tp_target: null })
+        .eq("tp_target", `criterion:${c.code}`);
+      say(`حُذف معيار ${c.label} — فُكّ ربط الأعمال التطبيقية به في ${dangling.length} قسم`);
+      return;
+    }
     say(`حُذف معيار ${c.label}`);
   }
 
@@ -611,13 +928,12 @@ export default function AppClient({
     }
     // ما بقي له في الطابور لم يعد له مكان يصل إليه: صفّه بدل أن يتعثّر.
     for (const op of queue) {
-      const owner =
-        op.kind === "reading-add" ? op.reading.student_id : op.student_id;
-      if (owner === student.id) outbox.discard(op.id);
+      if (opStudentId(op) === student.id) outbox.discard(op.id);
     }
     setBaseStudents((ss) => ss.filter((s) => s.id !== student.id));
     setBaseRecords((rs) => rs.filter((r) => r.student_id !== student.id));
     setBaseReadings((rs) => rs.filter((r) => r.student_id !== student.id));
+    setBaseTpMarks((ms) => ms.filter((m) => m.student_id !== student.id));
     say(`حُذف ${student.full_name}`);
   }
 
@@ -831,17 +1147,48 @@ export default function AppClient({
           )}
 
           {tab === "classes" &&
-            (openClass ? (
+            (openClass && classSection === "groups" && tpReady ? (
+              <GroupsView
+                klass={classes.find((c) => c.id === openClass)!}
+                students={studentsOf(openClass)}
+                groups={groupsOf(openClass)}
+                sessions={sessions.filter((x) => x.class_id === openClass)}
+                tpMarks={tpMarks}
+                term={term}
+                criteria={criteria}
+                components={components}
+                tpAverageById={tpAverageById}
+                online={outbox.online}
+                onBack={() => setClassSection("students")}
+                onTarget={(target) => void setTpTarget(openClass, target)}
+                onCreateGroups={(count, mode) => createGroups(openClass, count, mode)}
+                onRedistribute={(mode) => redistribute(openClass, mode)}
+                onAddGroup={() => addGroup(openClass)}
+                onRenameGroup={renameGroup}
+                onDeleteGroup={deleteGroup}
+                onMoveStudent={moveStudent}
+                onCreateSession={createTpSession}
+                onEditSession={editTpSession}
+                onDeleteSession={deleteTpSession}
+                onMark={setTpMark}
+                say={say}
+              />
+            ) : openClass ? (
               <ClassView
                 klass={classes.find((c) => c.id === openClass)!}
                 students={studentsOf(openClass)}
                 term={term}
                 criteria={criteria}
                 components={components}
-                recordOf={recordOf}
+                recordOf={effectiveRecordOf}
                 averageOf={averageOf}
                 readingCount={(id) => readingsOf(id).length}
                 stats={statsOf(openClass)}
+                tp={{
+                  target: classes.find((c) => c.id === openClass)?.tp_target ?? null,
+                  averageOf: (id) => tpAverageById.get(id) ?? null,
+                }}
+                onGroups={tpReady ? () => setClassSection("groups") : undefined}
                 onBack={() => setOpenClass(null)}
                 onPick={(s) => setOpenStudentId(s.id)}
                 onDelete={() => setConfirmDelete(classes.find((c) => c.id === openClass)!)}
@@ -858,7 +1205,10 @@ export default function AppClient({
                 schools={schools}
                 studentCount={students.length}
                 statsOf={statsOf}
-                onOpen={setOpenClass}
+                onOpen={(id) => {
+                  setClassSection("students");
+                  setOpenClass(id);
+                }}
                 onImport={() => setImporting(true)}
                 onNewSchool={() => setNewSchool(true)}
                 openSchool={openSchool}
@@ -933,9 +1283,13 @@ export default function AppClient({
         <StudentSheet
           student={openStudent}
           criteria={criteria}
-          record={recordOf(openStudent.id)}
+          record={effectiveRecordOf(openStudent.id)}
           readings={readingsOf(openStudent.id)}
           components={components}
+          tp={{
+            target: classes.find((c) => c.id === openStudent.class_id)?.tp_target ?? null,
+            average: tpAverageById.get(openStudent.id) ?? null,
+          }}
           onClose={() => setOpenStudentId(null)}
           onCriterion={(code, value) => setCriterion(openStudent.id, code, value)}
           onMark={(field, value) => saveRecord(openStudent.id, { [field]: value } as Partial<RecordRow>)}
@@ -1001,7 +1355,7 @@ export default function AppClient({
           profile={profile}
           schools={schools}
           term={term}
-          recordOf={recordOf}
+          recordOf={effectiveRecordOf}
           readingsOf={readingsOf}
           onClose={() => setPrinting(null)}
         />
@@ -1013,7 +1367,7 @@ export default function AppClient({
           studentsOf={studentsOf}
           criteria={criteria}
           components={components}
-          recordOf={recordOf}
+          recordOf={effectiveRecordOf}
           readingsOf={readingsOf}
           term={term}
           say={say}
@@ -1251,7 +1605,7 @@ function state(student: Student): string {
 
 function ClassView({
   klass, students, term, criteria, components, recordOf,
-  averageOf, readingCount, stats,
+  averageOf, readingCount, stats, tp, onGroups,
   onBack, onPick, onDelete, onAddStudents, onCriterion, onMark,
 }: {
   klass: Klass;
@@ -1263,6 +1617,10 @@ function ClassView({
   averageOf: (id: string) => number | null;
   readingCount: (id: string) => number;
   stats: ReturnType<typeof classStats>;
+  /** وجهة معدّل حصص الأعمال التطبيقية ومعدّل كل تلميذ، لقفل الخانة التي تُحسب منها. */
+  tp: { target: TpTarget; averageOf: (id: string) => number | null };
+  /** غائب إن لم تُهيَّأ جداول الأفواج بعد. */
+  onGroups?: () => void;
   onBack: () => void;
   onPick: (s: Student) => void;
   onDelete: () => void;
@@ -1295,6 +1653,10 @@ function ClassView({
   const openMark = open?.key.startsWith("m:")
     ? (open.key.slice(2) as MarkField)
     : null;
+  /** العمود الذي تُحسب نقطته من حصص الأعمال التطبيقية: من نُقِّط فيها لا تُدخَل له علامة بيد. */
+  const columnLocked =
+    (openCriterion !== null && targetCriterionCode(tp.target) === openCriterion.code) ||
+    (openMark === "tp" && tp.target === TP_COMPONENT);
 
   /**
    * «أين وقفت؟» هو سؤال كل حصة. والجواب يختلف بالسياق: في وضع العمود هو من
@@ -1341,7 +1703,22 @@ function ClassView({
               : `الفصل ${term} · معدل القسم ${fmt(stats.mean)}`}
           </p>
         </div>
+        {onGroups && (
+          <>
+            <div className="hspace" />
+            <button className="btn soft" onClick={onGroups}>
+              الأفواج والأعمال التطبيقية
+            </button>
+          </>
+        )}
       </div>
+
+      {open && columnLocked && (
+        <div className="note">
+          هذا العمود يُحسب من حصص الأعمال التطبيقية لمن نُقِّط فيها. ومن لم يُنقَّط
+          فيها تُدخل له علامته هنا.
+        </div>
+      )}
 
       {/* الواجب يُصحَّح للقسم كله مرة واحدة، لا تلميذًا تلميذًا: يُختار العمود
           مرة ثم يُنزَل على الأسماء بعدّاد لكل سطر. */}
@@ -1469,7 +1846,11 @@ function ClassView({
                     <small className="nbadge" title={state(student)}>{state(student)}</small>
                   )}
                 </button>
-                {openCriterion ? (
+                {columnLocked && tp.averageOf(student.id) !== null ? (
+                  <span className="rowlock num" title="محسوبة من حصص الأعمال التطبيقية">
+                    {fmt(tp.averageOf(student.id))} / 20 · حصص
+                  </span>
+                ) : openCriterion ? (
                   <RowCounter
                     criterion={openCriterion}
                     record={recordOf(student.id)}
@@ -2978,9 +3359,7 @@ function SyncBadge({
 }
 
 function opWho(op: Op): string {
-  if (op.kind === "reading-add") return op.reading.student_id;
-  if (op.kind === "reading-del") return op.student_id;
-  return op.student_id;
+  return opStudentId(op) ?? "";
 }
 
 function opWhat(op: Op): string {
@@ -2993,6 +3372,10 @@ function opWhat(op: Op): string {
       return "حذف محاولة قراءة";
     case "student":
       return "بيانات التلميذ";
+    case "tp-session":
+      return `حصة أعمال تطبيقية ${op.session.held_on.slice(5)}`;
+    case "tp-mark":
+      return op.absent ? "غياب في حصة أعمال تطبيقية" : op.score === null ? "مسح علامة أعمال تطبيقية" : `علامة أعمال تطبيقية ${op.score}`;
   }
 }
 
@@ -3061,7 +3444,7 @@ function PendingSheet({
             {queue.map((op) => (
               <div key={op.id} className={op.blocked ? "prow bad" : "prow"}>
                 <div className="k">
-                  <b>{nameOf(opWho(op))}</b>
+                  <b>{op.kind === "tp-session" ? "حصة جديدة" : nameOf(opWho(op))}</b>
                   <small>
                     {opWhat(op)} · {since(op.at)}
                   </small>
@@ -3123,15 +3506,18 @@ function ConfirmSignOutSheet({
 /* ================= sheets ================= */
 
 function StudentSheet({
-  student, criteria, record, readings, components,
+  student, criteria, record, readings, components, tp,
   onClose, onCriterion, onMark, onRemoveReading, onEdit, onDelete,
   position, count, onStep,
 }: {
   student: Student;
   criteria: Criterion[];
+  /** السجل للعرض: معدّل الحصص فيه محلّ الخانة المربوطة. لا يُكتب منه شيء. */
   record: RecordRow | undefined;
   readings: Reading[];
   components: Component[];
+  /** وجهة معدّل الحصص ومعدّل هذا التلميذ، فتُقفل الخانة التي يُحسب فيها. */
+  tp: { target: TpTarget; average: number | null };
   onClose: () => void;
   onCriterion: (code: string, value: number | null) => void;
   onMark: (field: MarkField, value: number | null) => void;
@@ -3244,6 +3630,19 @@ function StudentSheet({
               </div>
             );
           }
+          if (tp.average !== null && targetCriterionCode(tp.target) === c.code) {
+            return (
+              <div key={c.id} className="fld line">
+                <div className="flab">
+                  <b>{c.label}</b>
+                  <small>من حصص الأعمال التطبيقية</small>
+                </div>
+                <span className="rowlock num">
+                  {fmt(record?.criteria?.[c.code] ?? null)} / {c.ceiling}
+                </span>
+              </div>
+            );
+          }
           return (
             <CriterionCounter
               key={c.id}
@@ -3256,6 +3655,17 @@ function StudentSheet({
 
         {marks.map((component) => {
           const field = component.code as MarkField;
+          if (field === "tp" && tp.average !== null && tp.target === TP_COMPONENT) {
+            return (
+              <div key={component.id} className="fld line">
+                <div className="flab">
+                  <b>{component.label}</b>
+                  <small>معدّل حصصه · معامل {Number(component.weight)}</small>
+                </div>
+                <span className="rowlock num">{fmt(tp.average)} / 20</span>
+              </div>
+            );
+          }
           return (
             <div key={component.id} className="fld line">
               <div className="flab">

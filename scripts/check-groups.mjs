@@ -19,9 +19,14 @@ import {
   cleanGroupName,
   distribute,
   groupCountProblem,
+  cleanSessionTitle,
   groupLabel,
   membership,
+  parseMark,
+  sessionLabel,
+  shortDate,
   shuffled,
+  todayISO,
 } from "../src/lib/groups.ts";
 import {
   applyTpMarks,
@@ -289,6 +294,29 @@ console.log("\n5ب. تطبيق الطابور فوق نسخة الخادم");
   const renamed = applyTpSessions(sessions, [{ ...base(), kind: "tp-session", session: { ...sess("x"), title: "مخبر" } }]);
   t("وتعديل حصة قائمة يحلّ محلّها", [renamed.length, renamed[0].title], [1, "مخبر"]);
   t("بلا عمليات: النسخة نفسها", applyTpSessions(sessions, []), sessions);
+}
+
+console.log("\n6. التواريخ والعناوين وقراءة العلامة");
+{
+  t("اليوم بتوقيت الجهاز لا غرينتش", todayISO(new Date(2026, 9, 18, 0, 30)), "2026-10-18");
+  t("أرقام من خانتين", todayISO(new Date(2026, 0, 5, 12)), "2026-01-05");
+  t("التاريخ القصير", shortDate("2026-10-18"), "18/10");
+  t("ما لا يُقرأ يبقى", shortDate("غير تاريخ"), "غير تاريخ");
+  t("عنوان بلا كتابة: التاريخ", sessionLabel({ title: null, held_on: "2026-10-18" }), "حصة 18/10");
+  t("عنوان مكتوب", sessionLabel({ title: "مجهر", held_on: "2026-10-18" }), "مجهر");
+  t("عنوان فراغات يصير تاريخًا", sessionLabel({ title: "  ", held_on: "2026-10-18" }), "حصة 18/10");
+  t("تنظيف العنوان", cleanSessionTitle("  تشريح   زهرة "), "تشريح زهرة");
+  t("العنوان الفارغ null", cleanSessionTitle(" "), null);
+  t("العنوان الطويل يُقصّ", cleanSessionTitle("ب".repeat(200))?.length, 60);
+  t("فراغ = لم يُنقَّط", parseMark("  "), null);
+  t("رقم", parseMark("14.5"), 14.5);
+  t("فاصلة عربية وفرنسية", [parseMark("14,5"), parseMark("14،5")], [14.5, 14.5]);
+  t("الصفر علامة", parseMark("0"), 0);
+  t("20 مقبولة", parseMark("20"), 20);
+  t("فوق 20 مرفوضة", parseMark("20.5"), "invalid");
+  t("سالب مرفوض", parseMark("-1"), "invalid");
+  t("نص مرفوض", parseMark("abc"), "invalid");
+  t("يُقرَّب إلى منزلتين", parseMark("13.456"), 13.46);
 }
 
 console.log(`\n${pass} ناجح · ${fail} فاشل\n`);

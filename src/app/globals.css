@@ -576,3 +576,20 @@ a.btn, a.swap { text-decoration: none; }
 .authbox label.consent { flex-direction: row; align-items: flex-start; gap: 10px; font-weight: 400; font-size: 13px; line-height: 1.8; }
 .authbox label.consent input { flex: none; width: 20px; height: 20px; padding: 0; margin-top: 4px; accent-color: var(--primary); }
 .authbox label.consent a { color: var(--primary); font-weight: 600; }
+
+/* ---------- الأفواج وحصص الأعمال التطبيقية ---------- */
+
+/* قيمة محسوبة لا تُدخَل بيد: تحلّ محل العدّاد والخانة في الصف نفسه */
+.rowlock { flex: none; font-size: 12px; font-weight: 600; color: var(--primary); background: var(--primary-soft); border-radius: 999px; padding: 5px 10px; white-space: nowrap; }
+.gcard { padding: 14px; display: flex; flex-direction: column; gap: 12px; }
+.gcard h3 { font-size: 16px; }
+.gcard summary { cursor: pointer; font-weight: 600; font-size: 14px; }
+.ghead { display: flex; align-items: center; gap: 8px; }
+.ghead .gname { flex: 1; min-width: 0; font-weight: 600; }
+.srow2 .tpin { width: 70px; flex: none; }
+.clearb.on { background: var(--sand-soft); color: var(--sand); }
+.muted-note { margin: 10px 0 0; color: var(--muted); font-size: 12px; line-height: 1.7; }
+/* سطر تنقيط حصة: ضيّق، فستة عشر تلميذًا في فوج لا تأكل ثلاث شاشات */
+.srow2.tprow { padding-block: 5px; }
+.srow2.tprow .tpin { padding: 6px; }
+.srow2.tprow .clearb { padding: 6px 10px; }
