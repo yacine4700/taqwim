@@ -6,6 +6,7 @@ import { createClient } from "@/lib/supabase/client";
 import { MIN_PASSWORD, changePasswordProblem, translateAuthError } from "@/lib/auth";
 import { isDurable, kvDel, kvGet, kvSet } from "@/lib/localdb";
 import { nameMatches } from "@/lib/names";
+import { useBackLayers } from "@/lib/useBackLayers";
 import { nextPositions, splitNewNames } from "@/lib/roster";
 import { firstClassOf, groupBySchool, groupOf, resolveSessionClass } from "@/lib/schools";
 import { assignment, cleanGroupName, shuffled, type Group } from "@/lib/groups";
@@ -464,6 +465,16 @@ export default function AppClient({
     if (outbox.online && !onlineRef.current) void load();
     onlineRef.current = outbox.online;
   }, [outbox.online, load]);
+
+  /* المظهر المحفوظ يُطبَّق عند فتح التطبيق، فالزرّ صار في الإعدادات ولا يُرسم قبل فتحها */
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("theme");
+      if (saved) document.documentElement.setAttribute("data-theme", saved);
+    } catch {
+      /* نافذة خاصة */
+    }
+  }, []);
 
   /* تسجيل عامل الخدمة: به تفتح الشاشة والتطبيق مثبَّت ولا شبكة */
   useEffect(() => {
@@ -1132,6 +1143,42 @@ export default function AppClient({
     router.refresh();
   }
 
+  /* ---------- زرّ الرجوع ---------- */
+  /**
+   * الطبقات المفتوحة من الأعلى إلى الأسفل: النوافذ ثم بطاقة التلميذ ثم الشاشات.
+   * القائمة واحدة للعدّ والإغلاق، فلا يُعدّ ما لا يُغلق ولا يُغلق ما لم يُعدّ.
+   * التبويب فوق القسم المفتوح: من خرج من قسم إلى الإعدادات يعود بالرجوع إلى
+   * القسم لا إلى القائمة.
+   */
+  const manySchools = groupBySchool(classes, schools).length > 1;
+  const layerStack: Array<[boolean, () => void]> = [
+    [confirmSignOut, () => setConfirmSignOut(false)],
+    [showPending, () => setShowPending(false)],
+    [
+      criterionChange !== null,
+      () => {
+        setCriterionChange(null);
+        setSettingsTick((n) => n + 1);
+      },
+    ],
+    [confirmCriterion !== null, () => setConfirmCriterion(null)],
+    [confirmStudent !== null, () => setConfirmStudent(null)],
+    [confirmDelete !== null, () => setConfirmDelete(null)],
+    [exporting, () => setExporting(false)],
+    [!!printing && classes.some((c) => c.id === printing), () => setPrinting(null)],
+    [importing, () => setImporting(false)],
+    [!!addingTo && classes.some((c) => c.id === addingTo), () => setAddingTo(null)],
+    [newSchool, () => setNewSchool(false)],
+    [openStudent !== null, () => setOpenStudentId(null)],
+    [tab !== "classes", () => setTab("classes")],
+    [classSection === "groups" && openClass !== null, () => setClassSection("students")],
+    [openClass !== null, () => setOpenClass(null)],
+    [openSchool !== null && manySchools, () => setOpenSchool(null)],
+  ];
+  useBackLayers(layerStack.filter(([isOpen]) => isOpen).length, () => {
+    layerStack.find(([isOpen]) => isOpen)?.[1]();
+  });
+
   /* ---------- render ---------- */
   return (
     <div className="shell">
@@ -1165,7 +1212,6 @@ export default function AppClient({
               </button>
             ))}
           </div>
-          <ThemeButton />
         </div>
       </header>
 
@@ -1325,6 +1371,7 @@ export default function AppClient({
       {openStudent && (
         <StudentSheet
           student={openStudent}
+          term={term}
           criteria={criteria}
           record={effectiveRecordOf(openStudent.id)}
           readings={readingsOf(openStudent.id)}
@@ -1692,6 +1739,8 @@ function ClassView({
   const [column, setColumn] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<"all" | "todo" | "low">("all");
+  /** «حذف القسم» مطويّ: كان بجوار «+ تلميذ» بالحجم نفسه في أسفل كل قسم. */
+  const [more, setMore] = useState(false);
 
   const ranked = students
     .map((s) => ({ student: s, average: averageOf(s.id) }))
@@ -1759,19 +1808,27 @@ function ClassView({
           <h2>{klass.name}</h2>
           <p>
             {open
-              ? `تنقّط عمود ${open.label}`
+              ? `الفصل ${term} · تنقّط عمود ${open.label}`
               : `الفصل ${term} · معدل القسم ${fmt(stats.mean)}`}
           </p>
         </div>
         {onGroups && (
           <>
             <div className="hspace" />
-            <button className="btn soft" onClick={onGroups}>
-              الأفواج والأعمال التطبيقية
+            <button
+              className="btn soft sm"
+              onClick={onGroups}
+              aria-label="الأفواج والأعمال التطبيقية"
+            >
+              الأفواج
             </button>
           </>
         )}
       </div>
+
+      {open && openCriterion && !columnLocked && (
+        <small className="chint">اضغط مطوّلًا على الرقم لتمسحه فيعود «لم يُقيَّم».</small>
+      )}
 
       {open && columnLocked && (
         <div className="note">
@@ -1952,10 +2009,21 @@ function ClassView({
         ) : (
           <>
             <button className="btn soft" onClick={onAddStudents}>+ تلميذ</button>
-            <button className="btn warn" onClick={onDelete}>حذف القسم</button>
+            <button
+              className="btn ghost"
+              aria-expanded={more}
+              onClick={() => setMore(!more)}
+            >
+              ⋯ خيارات القسم
+            </button>
           </>
         )}
       </div>
+      {more && !open && (
+        <div className="pickbar">
+          <button className="btn warn" onClick={onDelete}>حذف القسم</button>
+        </div>
+      )}
     </section>
   );
 }
@@ -1983,6 +2051,17 @@ function RowCounter({
   const atFloor = isDeduct ? shown === 0 : !assessed || shown === 0;
   const atRoof = (shown ?? 0) >= ceiling && (isDeduct || assessed);
 
+  /*
+   * المسح بالضغط المطوّل على الرقم لا بنقرة: الرقم في وسط ما يُضغط بالإبهام،
+   * وكانت لمسة تمرّ عليه تعيد التلميذ إلى «لم يُقيَّم» بصمت. والمسح الصريح
+   * ما زال في بطاقة التلميذ.
+   */
+  const hold = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const release = () => {
+    if (hold.current) clearTimeout(hold.current);
+    hold.current = null;
+  };
+
   return (
     <div className="rowc">
       <button
@@ -1993,15 +2072,24 @@ function RowCounter({
       >
         −
       </button>
-      <button
+      <span
         className={assessed || isDeduct ? "rcval num" : "rcval num none"}
-        onClick={() => assessed && onChange(null)}
-        disabled={!assessed}
-        aria-label={assessed ? "امسح فيعود غير مقيَّم" : "لم يُقيَّم"}
-        title={assessed ? "انقر لتمسح فيعود غير مقيَّم" : "لم يُقيَّم"}
+        title={assessed ? "اضغط مطوّلًا لتمسح فيعود غير مقيَّم" : "لم يُقيَّم"}
+        onPointerDown={() => {
+          if (!assessed) return;
+          release();
+          hold.current = setTimeout(() => {
+            hold.current = null;
+            onChange(null);
+          }, 600);
+        }}
+        onPointerUp={release}
+        onPointerLeave={release}
+        onPointerCancel={release}
+        onContextMenu={(e) => e.preventDefault()}
       >
         {shown === null ? "—" : fmt(shown, shown % 1 ? 1 : 0)}
-      </button>
+      </span>
       <button
         className="rcbtn"
         onClick={() => onChange(bump(criterion, value, step))}
@@ -2741,6 +2829,13 @@ function SettingsView({
       </div>
 
       <div className="card">
+        <div className="srow2">
+          <div className="k">
+            المظهر
+            <small>فاتح أو داكن. يتبع هاتفك ما لم تغيّره</small>
+          </div>
+          <ThemeButton />
+        </div>
         <div className="srow2">
           <div className="k">
             الحساب
@@ -3643,11 +3738,13 @@ function readMark(
 }
 
 function StudentSheet({
-  student, criteria, record, readings, components, tp,
+  student, term, criteria, record, readings, components, tp,
   onClose, onCriterion, onMark, onRemoveReading, onEdit, onDelete,
   position, count, onStep,
 }: {
   student: Student;
+  /** الفصل الذي تُكتب فيه العلامات، ظاهر في رأس البطاقة فلا يُنقَّط في فصل خطأً. */
+  term: number;
   criteria: Criterion[];
   /** السجل للعرض: معدّل الحصص فيه محلّ الخانة المربوطة. لا يُكتب منه شيء. */
   record: RecordRow | undefined;
@@ -3690,7 +3787,10 @@ function StudentSheet({
       <div className="scrim" onClick={onClose} />
       <div className="sheet">
         <div className="shead">
-          <h3>{student.full_name}</h3>
+          <h3>
+            {student.full_name}
+            <small className="termtag">الفصل {term}</small>
+          </h3>
           {/* تنقّل داخل القسم: تنقيط عشرة تلاميذ كان عشر فتحات وإغلاقات */}
           {count > 1 && (
             <div className="stepper" role="group" aria-label="تلميذ آخر">
