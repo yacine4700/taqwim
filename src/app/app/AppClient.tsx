@@ -6,6 +6,7 @@ import { createClient } from "@/lib/supabase/client";
 import { MIN_PASSWORD, changePasswordProblem, translateAuthError } from "@/lib/auth";
 import { isDurable, kvDel, kvGet, kvSet } from "@/lib/localdb";
 import { nameMatches } from "@/lib/names";
+import { nextPositions, splitNewNames } from "@/lib/roster";
 import { firstClassOf, groupBySchool, groupOf, resolveSessionClass } from "@/lib/schools";
 import ExportSheet from "./ExportSheet";
 import PrintView from "./PrintView";
@@ -133,6 +134,8 @@ export default function AppClient({
   const [openSchool, setOpenSchool] = useState<string | null>(null);
   const [openStudentId, setOpenStudentId] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
+  /** القسم الذي تُضاف إليه أسماء، أو null. */
+  const [addingTo, setAddingTo] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
   const [newSchool, setNewSchool] = useState(false);
   const [printing, setPrinting] = useState<string | null>(null);
@@ -715,6 +718,37 @@ export default function AppClient({
     setTab("classes");
   }
 
+  /**
+   * تلميذ وافد أو منسيّ في الاستيراد. يحتاج الشبكة كإنشاء القسم وحذف التلميذ:
+   * التلميذ الجديد بلا معرّف من الخادم لا تُكتب له علامة في الطابور.
+   */
+  async function addStudents(classId: string, names: string[]): Promise<boolean> {
+    if (!needsNetwork()) return false;
+    const positions = nextPositions(studentsOf(classId).map((s) => s.position), names.length);
+    const rows = names.map((full_name, i) => ({
+      teacher_id: teacherId,
+      class_id: classId,
+      full_name,
+      position: positions[i],
+    }));
+    const { data, error } = await supabase
+      .from("students")
+      .insert(rows)
+      .select("id,class_id,full_name,position,note,tags");
+    if (error || !data) {
+      say("تعذّرت إضافة التلاميذ");
+      return false;
+    }
+    setBaseStudents((ss) => [
+      ...ss,
+      ...data.map((s) => ({ ...s, tags: s.tags ?? [] }) as Student),
+    ]);
+    say(names.length === 1 ? `أُضيف ${names[0]}` : `أُضيف ${names.length} تلاميذ`);
+    // نسخة الجهاز تُكتب عند التحميل: بلا هذا يغيب الوافد إن فُتح التطبيق دون شبكة.
+    void load();
+    return true;
+  }
+
   async function deleteClass(klass: Klass) {
     if (!needsNetwork()) return;
     const { error } = await supabase.from("classes").delete().eq("id", klass.id);
@@ -811,6 +845,7 @@ export default function AppClient({
                 onBack={() => setOpenClass(null)}
                 onPick={(s) => setOpenStudentId(s.id)}
                 onDelete={() => setConfirmDelete(classes.find((c) => c.id === openClass)!)}
+                onAddStudents={() => setAddingTo(openClass)}
                 onCriterion={setCriterion}
                 onMark={(studentId, field, value) =>
                   saveRecord(studentId, { [field]: value } as Partial<RecordRow>)
@@ -930,6 +965,18 @@ export default function AppClient({
 
       {newSchool && (
         <NewSchoolSheet onClose={() => setNewSchool(false)} onAdd={addSchool} />
+      )}
+
+      {addingTo && classes.some((c) => c.id === addingTo) && (
+        <AddStudentsSheet
+          klass={classes.find((c) => c.id === addingTo)!}
+          existing={studentsOf(addingTo).map((s) => s.full_name)}
+          onClose={() => setAddingTo(null)}
+          onAdd={async (names) => {
+            const ok = await addStudents(addingTo, names);
+            if (ok) setAddingTo(null);
+          }}
+        />
       )}
 
       {importing && (
@@ -1205,7 +1252,7 @@ function state(student: Student): string {
 function ClassView({
   klass, students, term, criteria, components, recordOf,
   averageOf, readingCount, stats,
-  onBack, onPick, onDelete, onCriterion, onMark,
+  onBack, onPick, onDelete, onAddStudents, onCriterion, onMark,
 }: {
   klass: Klass;
   students: Student[];
@@ -1219,6 +1266,7 @@ function ClassView({
   onBack: () => void;
   onPick: (s: Student) => void;
   onDelete: () => void;
+  onAddStudents: () => void;
   onCriterion: (studentId: string, code: string, value: number | null) => void;
   onMark: (studentId: string, field: MarkField, value: number | null) => void;
 }) {
@@ -1387,7 +1435,8 @@ function ClassView({
       {students.length === 0 ? (
         <div className="card empty">
           <h3>القسم بلا تلاميذ</h3>
-          <p>استورد قائمة الأسماء من تبويب الأقسام.</p>
+          <p>أضف الأسماء، اسمًا في كل سطر.</p>
+          <button className="btn soft" onClick={onAddStudents}>+ تلاميذ</button>
         </div>
       ) : rows.length === 0 ? (
         <div className="card empty">
@@ -1460,7 +1509,10 @@ function ClassView({
             أنهِ العمود
           </button>
         ) : (
-          <button className="btn warn" onClick={onDelete}>حذف القسم</button>
+          <>
+            <button className="btn soft" onClick={onAddStudents}>+ تلميذ</button>
+            <button className="btn warn" onClick={onDelete}>حذف القسم</button>
+          </>
         )}
       </div>
     </section>
@@ -2374,6 +2426,90 @@ function ChangePasswordSheet({ email, onClose }: { email: string; onClose: () =>
 }
 
 /** إضافة مؤسسة من شاشة المؤسسات نفسها، دون المرور بالإعدادات. */
+/**
+ * إضافة تلميذ أو أكثر إلى قسم قائم: وافد في منتصف السنة، أو اسم سقط من
+ * الاستيراد. سطر لكل تلميذ، فيُلصق عدّة أسماء مرّة واحدة كما في الاستيراد.
+ * ما يشبه اسمًا في القسم يُعرض قبل الإضافة: قد يكون خطأ تكرار، وقد يكون
+ * تلميذين بالاسم نفسه حقًّا، والأستاذ وحده يعرف.
+ */
+function AddStudentsSheet({
+  klass, existing, onClose, onAdd,
+}: {
+  klass: Klass;
+  existing: string[];
+  onClose: () => void;
+  onAdd: (names: string[]) => Promise<void>;
+}) {
+  const [text, setText] = useState("");
+  const [keepRepeated, setKeepRepeated] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const { fresh, repeated } = splitNewNames(text, existing);
+  const names = keepRepeated ? [...fresh, ...repeated] : fresh;
+
+  return (
+    <>
+      <div className="scrim" onClick={busy ? undefined : onClose} />
+      <div className="sheet">
+        <div className="shead">
+          <h3>إضافة إلى {klass.name}</h3>
+          <button className="icbtn" onClick={onClose} disabled={busy} aria-label="إغلاق">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+              <path d="M6 6l12 12M18 6L6 18" />
+            </svg>
+          </button>
+        </div>
+        <div className="fld">
+          <div className="flab">
+            <b>اللقب والاسم</b>
+            <small>تلميذ في كل سطر</small>
+          </div>
+          <textarea
+            id="add-students"
+            className="inp"
+            style={{ width: "100%" }}
+            rows={3}
+            autoFocus
+            value={text}
+            placeholder={"اللقب الاسم"}
+            onChange={(e) => setText(e.target.value)}
+          />
+        </div>
+
+        {repeated.length > 0 && (
+          <div className="note">
+            موجود في القسم أو مكرّر: {repeated.join("، ")}
+            <label style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8 }}>
+              <input
+                type="checkbox"
+                checked={keepRepeated}
+                onChange={(e) => setKeepRepeated(e.target.checked)}
+              />
+              تلميذ آخر بالاسم نفسه، أضفه أيضًا
+            </label>
+          </div>
+        )}
+
+        <button
+          className="btn"
+          style={{ marginTop: 14 }}
+          disabled={busy || names.length === 0}
+          onClick={async () => {
+            setBusy(true);
+            await onAdd(names);
+            setBusy(false);
+          }}
+        >
+          {busy
+            ? "جارٍ الإضافة…"
+            : names.length > 1
+              ? `أضف ${names.length} تلاميذ`
+              : "أضف التلميذ"}
+        </button>
+      </div>
+    </>
+  );
+}
+
 function NewSchoolSheet({
   onClose, onAdd,
 }: {
