@@ -593,3 +593,8 @@ a.btn, a.swap { text-decoration: none; }
 .srow2.tprow { padding-block: 5px; }
 .srow2.tprow .tpin { padding: 6px; }
 .srow2.tprow .clearb { padding: 6px 10px; }
+
+/* دليل أول استعمال للأفواج: ثلاث خطوات، والمنجَزة منها مشطوبة خفيفًا */
+.steps { margin: 4px 0 0; padding: 0 20px 0 0; text-align: right; display: flex; flex-direction: column; gap: 8px; font-size: 13px; line-height: 1.8; max-width: 42ch; }
+.steps li { color: var(--ink); }
+.steps li.done { color: var(--muted); text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--muted) 50%, transparent); }

@@ -262,6 +262,18 @@ function SessionsPart({
             أنشئ حصةً لفوج، ثم نقّط تلاميذه. معدّل حصص كل تلميذ هو ما يدخل
             نقطته.
           </p>
+          {(groups.length === 0 || !target.ok) && (
+            <ol className="steps">
+              <li className={groups.length ? "done" : ""}>
+                <b>قسّم القسم</b> إلى أفواج من باب «الأفواج» (اختياري).
+              </li>
+              <li><b>أنشئ حصة</b> ونقّط تلاميذها بزرّ «+ حصة».</li>
+              <li className={target.ok ? "done" : ""}>
+                <b>اربط النقطة</b> بالخانة التي تريدها من باب «الربط».{" "}
+                {!target.ok && <button className="clearb" onClick={onLink}>اربطها الآن</button>}
+              </li>
+            </ol>
+          )}
         </div>
       ) : (
         <div className="slist">
@@ -332,6 +344,7 @@ function NewSessionSheet({
           </button>
         </div>
 
+        {groups.length > 0 && (
         <div className="fld">
           <label className="elab" htmlFor="ns-group">الفوج</label>
           <select id="ns-group" value={group} onChange={(e) => setGroup(e.target.value)}>
@@ -341,6 +354,7 @@ function NewSessionSheet({
             <option value="">كل القسم</option>
           </select>
         </div>
+        )}
         <div className="fld">
           <label className="elab" htmlFor="ns-day">التاريخ</label>
           <input id="ns-day" className="inp" type="date" value={day} onChange={(e) => setDay(e.target.value)} />
@@ -474,6 +488,8 @@ function SessionSheet({
                   dir="ltr"
                   type="text"
                   inputMode="decimal"
+                  enterKeyHint="next"
+                  onFocus={(e) => e.currentTarget.select()}
                   key={`${s.id}-${score ?? ""}-${absent ? "a" : ""}`}
                   defaultValue={score ?? ""}
                   disabled={absent}
@@ -483,6 +499,7 @@ function SessionSheet({
                     const parsed = parseMark(e.target.value);
                     if (parsed === "invalid") {
                       e.target.value = score === null ? "" : String(score);
+                      say("العلامة من 0 إلى 20، فلم تُحفظ");
                       return;
                     }
                     if (parsed === score) return;
