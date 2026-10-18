@@ -334,3 +334,145 @@ export function optionsFor(criterion: Criterion): number[] {
   if (out[out.length - 1] !== span) out.push(span);
   return criterion.kind === "deduct" ? out.map((v) => (v === 0 ? 0 : -v)) : out;
 }
+
+/* ---------- حصص الأعمال التطبيقية ---------- */
+
+/**
+ * القسم يُقسَّم إلى أفواج، وكل فوج يُنقَّط في حصص أعمال تطبيقية. معدّل حصص
+ * التلميذ في الفصل **يُحسب ولا يُخزَّن**، ثم يغذّي الخانة التي اختارها الأستاذ
+ * لقسمه: مركّبة الأعمال التطبيقية (records.tp) أو معيارًا من التقويم المستمر.
+ *
+ * وهو يتبع القاعدة نفسها التي يقوم عليها كل ما فوق: الحصة التي لم تُنقَّط
+ * لتلميذ، أو غاب فيها، **تخرج من المعدّل ولا تُحسب صفرًا**. ومن لم يُنقَّط في
+ * أي حصة لا قيمة له، فتبقى علامته اليدوية إن وُجدت ولا يُمحى شيء.
+ *
+ * نفس المنطق مكتوب في منظر v_tp_avg ومنظرَي v_continuous وv_term_average.
+ */
+
+export type TpSession = {
+  id: string;
+  class_id: string;
+  /** للتنظيم لا للحساب: العلامات مفتاحها التلميذ. */
+  group_id: string | null;
+  term: number;
+  held_on: string;
+  title: string | null;
+};
+
+/** صفٌّ لتلميذ نُقِّط أو عُلِّم غائبًا. «غير مقيَّم» = لا صف. */
+export type TpMark = {
+  session_id: string;
+  student_id: string;
+  /** من 20. null مع absent = true تعني غائبًا. */
+  score: number | null;
+  absent: boolean;
+};
+
+/** الهدف: null لا ربط، 'component' مركّبة الأعمال التطبيقية، أو 'criterion:<code>'. */
+export type TpTarget = string | null;
+
+export const TP_COMPONENT = "component";
+
+export function criterionTarget(code: string): string {
+  return `criterion:${code}`;
+}
+
+/** كود المعيار الهدف، أو null إن لم يكن الهدف معيارًا. */
+export function targetCriterionCode(target: TpTarget): string | null {
+  return target && target.startsWith("criterion:") ? target.slice("criterion:".length) : null;
+}
+
+/** معيار الإضافة بنقطة انطلاق صفر وحده يصلح هدفًا: القيمة تُحوَّل إلى سقفه. */
+export function canTargetCriterion(
+  criterion: Pick<Criterion, "kind" | "base">,
+): boolean {
+  return criterion.kind === "add" && Number(criterion.base) === 0;
+}
+
+/**
+ * معدّل كل تلميذ على حصصه المنقَّطة في الفصل، مفتاحه معرّف التلميذ.
+ * التلميذ الغائب عن كل حصصه أو غير المنقَّط ليس فيها: لا مفتاح له.
+ */
+export function tpAverages(
+  marks: TpMark[],
+  sessions: TpSession[],
+  term: number,
+): Map<string, number> {
+  const inTerm = new Set(sessions.filter((s) => s.term === term).map((s) => s.id));
+  const sums = new Map<string, { total: number; n: number }>();
+  for (const mark of marks) {
+    if (!inTerm.has(mark.session_id)) continue;
+    if (mark.absent || mark.score === null || mark.score === undefined) continue;
+    const value = Number(mark.score);
+    if (!Number.isFinite(value)) continue;
+    const entry = sums.get(mark.student_id) ?? { total: 0, n: 0 };
+    entry.total += value;
+    entry.n += 1;
+    sums.set(mark.student_id, entry);
+  }
+  const out = new Map<string, number>();
+  for (const [id, { total, n }] of sums) out.set(id, total / n);
+  return out;
+}
+
+/**
+ * السجل كما يُعرض ويُحسب منه، لا كما يُكتب. لا تُمرَّر نتيجته إلى saveRecord
+ * أبدًا: القيمة المحسوبة ليست علامة أدخلها الأستاذ، ولو كُتبت لثبّتت معدّل
+ * اليوم في الخانة وانفصلت عن الحصص.
+ *
+ * - بلا معدّل أو بلا هدف: السجل كما هو.
+ * - 'component': tp = المعدّل.
+ * - 'criterion:<code>': قيمة المعيار = المعدّل ÷ 20 × سقفه. وإن كان المعيار
+ *   محذوفًا أو ليس إضافةً بنقطة صفر فلا أثر، بدل أن تُكتب قيمة بمعنى خاطئ.
+ */
+export function applyTpTarget(
+  record: RecordRow | undefined,
+  studentId: string,
+  term: number,
+  average: number | null | undefined,
+  target: TpTarget,
+  criteria: Criterion[],
+): RecordRow | undefined {
+  if (average === null || average === undefined || !target) return record;
+  const base: RecordRow = record ?? {
+    student_id: studentId,
+    term,
+    criteria: {},
+    tp: null,
+    devoir: null,
+    exam: null,
+  };
+  if (target === TP_COMPONENT) return { ...base, tp: average };
+
+  const code = targetCriterionCode(target);
+  if (code === null) return record;
+  const criterion = criteria.find((c) => c.code === code);
+  if (!criterion || !canTargetCriterion(criterion)) return record;
+  return {
+    ...base,
+    criteria: { ...base.criteria, [code]: (average / 20) * Number(criterion.ceiling) },
+  };
+}
+
+/** وجهة الهدف كما يقرؤها الأستاذ، أو null إن لم يُضبط أو صار مكسورًا. */
+export function describeTarget(
+  target: TpTarget,
+  criteria: Criterion[],
+  components: Component[],
+): { ok: boolean; label: string } {
+  if (!target) return { ok: false, label: "لم يُربط بعد" };
+  if (target === TP_COMPONENT) {
+    const tp = components.find((c) => c.code === "tp");
+    if (!tp) return { ok: false, label: "مركّبة الأعمال التطبيقية غير موجودة" };
+    return tp.active
+      ? { ok: true, label: tp.label }
+      : { ok: false, label: `${tp.label} (مطفأة: لا تدخل المعدّل)` };
+  }
+  const code = targetCriterionCode(target);
+  const criterion = code === null ? undefined : criteria.find((c) => c.code === code);
+  if (!criterion) return { ok: false, label: "المعيار المربوط حُذف" };
+  if (!canTargetCriterion(criterion)) {
+    return { ok: false, label: `${criterion.label} (لم يعد معيار إضافة)` };
+  }
+  return { ok: true, label: criterion.label };
+}

@@ -132,13 +132,66 @@ export function useOutbox(
             : OK;
         }
 
-        const { error } = await supabase
-          .from("students")
-          .update(op.patch)
-          .eq("id", op.student_id);
-        return error
-          ? { ok: false, permanent: isPermanent(error.code), message: error.message }
-          : OK;
+        if (op.kind === "tp-session") {
+          // المعرّف مولَّد في الهاتف، فإعادة الإرسال لا تضاعف الحصة.
+          const { error } = await supabase.from("tp_sessions").upsert(
+            {
+              id: op.session.id,
+              teacher_id: teacherId,
+              class_id: op.session.class_id,
+              group_id: op.session.group_id,
+              term: op.session.term,
+              held_on: op.session.held_on,
+              title: op.session.title,
+            },
+            { onConflict: "id" },
+          );
+          return error
+            ? { ok: false, permanent: isPermanent(error.code), message: error.message }
+            : OK;
+        }
+
+        if (op.kind === "tp-mark") {
+          // «مسح»: الصف يُحذف فيعود التلميذ «لم يُقيَّم»، ولا يُترك صف فارغ.
+          if (op.score === null && !op.absent) {
+            const { error } = await supabase
+              .from("tp_marks")
+              .delete()
+              .eq("session_id", op.session_id)
+              .eq("student_id", op.student_id);
+            return error
+              ? { ok: false, permanent: isPermanent(error.code), message: error.message }
+              : OK;
+          }
+          const { error } = await supabase.from("tp_marks").upsert(
+            {
+              teacher_id: teacherId,
+              session_id: op.session_id,
+              student_id: op.student_id,
+              score: op.absent ? null : op.score,
+              absent: op.absent,
+              updated_at: new Date(op.at).toISOString(),
+            },
+            { onConflict: "session_id,student_id" },
+          );
+          return error
+            ? { ok: false, permanent: isPermanent(error.code), message: error.message }
+            : OK;
+        }
+
+        if (op.kind === "student") {
+          const { error } = await supabase
+            .from("students")
+            .update(op.patch)
+            .eq("id", op.student_id);
+          return error
+            ? { ok: false, permanent: isPermanent(error.code), message: error.message }
+            : OK;
+        }
+
+        // نوع لا يعرفه هذا الإصدار (طابور كتبه إصدار أحدث): لا يُرسل على أنه
+        // شيء آخر. يُعلَّم متعثّرًا فيراه الأستاذ ولا يُحذف من وراء ظهره.
+        return { ok: false, permanent: true, message: "عملية غير معروفة" };
       } catch (problem) {
         // استثناء من fetch نفسه: الشبكة، لا الخادم.
         const message = problem instanceof Error ? problem.message : "تعذّر الاتصال";

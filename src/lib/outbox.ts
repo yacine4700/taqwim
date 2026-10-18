@@ -13,7 +13,7 @@
  * scripts/check-outbox.mjs — والنسختان يجب أن تبقيا متطابقتين.
  */
 
-import type { Reading, RecordRow } from "./scoring";
+import type { Reading, RecordRow, TpMark, TpSession } from "./scoring";
 
 export type StudentPatch = {
   full_name?: string;
@@ -64,7 +64,33 @@ export type StudentOp = OpBase & {
   patch: StudentPatch;
 };
 
-export type Op = RecordOp | ReadingAddOp | ReadingDelOp | StudentOp;
+/**
+ * حصة أعمال تطبيقية جديدة أو معدَّلة. معرّفها يُولَّد في الهاتف، فتُنشأ في
+ * قاعة لا تغطية فيها وتُنقَّط فورًا، والإرسال (upsert) لا يكرّرها. وهي قبل
+ * علاماتها في الطابور دائمًا، فلا تصل علامة إلى حصة لم تُنشأ بعد.
+ */
+export type TpSessionOp = OpBase & { kind: "tp-session"; session: TpSession };
+
+/**
+ * علامة تلميذ في حصة. صفٌّ واحد لكل (حصة، تلميذ): الجديدة تحلّ محل القديمة.
+ * `score = null` مع `absent = false` تعني «مسح»: يُحذف الصف في الخادم ويعود
+ * التلميذ إلى «لم يُقيَّم»، لا إلى صفر.
+ */
+export type TpMarkOp = OpBase & {
+  kind: "tp-mark";
+  session_id: string;
+  student_id: string;
+  score: number | null;
+  absent: boolean;
+};
+
+export type Op =
+  | RecordOp
+  | ReadingAddOp
+  | ReadingDelOp
+  | StudentOp
+  | TpSessionOp
+  | TpMarkOp;
 
 /** العمليتان على الشيء نفسه لهما المفتاح نفسه، فتُدمجان بدل أن تتراكما. */
 export function opKey(op: Op): string {
@@ -77,7 +103,30 @@ export function opKey(op: Op): string {
       return `reading:${op.reading_id}`;
     case "student":
       return `student:${op.student_id}`;
+    case "tp-session":
+      return `tpsession:${op.session.id}`;
+    case "tp-mark":
+      return `tpmark:${op.session_id}:${op.student_id}`;
   }
+}
+
+/** التلميذ صاحب العملية، أو null إن لم تكن لتلميذ (حصة جديدة). */
+export function opStudentId(op: Op): string | null {
+  switch (op.kind) {
+    case "reading-add":
+      return op.reading.student_id;
+    case "tp-session":
+      return null;
+    default:
+      return op.student_id;
+  }
+}
+
+/** الحصة صاحبة العملية، أو null إن لم تكن لحصة. */
+export function opSessionId(op: Op): string | null {
+  if (op.kind === "tp-session") return op.session.id;
+  if (op.kind === "tp-mark") return op.session_id;
+  return null;
 }
 
 /**
@@ -102,7 +151,12 @@ export function enqueue(queue: Op[], op: Op, inFlight: string | null = null): Op
     if (pendingAdd) return queue.filter((q) => q.id !== pendingAdd.id);
   }
 
-  if (op.kind === "record" || op.kind === "student") {
+  if (
+    op.kind === "record" ||
+    op.kind === "student" ||
+    op.kind === "tp-mark" ||
+    op.kind === "tp-session"
+  ) {
     const index = queue.findIndex(
       (q) => q.kind === op.kind && opKey(q) === key && free(q),
     );
@@ -173,6 +227,46 @@ export function applyStudents<T extends { id: string }>(base: T[], queue: Op[]):
   return out;
 }
 
+/** حصص الأعمال التطبيقية فوق نسخة الخادم: الجديدة تُضاف والمعدَّلة تحلّ محلّها. */
+export function applyTpSessions(base: TpSession[], queue: Op[]): TpSession[] {
+  const ops = queue.filter((op): op is TpSessionOp => op.kind === "tp-session");
+  if (!ops.length) return base;
+  const out = [...base];
+  for (const op of ops) {
+    const index = out.findIndex((s) => s.id === op.session.id);
+    if (index >= 0) out[index] = op.session;
+    else out.push(op.session);
+  }
+  return out;
+}
+
+/**
+ * علامات الحصص فوق نسخة الخادم. المسح (بلا علامة ولا غياب) يُخرج الصف من
+ * العرض كما يُخرجه الخادم، فيعود التلميذ «لم يُقيَّم» لا صفرًا.
+ */
+export function applyTpMarks(base: TpMark[], queue: Op[]): TpMark[] {
+  const ops = queue.filter((op): op is TpMarkOp => op.kind === "tp-mark");
+  if (!ops.length) return base;
+  let out = [...base];
+  for (const op of ops) {
+    const same = (m: TpMark) => m.session_id === op.session_id && m.student_id === op.student_id;
+    if (op.score === null && !op.absent) {
+      out = out.filter((m) => !same(m));
+      continue;
+    }
+    const row: TpMark = {
+      session_id: op.session_id,
+      student_id: op.student_id,
+      score: op.absent ? null : op.score,
+      absent: op.absent,
+    };
+    const index = out.findIndex(same);
+    if (index >= 0) out[index] = row;
+    else out.push(row);
+  }
+  return out;
+}
+
 /* ---------- ما يُعرض للأستاذ ---------- */
 
 export type Pending = {
@@ -191,8 +285,8 @@ export function pending(queue: Op[]): Pending {
   const out: Pending = { marks: 0, reads: 0, edits: 0, total: 0, blocked: 0 };
   for (const op of queue) {
     if (op.blocked) out.blocked++;
-    if (op.kind === "record") out.marks++;
-    else if (op.kind === "student") out.edits++;
+    if (op.kind === "record" || op.kind === "tp-mark") out.marks++;
+    else if (op.kind === "student" || op.kind === "tp-session") out.edits++;
     else out.reads++;
     out.total++;
   }
