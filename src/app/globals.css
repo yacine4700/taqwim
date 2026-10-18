@@ -493,7 +493,8 @@ nav.tabs svg { width: 21px; height: 21px; }
 .filterbar { display: flex; align-items: center; gap: 8px; }
 .filterbar .chips { flex: 1; min-width: 0; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
 .filterbar .chips::-webkit-scrollbar { display: none; }
-.filterbar .chips button { flex: none; font-size: 12px; padding: 8px 12px; color: var(--muted); font-weight: 600; }
+.filterbar .chips button { flex: none; font-size: 12px; padding: 8px 12px; font-weight: 600; }
+.filterbar .chips button:not([aria-pressed="true"]) { color: var(--muted); }
 .filterbar .chips button:disabled { opacity: 0.4; cursor: default; }
 .filterbar .pill { flex: none; }
 
@@ -502,7 +503,8 @@ nav.tabs svg { width: 21px; height: 21px; }
 .colbar .collab { font-size: 12px; color: var(--faint); flex: none; }
 .colbar .chips { flex: 1; min-width: 0; flex-wrap: nowrap; overflow-x: auto; padding-bottom: 2px; scrollbar-width: none; }
 .colbar .chips::-webkit-scrollbar { display: none; }
-.colbar .chips button { flex: none; font-size: 12px; padding: 8px 12px; color: var(--muted); }
+.colbar .chips button { flex: none; font-size: 12px; padding: 8px 12px; }
+.colbar .chips button:not([aria-pressed="true"]) { color: var(--muted); }
 
 .srow.colmode { gap: 8px; padding-block: 6px; }
 /* في وضع العمود يلتفّ الاسم على سطرين: القصّ يُخفي الفرق بين «عبد الرحمن» و«عبد الرحيم» */
