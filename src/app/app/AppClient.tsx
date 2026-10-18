@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { MIN_PASSWORD, changePasswordProblem, translateAuthError } from "@/lib/auth";
@@ -172,9 +172,21 @@ export default function AppClient({
   /* اختيار تبويب الحصة يُحفظ مع بقية المكان: الأستاذ يقرأ لقسم واحد في الحصة */
   const [sessionClass, setSessionClass] = useState("");
   const [sessionCount, setSessionCount] = useState(5);
+  /**
+   * أسماء الحصة ونقاطها غير المحفوظة هنا لا في SessionView: التبويب يُفكّ
+   * عند مغادرته، ومن غادره ليتحقّق من شيء فقد القائمة التي اختارها.
+   * في الذاكرة فقط: إعادة فتح التطبيق تبدأ حصة جديدة.
+   */
+  const [sessionPicked, setSessionPicked] = useState<Student[]>([]);
+  const [sessionScores, setSessionScores] = useState<Record<string, number | "skip">>({});
   const [hideStart, setHideStart] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<Klass | null>(null);
   const [confirmCriterion, setConfirmCriterion] = useState<Criterion | null>(null);
+  /** تغيير نوع معيار أو سقفه ينتظر موافقة، وعدّاد يُعيد خانات الإعدادات إلى قيمها إن رُفض. */
+  const [criterionChange, setCriterionChange] = useState<
+    { criterion: Criterion; patch: Partial<Criterion>; marked: number } | null
+  >(null);
+  const [settingsTick, setSettingsTick] = useState(0);
   const [confirmStudent, setConfirmStudent] = useState<Student | null>(null);
   const [showPending, setShowPending] = useState(false);
   const [confirmSignOut, setConfirmSignOut] = useState(false);
@@ -440,6 +452,12 @@ export default function AppClient({
     });
   }, [tab, term, openClass, openSchool, sessionClass, sessionCount, hideStart, whereKey]);
 
+  /* المحاولات تُسجَّل في الفصل المعروض لحظة الحفظ: قائمة اختيرت في ف1 لا تُحفظ في ف2 */
+  useEffect(() => {
+    setSessionPicked([]);
+    setSessionScores({});
+  }, [term]);
+
   /* عودة الشبكة: أعد القراءة من الخادم مرة واحدة، لا عند كل تبدّل حالة */
   const onlineRef = useRef(true);
   useEffect(() => {
@@ -585,6 +603,7 @@ export default function AppClient({
     outbox.push(
       newOp("reading-del", { reading_id: id, student_id: row?.student_id ?? "" }),
     );
+    say(row ? `حُذفت محاولة القراءة ${row.score}` : "حُذفت محاولة القراءة");
   }
 
   /* ---------- الأفواج وحصص الأعمال التطبيقية ---------- */
@@ -836,6 +855,25 @@ export default function AppClient({
         say(`تنبيه: ${marked} علامة مسجَّلة في هذا المعيار صار معناها مختلفًا`);
       }
     }
+  }
+
+  /**
+   * النوع والسقف يغيّران معنى أرقام مسجَّلة في كل أقسام الأستاذ وفصوله، فإن
+   * كانت هناك علامات مسجَّلة في المعيار سُئل أولًا. التسمية لا تمسّ حسابًا،
+   * فتمرّ دون سؤال.
+   */
+  function requestCriterionChange(id: string, patch: Partial<Criterion>) {
+    const before = criteria.find((c) => c.id === id);
+    if (!before) return;
+    const changesMeaning =
+      (patch.kind !== undefined && patch.kind !== before.kind) ||
+      (patch.ceiling !== undefined && Number(patch.ceiling) !== Number(before.ceiling));
+    const marked = records.filter((r) => typeof r.criteria?.[before.code] === "number").length;
+    if (changesMeaning && marked > 0) {
+      setCriterionChange({ criterion: before, patch, marked });
+      return;
+    }
+    void updateCriterion(id, patch);
   }
 
   async function addCriterion() {
@@ -1230,6 +1268,10 @@ export default function AppClient({
               onClassId={setSessionClass}
               count={sessionCount}
               onCount={setSessionCount}
+              picked={sessionPicked}
+              setPicked={setSessionPicked}
+              scores={sessionScores}
+              setScores={setSessionScores}
               onSave={addReadings}
             />
           )}
@@ -1254,7 +1296,8 @@ export default function AppClient({
               criteria={criteria}
               components={components}
               email={email}
-              onCriterion={updateCriterion}
+              onCriterion={requestCriterionChange}
+              resetTick={settingsTick}
               onAddCriterion={addCriterion}
               onDeleteCriterion={setConfirmCriterion}
               onComponent={saveComponent}
@@ -1389,6 +1432,23 @@ export default function AppClient({
           criterion={confirmCriterion}
           onCancel={() => setConfirmCriterion(null)}
           onConfirm={() => deleteCriterion(confirmCriterion)}
+        />
+      )}
+
+      {criterionChange && (
+        <ConfirmCriterionChangeSheet
+          criterion={criterionChange.criterion}
+          patch={criterionChange.patch}
+          marked={criterionChange.marked}
+          onCancel={() => {
+            setCriterionChange(null);
+            setSettingsTick((n) => n + 1);
+          }}
+          onConfirm={() => {
+            const { criterion, patch } = criterionChange;
+            setCriterionChange(null);
+            void updateCriterion(criterion.id, patch);
+          }}
         />
       )}
 
@@ -1963,6 +2023,7 @@ function RowMark({
   onChange: (value: number | null) => void;
 }) {
   const current = record?.[field] ?? null;
+  const [refused, setRefused] = useState(false);
   return (
     <div className="rowm">
       <input
@@ -1974,18 +2035,22 @@ function RowMark({
         defaultValue={current ?? ""}
         key={`${field}-${current ?? ""}`}
         aria-label="العلامة من 20"
+        aria-invalid={refused}
+        title={refused ? MARK_HINT : undefined}
+        onChange={() => setRefused(false)}
         onBlur={(e) => {
-          const text = e.target.value.trim();
-          if (text === "") {
+          const read = readMark(e.target);
+          if (read.kind === "bad") {
+            e.target.value = String(current ?? "");
+            setRefused(true);
+            return;
+          }
+          setRefused(false);
+          if (read.kind === "empty") {
             if (current !== null) onChange(null);
             return;
           }
-          const value = Number(text);
-          if (Number.isNaN(value) || value < 0 || value > 20) {
-            e.target.value = String(current ?? "");
-            return;
-          }
-          if (value !== current) onChange(value);
+          if (read.value !== current) onChange(read.value);
         }}
         onKeyDown={(e) => {
           // Enter ينتقل إلى التلميذ التالي: اليد لا تترك لوحة المفاتيح.
@@ -2001,13 +2066,14 @@ function RowMark({
         }}
       />
       <i className="num">/ 20</i>
+      {refused && <small className="ferr" role="alert">{MARK_HINT}</small>}
     </div>
   );
 }
 
 function SessionView({
   classes, schools, studentsOf, attemptsOf, term, reading,
-  classId, onClassId, count, onCount, onSave,
+  classId, onClassId, count, onCount, picked, setPicked, scores, setScores, onSave,
 }: {
   classes: Klass[];
   schools: School[];
@@ -2021,10 +2087,13 @@ function SessionView({
   onClassId: (id: string) => void;
   count: number;
   onCount: (n: number) => void;
+  /** القائمة المختارة ونقاطها، تعيشان في AppClient فتنجوان من تبديل التبويب. */
+  picked: Student[];
+  setPicked: Dispatch<SetStateAction<Student[]>>;
+  scores: Record<string, number | "skip">;
+  setScores: Dispatch<SetStateAction<Record<string, number | "skip">>>;
   onSave: (entries: Array<{ studentId: string; score: number }>) => Promise<boolean>;
 }) {
-  const [picked, setPicked] = useState<Student[]>([]);
-  const [scores, setScores] = useState<Record<string, number | "skip">>({});
   const [saving, setSaving] = useState(false);
 
   /* القسم المحفوظ قد يُحذف من جهاز آخر: لا تبقى الحصة على قسم لا وجود له */
@@ -2405,7 +2474,7 @@ const TP_PRESETS = ["الأعمال التطبيقية", "التعبير الش�
  */
 function SettingsView({
   criteria, components, email, profile, schools, classes,
-  onCriterion, onAddCriterion, onDeleteCriterion, onComponent, onProfile,
+  onCriterion, resetTick, onAddCriterion, onDeleteCriterion, onComponent, onProfile,
   onAddSchool, onRenameSchool, onDeleteSchool, onSignOut,
 }: {
   criteria: Criterion[];
@@ -2415,6 +2484,8 @@ function SettingsView({
   schools: School[];
   classes: Klass[];
   onCriterion: (id: string, patch: Partial<Criterion>) => void;
+  /** يزيد حين يُرفض تغيير معلَّق، فتعود خانة السقف إلى قيمتها المحفوظة. */
+  resetTick: number;
   onAddCriterion: () => void;
   onDeleteCriterion: (c: Criterion) => void;
   onComponent: (id: string, patch: Partial<Component>) => void;
@@ -2482,6 +2553,7 @@ function SettingsView({
               <label className="cceil">
                 <span>السقف</span>
                 <input
+                  key={`${c.id}-${c.ceiling}-${resetTick}`}
                   id={`ceiling-${c.code}`}
                   type="number"
                   min={0.5}
@@ -3269,6 +3341,54 @@ function ConfirmStudentSheet({
   );
 }
 
+const KIND_LABEL: Record<Criterion["kind"], string> = {
+  deduct: "يبدأ كاملًا ويُخصم منه",
+  add: "يبدأ من 0 ويُضاف إليه",
+  auto: "من محاولات القراءة",
+};
+
+/**
+ * تغيير نوع المعيار أو سقفه بعد أن سُجّلت علامات فيه. الأرقام المخزَّنة لا
+ * تُمسّ، لكن معناها يتغيّر: 3 في معيار إضافة هي «ثلاث نقاط»، وفي معيار خصم
+ * هي «خُصمت ثلاث». فيُقال هذا قبل التطبيق لا بعده.
+ */
+function ConfirmCriterionChangeSheet({
+  criterion, patch, marked, onCancel, onConfirm,
+}: {
+  criterion: Criterion;
+  patch: Partial<Criterion>;
+  marked: number;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const kindChanged = patch.kind !== undefined && patch.kind !== criterion.kind;
+  const ceilingChanged =
+    patch.ceiling !== undefined && Number(patch.ceiling) !== Number(criterion.ceiling);
+  return (
+    <>
+      <div className="scrim" onClick={onCancel} />
+      <div className="sheet">
+        <div className="shead">
+          <h3>تغيير معيار {criterion.label}</h3>
+        </div>
+        <p className="lead">
+          {kindChanged && patch.kind
+            ? `النوع: «${KIND_LABEL[criterion.kind]}» ← «${KIND_LABEL[patch.kind]}». `
+            : ""}
+          {ceilingChanged ? `السقف: ${Number(criterion.ceiling)} ← ${Number(patch.ceiling)}. ` : ""}
+          في هذا المعيار {marked} علامة مسجَّلة في كل الأقسام والفصول. تبقى
+          أرقامها كما هي، لكن معناها يتغيّر فيتغيّر التقويم المستمر لأصحابها.
+        </p>
+        <div className="srow2">
+          <button className="btn ghost" onClick={onCancel}>تراجع</button>
+          <div className="hspace" />
+          <button className="btn danger" onClick={onConfirm}>غيّر المعيار</button>
+        </div>
+      </div>
+    </>
+  );
+}
+
 function ConfirmCriterionSheet({
   criterion, onCancel, onConfirm,
 }: {
@@ -3505,6 +3625,23 @@ function ConfirmSignOutSheet({
 
 /* ================= sheets ================= */
 
+const MARK_HINT = "العلامة بين 0 و20";
+
+/**
+ * ما كُتب في خانة علامة من 20. ثلاث حالات لا اثنتان: الفراغ الحقيقي يمسح،
+ * أما نصّ لم يفهمه المتصفّح («14,» مثلًا) فيصل فراغًا في value مع badInput،
+ * ومعاملته مسحًا تمحو علامة محفوظة بخطأ في الإصبع.
+ */
+function readMark(
+  input: HTMLInputElement,
+): { kind: "empty" } | { kind: "bad" } | { kind: "ok"; value: number } {
+  const text = input.value.trim();
+  if (text === "") return input.validity.badInput ? { kind: "bad" } : { kind: "empty" };
+  const value = Number(text);
+  if (Number.isNaN(value) || value < 0 || value > 20) return { kind: "bad" };
+  return { kind: "ok", value };
+}
+
 function StudentSheet({
   student, criteria, record, readings, components, tp,
   onClose, onCriterion, onMark, onRemoveReading, onEdit, onDelete,
@@ -3531,6 +3668,15 @@ function StudentSheet({
 }) {
   const [edit, setEdit] = useState(false);
   const [showState, setShowState] = useState(false);
+  /** محاولة القراءة المهيَّأة للحذف: النقرة الأولى تهيّئ، والثانية تحذف. */
+  const [armed, setArmed] = useState<string | null>(null);
+  /** الخانة التي رُفضت قيمتها، ولأيّ تلميذ: لا تنتقل رسالتها إلى التالي. */
+  const [markError, setMarkError] = useState<{ id: string; field: MarkField } | null>(null);
+  useEffect(() => {
+    if (!armed) return;
+    const timer = setTimeout(() => setArmed(null), 3000);
+    return () => clearTimeout(timer);
+  }, [armed]);
   const tags = student.tags ?? [];
   const cc = continuousMark(criteria, record, readings);
   const average = termAverage(components, componentValues(criteria, record, readings));
@@ -3593,6 +3739,7 @@ function StudentSheet({
           <div className="fld">
             <label className="elab" htmlFor={`name-${student.id}`}>الاسم واللقب</label>
             <input
+              key={`${student.id}-${student.full_name}`}
               className="cname"
               id={`name-${student.id}`}
               defaultValue={student.full_name}
@@ -3621,8 +3768,20 @@ function StudentSheet({
                     <span style={{ fontSize: 11, color: "var(--faint)" }}>لا محاولات بعد</span>
                   ) : (
                     readings.map((r) => (
-                      <button key={r.id} title="انقر للحذف" onClick={() => onRemoveReading(r.id)}>
-                        {r.score} · {r.read_on.slice(5)}
+                      <button
+                        key={r.id}
+                        className={armed === r.id ? "danger" : undefined}
+                        title="انقر مرتين للحذف"
+                        onClick={() => {
+                          if (armed !== r.id) {
+                            setArmed(r.id);
+                            return;
+                          }
+                          setArmed(null);
+                          onRemoveReading(r.id);
+                        }}
+                      >
+                        {armed === r.id ? "احذف؟ ✕" : `${r.score} · ${r.read_on.slice(5)}`}
                       </button>
                     ))
                   )}
@@ -3666,29 +3825,43 @@ function StudentSheet({
               </div>
             );
           }
+          const current = record?.[field] ?? null;
+          const refused = markError?.id === student.id && markError.field === field;
           return (
             <div key={component.id} className="fld line">
               <div className="flab">
                 <b>{component.label}</b>
                 <small>معامل {Number(component.weight)}</small>
+                {refused && <small className="ferr">{MARK_HINT}</small>}
               </div>
               <div className="mk">
+                {/* المفتاح يضمّ التلميذ والقيمة: الخانة غير متحكَّم بها، فبلا هذا
+                    تبقى علامة التلميذ السابق ظاهرة بعد «التالي» وتُكتب للتالي
+                    إن لُمست الخانة. */}
                 <input
+                  key={`${student.id}-${field}-${current ?? ""}`}
                   id={`mark-${field}`}
                   type="number"
+                  inputMode="decimal"
                   min={0}
                   max={20}
                   step={0.25}
-                  defaultValue={record?.[field] ?? ""}
+                  defaultValue={current ?? ""}
+                  aria-invalid={refused}
+                  onChange={() => setMarkError(null)}
                   onBlur={(e) => {
-                    const text = e.target.value.trim();
-                    if (text === "") return onMark(field, null);
-                    const value = Number(text);
-                    if (Number.isNaN(value) || value < 0 || value > 20) {
-                      e.target.value = String(record?.[field] ?? "");
+                    const read = readMark(e.target);
+                    if (read.kind === "bad") {
+                      e.target.value = String(current ?? "");
+                      setMarkError({ id: student.id, field });
                       return;
                     }
-                    onMark(field, value);
+                    setMarkError(null);
+                    if (read.kind === "empty") {
+                      if (current !== null) onMark(field, null);
+                      return;
+                    }
+                    if (read.value !== current) onMark(field, read.value);
                   }}
                 />
               </div>
@@ -3732,6 +3905,7 @@ function StudentSheet({
               })}
             </div>
             <textarea
+              key={`${student.id}-${student.note ?? ""}`}
               className="inp note-in"
               id={`note-${student.id}`}
               rows={2}

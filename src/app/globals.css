@@ -181,6 +181,9 @@ select, .inp { background: var(--surface); border: 1px solid var(--line); border
 .mk input { width: 90px; text-align: center; background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 9px; }
 .readlog { display: flex; flex-wrap: wrap; gap: 5px; }
 .readlog button { font-size: 11px; padding: 3px 7px; border-radius: 999px; background: var(--surface-2); color: var(--muted); font-variant-numeric: tabular-nums; }
+.readlog button.danger { background: var(--danger-soft); color: var(--danger); font-weight: 700; }
+.ferr { color: var(--danger); font-size: 12px; font-weight: 600; }
+input[aria-invalid="true"] { border-color: var(--danger); }
 .totals { display: flex; gap: 14px; padding-block: 14px; border-top: 1px solid var(--line); margin-top: 4px; }
 /* النقطة في رأس البطاقة لا في ذيلها. وليست لاصقة: الاسم الطويل يأخذ سطرين
    فيختلف ارتفاع الرأس، والبطاقة بعد الضغط تسع الشاشة فلا حاجة. */
@@ -512,7 +515,8 @@ nav.tabs svg { width: 21px; height: 21px; }
 }
 .rcval.none { color: var(--faint); font-weight: 400; }
 .rcval:disabled { cursor: default; }
-.rowm { display: flex; align-items: baseline; gap: 4px; flex: none; }
+.rowm { display: flex; align-items: baseline; gap: 4px; flex: none; position: relative; }
+.rowm .ferr { position: absolute; top: 100%; inset-inline-end: 0; z-index: 2; white-space: nowrap; margin-top: 2px; padding: 3px 8px; border-radius: var(--radius-sm); background: var(--surface); box-shadow: var(--shadow); }
 .rowm input {
   width: 62px; text-align: center; background: var(--surface-2);
   border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 7px 4px;
