@@ -43,7 +43,8 @@ import {
 type KlassInfo = { id: string; name: string; tp_target: TpTarget };
 type StudentInfo = { id: string; full_name: string; group_id: string | null };
 type Mode = "list" | "random";
-type Part = "sessions" | "groups" | "link";
+/** الشاشة الرئيسية هي الحصص؛ الأفواج والربط صفحتان فرعيتان تُفتحان منها عند الحاجة. */
+type Part = "main" | "groups" | "link";
 
 type Props = {
   klass: KlassInfo;
@@ -78,7 +79,7 @@ type Props = {
 
 export default function GroupsView(props: Props) {
   const { klass, students, groups, sessions, tpMarks, term, criteria, components, onBack } = props;
-  const [part, setPart] = useState<Part>(groups.length === 0 ? "groups" : "sessions");
+  const [part, setPart] = useState<Part>("main");
   const [openId, setOpenId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
 
@@ -88,30 +89,24 @@ export default function GroupsView(props: Props) {
   return (
     <section className="view">
       <div className="vhead">
-        <button className="icbtn" onClick={onBack} aria-label="رجوع إلى التلاميذ">
+        <button
+          className="icbtn"
+          onClick={() => (part === "main" ? onBack() : setPart("main"))}
+          aria-label={part === "main" ? "رجوع إلى التلاميذ" : "رجوع إلى الحصص"}
+        >
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
             <path d="M9 6l6 6-6 6" />
           </svg>
         </button>
         <div>
           <h2>{klass.name}</h2>
-          <p>الأفواج والأعمال التطبيقية · الفصل {term}</p>
+          <p>
+            {part === "groups" ? "الأفواج" : part === "link" ? "أين تُحسب نقطة الأعمال التطبيقية" : "الأعمال التطبيقية"} · الفصل {term}
+          </p>
         </div>
       </div>
 
-      <div className="chips" role="group" aria-label="الباب">
-        <button aria-pressed={part === "sessions"} onClick={() => setPart("sessions")}>
-          الحصص
-        </button>
-        <button aria-pressed={part === "groups"} onClick={() => setPart("groups")}>
-          الأفواج {groups.length > 0 ? groups.length : ""}
-        </button>
-        <button aria-pressed={part === "link"} onClick={() => setPart("link")}>
-          الربط
-        </button>
-      </div>
-
-      {part === "sessions" && (
+      {part === "main" && (
         <SessionsPart
           klass={klass}
           students={students}
@@ -124,6 +119,7 @@ export default function GroupsView(props: Props) {
           onOpen={setOpenId}
           onNew={() => setCreating(true)}
           onLink={() => setPart("link")}
+          onGroups={() => setPart("groups")}
         />
       )}
 
@@ -159,8 +155,15 @@ export default function GroupsView(props: Props) {
           onCreate={(input) => {
             const id = props.onCreateSession({ class_id: klass.id, ...input });
             setCreating(false);
-            setPart("sessions");
+            setPart("main");
             setOpenId(id);
+            // أول حصة في قسم لم يُربط بعد: تُربط بمركّبة الأعمال التطبيقية إن كانت
+            // مفعّلة، فلا يبقى الأستاذ أمام خطوة لم يعرف أنها لازمة. يغيّره من «الربط».
+            const tp = components.find((c) => c.code === "tp");
+            if (!klass.tp_target && tp?.active && props.online) {
+              props.onTarget(TP_COMPONENT);
+              props.say(`معدّل حصصك يُحسب في «${tp.label}». غيّر ذلك من «أين تُحسب النقطة».`);
+            }
           }}
         />
       )}
@@ -190,7 +193,7 @@ export default function GroupsView(props: Props) {
 
 function SessionsPart({
   klass, students, groups, sessions, tpMarks, term, target, tpAverageById,
-  onOpen, onNew, onLink,
+  onOpen, onNew, onLink, onGroups,
 }: {
   klass: KlassInfo;
   students: StudentInfo[];
@@ -203,6 +206,7 @@ function SessionsPart({
   onOpen: (id: string) => void;
   onNew: () => void;
   onLink: () => void;
+  onGroups: () => void;
 }) {
   const inTerm = useMemo(
     () => sessions.filter((s) => s.term === term).sort((a, b) => b.held_on.localeCompare(a.held_on)),
@@ -251,7 +255,7 @@ function SessionsPart({
       )}
 
       <div className="pickbar">
-        <button className="btn" onClick={onNew}>+ حصة</button>
+        <button className="btn" onClick={onNew}>+ حصة جديدة</button>
         {target.ok && <span className="pill ok">تُحسب في: {target.label}</span>}
       </div>
 
@@ -259,8 +263,8 @@ function SessionsPart({
         <div className="card empty">
           <h3>لا حصص في الفصل {term}</h3>
           <p>
-            أنشئ حصةً لفوج، ثم نقّط تلاميذه. معدّل حصص كل تلميذ هو ما يدخل
-            نقطته.
+            اضغط «حصة جديدة» ثم نقّط التلاميذ من 20. معدّل حصص كل تلميذ هو ما
+            يدخل نقطته. الحصة تكون لكل القسم، أو لفوج إن قسّمته.
           </p>
         </div>
       ) : (
@@ -304,6 +308,23 @@ function SessionsPart({
           </p>
         </details>
       )}
+
+      <div className="slist">
+        <button className="srow" onClick={onGroups}>
+          <span className="sname">
+            الأفواج
+            <small className="nbadge">
+              {groups.length > 0 ? `${groups.length} أفواج` : "لم يُقسَّم القسم · اختياري"}
+            </small>
+          </span>
+        </button>
+        <button className="srow" onClick={onLink}>
+          <span className="sname">
+            أين تُحسب نقطة الأعمال التطبيقية
+            <small className="nbadge">{target.ok ? target.label : "لم تُربط بعد"}</small>
+          </span>
+        </button>
+      </div>
     </>
   );
 }
