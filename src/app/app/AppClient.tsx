@@ -55,6 +55,7 @@ import {
   type TpMark,
   type TpSession,
   type TpTarget,
+  termStatsFor,
 } from "@/lib/scoring";
 
 type Klass = {
@@ -548,6 +549,22 @@ export default function AppClient({
       return classStats(list.map((s) => averageOf(s.id)), unread);
     },
     [studentsOf, readingsOf, averageOf],
+  );
+  /** إحصاء قسم في فصل آخر غير المعروض، لمقارنة الفصل بالسابق في شاشة الإحصاء. */
+  const statsInTerm = useCallback(
+    (classId: string, atTerm: number) =>
+      termStatsFor({
+        term: atTerm,
+        students: studentsOf(classId),
+        target: targetOfClass(classId),
+        records,
+        readings,
+        tpMarks,
+        sessions,
+        criteria,
+        components,
+      }),
+    [studentsOf, targetOfClass, records, readings, tpMarks, sessions, criteria, components],
   );
 
   /* ---------- writes ---------- */
@@ -1331,7 +1348,13 @@ export default function AppClient({
           )}
 
           {tab === "stats" && (
-            <StatsView classes={classes} schools={schools} statsOf={statsOf} term={term} />
+            <StatsView
+              classes={classes}
+              schools={schools}
+              statsOf={statsOf}
+              statsInTerm={statsInTerm}
+              term={term}
+            />
           )}
 
           {tab === "docs" && (
@@ -2377,11 +2400,13 @@ const BINS: Array<[number, number, string]> = [
 ];
 
 function StatsView({
-  classes, schools, statsOf, term,
+  classes, schools, statsOf, statsInTerm, term,
 }: {
   classes: Klass[];
   schools: School[];
   statsOf: (id: string) => ReturnType<typeof classStats>;
+  /** إحصاء القسم في فصل آخر، لمقارنة معدله بمعدل الفصل السابق. */
+  statsInTerm: (id: string, term: number) => ReturnType<typeof classStats>;
   term: number;
 }) {
   const groups = groupBySchool(classes, schools);
@@ -2390,12 +2415,22 @@ function StatsView({
     const st = statsOf(klass.id);
     const counts = BINS.map(([lo, hi]) => st.values.filter((v) => v >= lo && v < hi).length);
     const peak = Math.max(1, ...counts);
+    const before = term > 1 ? statsInTerm(klass.id, term - 1) : null;
+    const change = st.mean !== null && before?.mean != null ? st.mean - before.mean : null;
     return (
       <div key={klass.id} className="card">
         <div className="srow2">
           <div className="k">
             <b>{klass.name}</b>
             <small>{st.scored} منقَّطًا من {st.total}</small>
+            {/* السهم والإشارة معًا: اللون وحده لا يقول شيئًا لمن لا يميّزه */}
+            {change !== null && before?.mean != null && (
+              <small className={change < 0 ? "delta down" : "delta"}>
+                {`الفصل ${term - 1}: ${fmt(before.mean)} · ${
+                  Math.abs(change) < 0.005 ? "بلا تغيّر" : `${change > 0 ? "▲ +" : "▼ −"}${fmt(Math.abs(change))}`
+                }`}
+              </small>
+            )}
           </div>
           <span className="pill">{st.mean === null ? "—" : `${fmt(st.mean)} / 20`}</span>
         </div>

@@ -610,3 +610,5 @@ a.btn, a.swap { text-decoration: none; }
 .statgroup + .statgroup { margin-top: 18px; }
 .grouphead { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding-top: 4px; }
 .grouphead h3 { font-size: 16px; }
+.delta { color: var(--primary); font-weight: 600; font-variant-numeric: tabular-nums; }
+.delta.down { color: var(--danger); }

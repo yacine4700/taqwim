@@ -476,3 +476,53 @@ export function describeTarget(
   }
   return { ok: true, label: criterion.label };
 }
+
+/**
+ * إحصاء قسم في فصل بعينه، لا في الفصل المعروض وحده.
+ *
+ * شاشة القسم تحسب المعدل للفصل المختار في الرأس، فلا يُقارَن فصلان فيها. وهذه
+ * الدالة تُركّب الحساب نفسه (معدّل الحصص يحلّ محل خانته، ثم المعيار فالمعدل)
+ * لأيّ فصل، فتُقارَن النتيجتان على المعايير والمعاملات ذاتها.
+ */
+export function termStatsFor(args: {
+  term: number;
+  students: Array<{ id: string }>;
+  /** وجهة معدّل حصص القسم، كما في إعداد القسم. */
+  target: TpTarget;
+  records: RecordRow[];
+  readings: Reading[];
+  tpMarks: TpMark[];
+  sessions: TpSession[];
+  criteria: Criterion[];
+  components: Component[];
+}): ClassStats {
+  const { term, students, target, records, readings, tpMarks, sessions, criteria, components } =
+    args;
+
+  const recordOf = new Map<string, RecordRow>();
+  for (const r of records) if (r.term === term) recordOf.set(r.student_id, r);
+
+  const readingsOf = new Map<string, Reading[]>();
+  for (const r of readings) {
+    if (r.term !== term) continue;
+    const list = readingsOf.get(r.student_id);
+    if (list) list.push(r);
+    else readingsOf.set(r.student_id, [r]);
+  }
+
+  const tp = tpAverages(tpMarks, sessions, term);
+
+  const averages = students.map((s) => {
+    const record = applyTpTarget(
+      recordOf.get(s.id),
+      s.id,
+      term,
+      tp.get(s.id) ?? null,
+      target,
+      criteria,
+    );
+    return termAverage(components, componentValues(criteria, record, readingsOf.get(s.id) ?? []));
+  });
+  const unread = students.filter((s) => (readingsOf.get(s.id)?.length ?? 0) === 0).length;
+  return classStats(averages, unread);
+}
