@@ -440,6 +440,8 @@ nav.tabs svg { width: 21px; height: 21px; }
 .shot:has(input:disabled) { opacity: 0.6; cursor: default; }
 .shot.small { padding: 12px; flex-direction: row; gap: 9px; }
 .shot.small svg { width: 20px; height: 20px; }
+.shotpick { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.shotpick .shot { min-width: 0; }
 
 /* صفحتا الورقة: مصغّرتان تُحذف الواحدة بزرّها */
 .shotrow { display: flex; gap: 9px; margin-bottom: 10px; }

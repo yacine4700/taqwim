@@ -209,28 +209,53 @@ export function ImportSheet({
               </div>
             )}
 
-            {/* بلا capture: الهاتف يعرض الكاميرا والمعرض معًا فيختار الأستاذ */}
+            {/* زرّان صريحان: capture يفتح الكاميرا مباشرة، وبدونه يفتح المعرض.
+                الاعتماد على أن الهاتف يعرض الاختيارين معًا لا يصحّ في كل متصفّح،
+                وأقلّها التطبيق المثبّت على أندرويد الذي يفتح المعرض وحده. */}
             {shots.length < MAX_SHOTS && (
-              <label className={shots.length ? "shot small" : "shot"}>
-                <input
-                  id="import-photo"
-                  type="file"
-                  accept="image/*"
-                  multiple
-                  disabled={reading}
-                  onChange={(e) => {
-                    const files: File[] = e.target.files ? Array.from(e.target.files) : [];
-                    e.target.value = "";
-                    if (files.length) void addShots(files);
-                  }}
-                />
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M3 8h3.5L8 6h8l1.5 2H21v11H3z" />
-                  <circle cx="12" cy="13.5" r="3.5" />
-                </svg>
-                <b>{shots.length ? "أضف الصفحة الثانية" : "صوّر الورقة أو اخترها من المعرض"}</b>
-                {!shots.length && <small>من الكاميرا أو من صورك</small>}
-              </label>
+              <div className="shotpick">
+                <label className={shots.length ? "shot small" : "shot"}>
+                  <input
+                    id="import-camera"
+                    type="file"
+                    accept="image/*"
+                    capture="environment"
+                    disabled={reading}
+                    onChange={(e) => {
+                      const files: File[] = e.target.files ? Array.from(e.target.files) : [];
+                      e.target.value = "";
+                      if (files.length) void addShots(files);
+                    }}
+                  />
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M3 8h3.5L8 6h8l1.5 2H21v11H3z" />
+                    <circle cx="12" cy="13.5" r="3.5" />
+                  </svg>
+                  <b>الكاميرا</b>
+                  {!shots.length && <small>صوّر الورقة الآن</small>}
+                </label>
+                <label className={shots.length ? "shot small" : "shot"}>
+                  <input
+                    id="import-photo"
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    disabled={reading}
+                    onChange={(e) => {
+                      const files: File[] = e.target.files ? Array.from(e.target.files) : [];
+                      e.target.value = "";
+                      if (files.length) void addShots(files);
+                    }}
+                  />
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="3" y="4" width="18" height="16" rx="2" />
+                    <circle cx="9" cy="10" r="1.6" />
+                    <path d="M21 16l-5-5-8 8" />
+                  </svg>
+                  <b>المعرض</b>
+                  {!shots.length && <small>اختر من صورك</small>}
+                </label>
+              </div>
             )}
 
             {shots.length > 0 && (
