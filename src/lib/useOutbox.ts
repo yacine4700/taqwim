@@ -9,18 +9,40 @@
  *   وعند عودة الاتصال، وعند العودة إلى التطبيق.
  * - رفض الخادم النهائي (قيد أو صلاحية) يُعلَّم «متعثّرًا» ويُعرض على الأستاذ،
  *   فهو وحده من يقرّر إعادة المحاولة أو التجاهل.
+ * - لا يُرسل شيء بلا جلسة لصاحب الطابور: الطلب بلا جلسة يذهب بدور anon،
+ *   فيُرفض الإدخال، أما التعديل والحذف فـ«ينجحان» على صفر صفوف تحت RLS —
+ *   فتخرج العملية من الطابور ولم يُحفظ شيء. لذلك يُتحقَّق من الجلسة قبل كل
+ *   جولة، ويتوقّف الطابور حتى يعود الأستاذ إلى حسابه، ثم يُستأنف وحده.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { createClient } from "@/lib/supabase/client";
 import { kvGet, kvSet } from "@/lib/localdb";
-import { backoff, enqueue, isPermanent, type Op } from "@/lib/outbox";
+import { afterFailure, classifyFailure, enqueue, type Op } from "@/lib/outbox";
 
 type Supabase = ReturnType<typeof createClient>;
 
-type SendResult = { ok: boolean; permanent: boolean; message: string };
+/** ردّ الخادم كما هو، والتصنيف بعده في classifyFailure. */
+type SendResult = {
+  ok: boolean;
+  message: string;
+  code?: string | null;
+  status?: number | null;
+  thrown?: boolean;
+  /** حكمٌ معروف بلا رمز من الخادم (تلميذ لم يعد موجودًا، عملية مجهولة). */
+  kind?: "rejected";
+};
 
-const OK: SendResult = { ok: true, permanent: false, message: "" };
+const OK: SendResult = { ok: true, message: "" };
+
+type PostgrestReply = {
+  error: { code?: string; message: string } | null;
+  status: number;
+};
+
+function reply({ error, status }: PostgrestReply): SendResult {
+  return error ? { ok: false, message: error.message, code: error.code ?? null, status } : OK;
+}
 
 export type Outbox = {
   queue: Op[];
@@ -29,6 +51,11 @@ export type Outbox = {
   online: boolean;
   sending: boolean;
   lastSyncedAt: number | null;
+  /**
+   * الطابور متوقّف لأن الجلسة انتهت (أو صارت لحساب آخر). العمليات محفوظة
+   * ولم تُعلَّم متعثّرة، وتُرسل وحدها بعد الدخول من جديد.
+   */
+  needsLogin: boolean;
   push: (op: Op) => void;
   flush: () => void;
   retry: (id: string) => void;
@@ -46,6 +73,7 @@ export function useOutbox(
   const [online, setOnline] = useState(true);
   const [sending, setSending] = useState(false);
   const [lastSyncedAt, setLastSyncedAt] = useState<number | null>(null);
+  const [needsLogin, setNeedsLogin] = useState(false);
 
   const queueRef = useRef<Op[]>([]);
   const flushingRef = useRef(false);
@@ -86,7 +114,7 @@ export function useOutbox(
     async (op: Op): Promise<SendResult> => {
       try {
         if (op.kind === "record") {
-          const { error } = await supabase.from("records").upsert(
+          const answer = await supabase.from("records").upsert(
             {
               teacher_id: teacherId,
               student_id: op.student_id,
@@ -99,14 +127,12 @@ export function useOutbox(
             },
             { onConflict: "student_id,term" },
           );
-          return error
-            ? { ok: false, permanent: isPermanent(error.code), message: error.message }
-            : OK;
+          return reply(answer);
         }
 
         if (op.kind === "reading-add") {
           // المعرّف مولَّد في الهاتف، فإعادة الإرسال لا تضاعف المحاولة.
-          const { error } = await supabase.from("readings").upsert(
+          const answer = await supabase.from("readings").upsert(
             {
               id: op.reading.id,
               teacher_id: teacherId,
@@ -117,24 +143,20 @@ export function useOutbox(
             },
             { onConflict: "id" },
           );
-          return error
-            ? { ok: false, permanent: isPermanent(error.code), message: error.message }
-            : OK;
+          return reply(answer);
         }
 
         if (op.kind === "reading-del") {
-          const { error } = await supabase
+          const answer = await supabase
             .from("readings")
             .delete()
             .eq("id", op.reading_id);
-          return error
-            ? { ok: false, permanent: isPermanent(error.code), message: error.message }
-            : OK;
+          return reply(answer);
         }
 
         if (op.kind === "tp-session") {
           // المعرّف مولَّد في الهاتف، فإعادة الإرسال لا تضاعف الحصة.
-          const { error } = await supabase.from("tp_sessions").upsert(
+          const answer = await supabase.from("tp_sessions").upsert(
             {
               id: op.session.id,
               teacher_id: teacherId,
@@ -146,24 +168,20 @@ export function useOutbox(
             },
             { onConflict: "id" },
           );
-          return error
-            ? { ok: false, permanent: isPermanent(error.code), message: error.message }
-            : OK;
+          return reply(answer);
         }
 
         if (op.kind === "tp-mark") {
           // «مسح»: الصف يُحذف فيعود التلميذ «لم يُقيَّم»، ولا يُترك صف فارغ.
           if (op.score === null && !op.absent) {
-            const { error } = await supabase
+            const answer = await supabase
               .from("tp_marks")
               .delete()
               .eq("session_id", op.session_id)
               .eq("student_id", op.student_id);
-            return error
-              ? { ok: false, permanent: isPermanent(error.code), message: error.message }
-              : OK;
+            return reply(answer);
           }
-          const { error } = await supabase.from("tp_marks").upsert(
+          const answer = await supabase.from("tp_marks").upsert(
             {
               teacher_id: teacherId,
               session_id: op.session_id,
@@ -174,32 +192,54 @@ export function useOutbox(
             },
             { onConflict: "session_id,student_id" },
           );
-          return error
-            ? { ok: false, permanent: isPermanent(error.code), message: error.message }
-            : OK;
+          return reply(answer);
         }
 
         if (op.kind === "student") {
-          const { error } = await supabase
+          // التعديل تحت RLS لا يُرجع خطأً إن لم يجد الصف، فنطلب الصف المعدَّل:
+          // صفر صفوف = التلميذ لم يعد في الخادم، لا «نجاح».
+          const answer = await supabase
             .from("students")
             .update(op.patch)
-            .eq("id", op.student_id);
-          return error
-            ? { ok: false, permanent: isPermanent(error.code), message: error.message }
-            : OK;
+            .eq("id", op.student_id)
+            .select("id");
+          if (!answer.error && (answer.data ?? []).length === 0) {
+            return {
+              ok: false,
+              message: "التلميذ غير موجود في الخادم (ربما حُذف)",
+              kind: "rejected",
+            };
+          }
+          return reply(answer);
         }
 
         // نوع لا يعرفه هذا الإصدار (طابور كتبه إصدار أحدث): لا يُرسل على أنه
         // شيء آخر. يُعلَّم متعثّرًا فيراه الأستاذ ولا يُحذف من وراء ظهره.
-        return { ok: false, permanent: true, message: "عملية غير معروفة" };
+        return { ok: false, message: "عملية غير معروفة", kind: "rejected" };
       } catch (problem) {
         // استثناء من fetch نفسه: الشبكة، لا الخادم.
         const message = problem instanceof Error ? problem.message : "تعذّر الاتصال";
-        return { ok: false, permanent: false, message };
+        return { ok: false, message, thrown: true };
       }
     },
     [supabase, teacherId],
   );
+
+  /**
+   * جلسة صالحة لصاحب الطابور؟ "network" إن تعذّر التحقّق نفسه (لا نحكم على
+   * الجلسة بانقطاع)، و"other" إن كانت الجلسة لحساب آخر فُتح في المتصفّح نفسه:
+   * لا يُرسل طابور أستاذ باسم غيره.
+   */
+  const sessionState = useCallback(async (): Promise<"ok" | "none" | "other" | "network"> => {
+    try {
+      const { data, error } = await supabase.auth.getSession();
+      if (error) return "network";
+      if (!data.session) return "none";
+      return data.session.user.id === teacherId ? "ok" : "other";
+    } catch {
+      return "network";
+    }
+  }, [supabase, teacherId]);
 
   const flush = useCallback(() => {
     void (async () => {
@@ -210,6 +250,15 @@ export function useOutbox(
       flushingRef.current = true;
       setSending(true);
       try {
+        const session = await sessionState();
+        if (session === "network") return;
+        if (session !== "ok") {
+          // لا نرسل شيئًا: العمليات تبقى كما هي، بلا محاولة تُحسب
+          setNeedsLogin(true);
+          return;
+        }
+        setNeedsLogin(false);
+
         const round = queueRef.current.filter((op) => !op.blocked);
         for (const queued of round) {
           const live = queueRef.current.find((op) => op.id === queued.id);
@@ -226,31 +275,27 @@ export function useOutbox(
             continue;
           }
 
-          if (result.permanent) {
-            setQ((q) =>
-              q.map((op) =>
-                op.id === live.id
-                  ? { ...op, blocked: true, error: result.message, tries: op.tries + 1 }
-                  : op,
-              ),
-            );
-            continue;
-          }
-
-          // الشبكة ساقطة: بقية الطابور ستسقط مثلها، فنتوقّف ونعيد لاحقًا.
+          const kind =
+            result.kind ??
+            classifyFailure({
+              code: result.code,
+              status: result.status,
+              thrown: result.thrown,
+              hasSession: true,
+            });
+          const message =
+            kind === "auth" ? "انتهت الجلسة: تُرسل بعد الدخول من جديد" : result.message;
+          let outcome: ReturnType<typeof afterFailure> | null = null;
           setQ((q) =>
-            q.map((op) =>
-              op.id === live.id
-                ? {
-                    ...op,
-                    tries: op.tries + 1,
-                    error: result.message,
-                    nextTry: backoff(op.tries + 1, Date.now()),
-                  }
-                : op,
-            ),
+            q.map((op) => {
+              if (op.id !== live.id) return op;
+              outcome = afterFailure(op, kind, message, Date.now());
+              return outcome.op;
+            }),
           );
-          break;
+          const decided = outcome as ReturnType<typeof afterFailure> | null;
+          if (decided?.needsLogin) setNeedsLogin(true);
+          if (decided?.stop ?? true) break;
         }
         if (!queueRef.current.some((op) => !op.blocked)) setLastSyncedAt(Date.now());
       } finally {
@@ -259,7 +304,7 @@ export function useOutbox(
         setSending(false);
       }
     })();
-  }, [send, setQ]);
+  }, [send, sessionState, setQ]);
 
   const push = useCallback(
     (op: Op) => {
@@ -325,12 +370,35 @@ export function useOutbox(
     if (ready) flush();
   }, [ready, flush]);
 
+  /*
+   * عودة الجلسة (دخول من جديد، أو تجديد الرمز، أو فتح الصفحة) تستأنف
+   * الطابور وحدها: لا زرّ «أعد» لكل علامة. وخروجها يوقفه قبل أن يُرسَل
+   * شيء بلا جلسة.
+   */
+  useEffect(() => {
+    const { data } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === "SIGNED_OUT" || !session) {
+        setNeedsLogin(true);
+        return;
+      }
+      if (session.user.id !== teacherId) {
+        setNeedsLogin(true);
+        return;
+      }
+      setNeedsLogin(false);
+      // خارج نداء المستمع: supabase-js تنصح ألّا يُنتظر فيه نداء آخر للعميل
+      window.setTimeout(flush, 0);
+    });
+    return () => data.subscription.unsubscribe();
+  }, [supabase, teacherId, flush]);
+
   return {
     queue,
     ready,
     online,
     sending,
     lastSyncedAt,
+    needsLogin,
     push,
     flush,
     retry,

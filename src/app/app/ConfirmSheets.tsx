@@ -113,14 +113,26 @@ export function ConfirmCriterionSheet({
 }
 
 
+/**
+ * الخروج وفي الطابور ما لم يصل الخادم.
+ *
+ * الخروج يمسح طابور الجهاز (قد يكون الجهاز مشتركًا بين أستاذين)، فلا يُتاح
+ * «اخرج» إلا بعد أن يُحفظ ما لم يُرسل في ملف «نسختي» يستعيده الأستاذ لاحقًا.
+ * وإن تغيّر الطابور بعد التنزيل (علامة جديدة) عاد القفل حتى يُنزَّل من جديد.
+ */
 export function ConfirmSignOutSheet({
-  label, onCancel, onShow, onConfirm,
+  label, saved, onSave, onCancel, onShow, onConfirm,
 }: {
   label: string;
+  /** كل ما في الطابور الآن ضمّه ملفٌّ نُزِّل. */
+  saved: boolean;
+  onSave: () => Promise<boolean>;
   onCancel: () => void;
   onShow: () => void;
   onConfirm: () => void;
 }) {
+  const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState(false);
   return (
     <>
       <div className="scrim" onClick={onCancel} />
@@ -129,14 +141,42 @@ export function ConfirmSignOutSheet({
           <h3>الخروج قبل الإرسال</h3>
         </div>
         <p className="lead">
-          {label} بعد. الخروج يمسح بيانات هذا الجهاز، فتضيع. انتظر عودة الشبكة
-          ثم اخرج.
+          {label} بعد، والخروج يمسحها من هذا الجهاز. الأفضل أن تنتظر عودة الشبكة
+          ثم تخرج. وإن كان لا بدّ من الخروج الآن، نزّل ملفًّا بها أولًا، ثم استعدها
+          بعد الدخول من الإعدادات ← حسابي ← نسختي ← استيراد.
         </p>
+        {saved ? (
+          <div className="note" style={{ marginBottom: 12 }}>
+            نُزِّل الملف وفيه كل ما لم يُرسل. تأكّد أنه في ملفّات هاتفك قبل الخروج.
+          </div>
+        ) : (
+          <button
+            className="btn"
+            style={{ width: "100%", marginBottom: 12 }}
+            disabled={busy}
+            onClick={async () => {
+              setBusy(true);
+              setFailed(false);
+              const ok = await onSave();
+              setFailed(!ok);
+              setBusy(false);
+            }}
+          >
+            {busy ? "لحظة…" : "نزّل ملفًّا بما لم يُرسل"}
+          </button>
+        )}
+        {failed && (
+          <div className="note bad" style={{ marginBottom: 12 }}>
+            لم يُنزَّل الملف، فالخروج ما زال مقفلًا. انتظر عودة الشبكة.
+          </div>
+        )}
         <div className="srow2">
           <button className="btn ghost" onClick={onCancel}>تراجع</button>
           <div className="hspace" />
           <button className="btn soft" onClick={onShow}>أرني</button>
-          <button className="btn danger" onClick={onConfirm}>اخرج وامسح</button>
+          <button className="btn danger" disabled={!saved} onClick={onConfirm}>
+            اخرج وامسح
+          </button>
         </div>
       </div>
     </>

@@ -20,16 +20,21 @@ export function since(at: number): string {
  * يعرف بنظرة أن علاماته وصلت، لا أن يقرأ شريط حالة دائمًا.
  */
 export function SyncBadge({
-  waiting, online, sending, label, onClick,
+  waiting, online, sending, needsLogin, label, onClick,
 }: {
   waiting: ReturnType<typeof pending>;
   online: boolean;
   sending: boolean;
+  /** الطابور متوقّف حتى يعود الأستاذ إلى حسابه. */
+  needsLogin: boolean;
   label: string;
   onClick: () => void;
 }) {
-  const tone = waiting.blocked ? "bad" : !online ? "off" : waiting.total ? "busy" : "ok";
-  const title = waiting.blocked
+  const stalled = needsLogin && waiting.total > 0;
+  const tone = waiting.blocked || stalled ? "bad" : !online ? "off" : waiting.total ? "busy" : "ok";
+  const title = stalled
+    ? `${label} — انتهت الجلسة: ادخل من جديد لتُرسل`
+    : waiting.blocked
     ? `${label} — منها ${waiting.blocked} متعثّرة`
     : waiting.total
       ? online
@@ -90,7 +95,7 @@ function opWhat(op: Op): string {
  * العشرين علامة لم تضع، ويقرّر في المتعثّر منها.
  */
 export function PendingSheet({
-  queue, waiting, online, sending, lastSyncedAt, nameOf,
+  queue, waiting, online, sending, lastSyncedAt, needsLogin, nameOf,
   onClose, onFlush, onRetry, onDiscard,
 }: {
   queue: Op[];
@@ -98,6 +103,7 @@ export function PendingSheet({
   online: boolean;
   sending: boolean;
   lastSyncedAt: number | null;
+  needsLogin: boolean;
   nameOf: (studentId: string) => string;
   onClose: () => void;
   onFlush: () => void;
@@ -118,7 +124,9 @@ export function PendingSheet({
         </div>
 
         <p className="lead">
-          {!online
+          {needsLogin && waiting.total
+            ? "الإرسال متوقّف حتى تدخل من جديد."
+            : !online
             ? "لا اتصال الآن. ما أدخلته محفوظ في الجهاز ويُرسل وحده عند عودة الشبكة — ولو أُغلق التطبيق."
             : sending
               ? "جارٍ الإرسال…"
@@ -128,6 +136,16 @@ export function PendingSheet({
                   ? `آخر إرسال ${since(lastSyncedAt)}.`
                   : "لا شيء ينتظر الإرسال."}
         </p>
+
+        {waiting.total > 0 && needsLogin && (
+          <div className="note bad">
+            انتهت جلستك، فتوقّف الإرسال. ما أدخلته محفوظ في هذا الجهاز ولم يضع، ويُرسل
+            وحده بعد أن تدخل من جديد بالحساب نفسه.
+            <a className="btn sm" href="/login" style={{ display: "inline-block", marginTop: 8 }}>
+              ادخل من جديد
+            </a>
+          </div>
+        )}
 
         {waiting.total > 0 && isDurable() === false && (
           <div className="note warn">
@@ -167,7 +185,7 @@ export function PendingSheet({
           </div>
         )}
 
-        {waiting.total > 0 && online && (
+        {waiting.total > 0 && online && !needsLogin && (
           <button className="btn" style={{ marginTop: 14 }} onClick={onFlush} disabled={sending}>
             {sending ? "جارٍ الإرسال…" : "أرسل الآن"}
           </button>

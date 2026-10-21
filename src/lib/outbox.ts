@@ -343,6 +343,98 @@ export function isPermanent(code: string | null | undefined): boolean {
   return /^(22|23|42)/.test(code) || code === "PGRST204";
 }
 
+/**
+ * سبب الفشل كما يقرّر مصير العملية. ثلاثة لا اثنان:
+ *
+ * - "network": الشبكة أو الخادم مؤقتًا. تبقى العملية وتُعاد بتباعد.
+ * - "auth": الجلسة انتهت أو لم تعد لصاحب الطابور. لا ذنب للعملية: لا تُعلَّم
+ *   متعثّرة ولا تُحسب محاولة، بل يتوقّف الطابور كله حتى يعود الأستاذ إلى
+ *   حسابه، ثم يُستأنف وحده.
+ * - "rejected": رفضٌ حقيقي والجلسة سليمة (قيد، أو صلاحية على صف ليس له).
+ *   تُعلَّم متعثّرة ويقرّر فيها الأستاذ.
+ *
+ * والفرق بين الثانية والثالثة في رمز 42501 (منعته RLS) هو وجود الجلسة: بلا
+ * جلسة يُرسَل الطلب بدور anon فتمنعه RLS، وليس ذلك رفضًا للعلامة نفسها.
+ */
+export type FailureKind = "network" | "auth" | "rejected";
+
+export function classifyFailure(failure: {
+  code?: string | null;
+  status?: number | null;
+  /** للمتصل جلسة صالحة لصاحب الطابور لحظة الإرسال. */
+  hasSession: boolean;
+  /** استثناء من fetch نفسه: لم يصل الطلب أصلًا. */
+  thrown?: boolean;
+}): FailureKind {
+  if (failure.thrown) return "network";
+  const code = failure.code ?? "";
+  const status = failure.status ?? 0;
+  // PGRST301 رمز منتهٍ أو غير صالح، 302 دخول بلا رمز ممنوع، 303 ادعاءات الرمز مرفوضة
+  if (status === 401 || /^PGRST30[123]$/.test(code)) return "auth";
+  if (code === "42501" || status === 403) return failure.hasSession ? "rejected" : "auth";
+  if (isPermanent(code)) return "rejected";
+  return "network";
+}
+
+/**
+ * العملية بعد فشلها، وهل تتوقّف الجولة. منطق صافٍ يستعمله useOutbox، وله
+ * اختبارات في scripts/check-sync.mjs.
+ */
+export function afterFailure(
+  op: Op,
+  kind: FailureKind,
+  message: string,
+  now: number,
+): { op: Op; stop: boolean; needsLogin: boolean } {
+  if (kind === "auth") {
+    // لا محاولة تُحسب ولا تأخير: تُرسل فور عودة الجلسة
+    return { op: { ...op, error: message }, stop: true, needsLogin: true };
+  }
+  if (kind === "rejected") {
+    return {
+      op: { ...op, blocked: true, error: message, tries: op.tries + 1 },
+      stop: false,
+      needsLogin: false,
+    };
+  }
+  // الشبكة ساقطة: بقية الطابور ستسقط مثلها، فنتوقّف ونعيد لاحقًا.
+  return {
+    op: { ...op, tries: op.tries + 1, error: message, nextTry: backoff(op.tries + 1, now) },
+    stop: true,
+    needsLogin: false,
+  };
+}
+
+/**
+ * بصمة العملية بمحتواها لا بمعرّفها: الدمج في enqueue يُبقي المعرّف ويغيّر
+ * المحتوى، فملفٌّ صُدِّر قبل تعديلٍ لاحق لا يحمل التعديل وإن تطابق المعرّف.
+ * حقول المحاولات خارجها: لا تغيّر ما أدخله الأستاذ.
+ */
+export function opFingerprint(op: Op): string {
+  const { tries: _t, error: _e, blocked: _b, nextTry: _n, ...content } = op;
+  return stableJson(content);
+}
+
+/** JSON بمفاتيح مرتّبة على كل المستويات: الكائنان المتساويان بصمتهما واحدة. */
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>)
+      .filter(([, v]) => v !== undefined)
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+    return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${stableJson(v)}`).join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "null";
+}
+
+/**
+ * الخروج يمسح طابور الجهاز، فلا يُسمح به وفي الطابور ما لم يصل الخادم ولم
+ * يُحفظ في ملف. `exported` بصمات العمليات التي ضمّها آخر ملف نُزِّل.
+ */
+export function canSignOut(queue: Op[], exported: ReadonlySet<string>): boolean {
+  return queue.every((op) => exported.has(opFingerprint(op)));
+}
+
 /** تباعد متزايد بين المحاولات، بسقف دقيقة واحدة. */
 export function backoff(tries: number, now: number): number {
   return now + Math.min(60_000, 2_000 * 2 ** Math.max(0, tries - 1));

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import type { Persistence } from "@/lib/localdb";
 import { countWord } from "@/lib/outbox";
 import { checkTotal, type Component, type Criterion } from "@/lib/scoring";
 import { Klass, Profile, School } from "./types";
@@ -19,7 +20,7 @@ const TP_PRESETS = ["الأعمال التطبيقية", "التعبير الش�
 export function SettingsView({
   criteria, components, email, profile, schools, classes,
   onCriterion, resetTick, onAddCriterion, onDeleteCriterion, onComponent, onProfile,
-  onAddSchool, onRenameSchool, onDeleteSchool, onSignOut,
+  onAddSchool, onRenameSchool, onDeleteSchool, onSignOut, onBackup, persistence, onPersist,
 }: {
   criteria: Criterion[];
   components: Component[];
@@ -38,6 +39,10 @@ export function SettingsView({
   onRenameSchool: (id: string, name: string) => void;
   onDeleteSchool: (school: School) => void;
   onSignOut: () => void;
+  onBackup: () => void;
+  /** null قبل أن يُعرف الجواب. */
+  persistence: Persistence | null;
+  onPersist: () => void;
 }) {
   const [part, setPart] = useState<"scoring" | "schools" | "me">("scoring");
   const [pwdOpen, setPwdOpen] = useState(false);
@@ -284,6 +289,38 @@ export function SettingsView({
             />
           </div>
         ))}
+      </div>
+
+      {/* حفظ العمل: نسخة في يد الأستاذ، وحال الحفظ على هذا الجهاز */}
+      <div className="card">
+        <div className="srow2">
+          <div className="k">
+            نسختي
+            <small>ملفٌّ فيه كل عملك تحتفظ به، وتستعيده لو ضاع حسابك</small>
+          </div>
+          <button className="btn soft" onClick={onBackup}>فتح</button>
+        </div>
+        <div className="srow2">
+          <div className="k">
+            الحفظ في هذا الجهاز
+            <small>
+              {persistence === "persisted"
+                ? "دائم: لا يمسح المتصفّح ما لم يُرسل بعد"
+                : persistence === "best-effort"
+                  ? "عادي: قد يمسحه المتصفّح إن امتلأت ذاكرة الهاتف. تثبيت التطبيق على الشاشة الرئيسية يجعله دائمًا غالبًا"
+                  : persistence === "unsupported"
+                    ? "هذا المتصفّح لا يتيح الحفظ الدائم. التطبيق يعمل، فقط أرسل علاماتك ولا تؤجّل"
+                    : "…"}
+            </small>
+          </div>
+          {persistence === "best-effort" ? (
+            <button className="btn ghost" onClick={onPersist}>اطلب</button>
+          ) : (
+            <span className={persistence === "persisted" ? "pill ok" : "pill"}>
+              {persistence === "persisted" ? "دائم" : persistence === "unsupported" ? "غير متاح" : "…"}
+            </span>
+          )}
+        </div>
       </div>
 
       <div className="card">

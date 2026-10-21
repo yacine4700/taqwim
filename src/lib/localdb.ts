@@ -51,6 +51,31 @@ function openDb(): Promise<IDBDatabase | null> {
   return opening;
 }
 
+/**
+ * الحفظ الدائم: بدونه يحقّ للمتصفّح أن يمسح IndexedDB — وفيها الطابور — حين
+ * تمتلئ ذاكرة الهاتف. الطلب لا يضمن القبول: كروم يقرّر بنفسه (التثبيت على
+ * الشاشة الرئيسية يرجّحه)، وفايرفوكس يسأل المستخدم. والرفض ليس عطلًا:
+ * التطبيق يعمل كما كان، ويُقال للأستاذ ما معناه.
+ *
+ * - "persisted": لا يمسحه المتصفّح إلا بفعل المستخدم.
+ * - "best-effort": يُحفظ، لكن قد يُمسح عند ضيق المساحة.
+ * - "unsupported": المتصفّح لا يعرف الطلب أصلًا.
+ */
+export type Persistence = "persisted" | "best-effort" | "unsupported";
+
+export async function ensurePersistence(): Promise<Persistence> {
+  try {
+    const storage = typeof navigator === "undefined" ? undefined : navigator.storage;
+    if (!storage || typeof storage.persist !== "function") return "unsupported";
+    if (typeof storage.persisted === "function" && (await storage.persisted())) {
+      return "persisted";
+    }
+    return (await storage.persist()) ? "persisted" : "best-effort";
+  } catch {
+    return "best-effort";
+  }
+}
+
 /** هل الحفظ المحلي يصمد بعد إغلاق الصفحة؟ null قبل أول قراءة. */
 export function isDurable(): boolean | null {
   return durable;

@@ -3,7 +3,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
-import { kvDel, kvGet, kvSet } from "@/lib/localdb";
+import { ensurePersistence, kvDel, kvGet, kvSet, type Persistence } from "@/lib/localdb";
+import { backupFileName, buildBackup, normalizeData, type Backup } from "@/lib/backup";
+import { exportFromServer } from "@/lib/backupDb";
 import { useBackLayers } from "@/lib/useBackLayers";
 import { currentTerm } from "@/lib/terms";
 import { nextPositions } from "@/lib/roster";
@@ -19,7 +21,9 @@ import {
   applyStudents,
   applyTpMarks,
   applyTpSessions,
+  canSignOut,
   newOp,
+  opFingerprint,
   opSessionId,
   opStudentId,
   pending,
@@ -56,6 +60,7 @@ import { ConfirmCriterionChangeSheet, ConfirmCriterionSheet, ConfirmSheet, Confi
 import { PendingSheet, SyncBadge, since } from "./sync";
 import { StudentSheet } from "./StudentSheet";
 import { ImportSheet } from "./ImportSheet";
+import { BackupSheet, backupJson, downloadBlob } from "./BackupSheet";
 import { Tabs } from "./parts";
 
 export default function AppClient({
@@ -123,6 +128,10 @@ export default function AppClient({
   const [confirmStudent, setConfirmStudent] = useState<Student | null>(null);
   const [showPending, setShowPending] = useState(false);
   const [confirmSignOut, setConfirmSignOut] = useState(false);
+  const [backupOpen, setBackupOpen] = useState(false);
+  /** بصمات العمليات المعلّقة التي ضمّها آخر ملف «نسختي» نُزِّل: بوّابة الخروج. */
+  const [exportedOps, setExportedOps] = useState<ReadonlySet<string>>(() => new Set());
+  const [persistence, setPersistence] = useState<Persistence | null>(null);
   const [toast, setToast] = useState("");
 
   const say = useCallback((text: string) => {
@@ -145,6 +154,11 @@ export default function AppClient({
   }, []);
 
   const outbox = useOutbox(supabase, teacherId, onApplied);
+
+  /* الحفظ الدائم: يُطلب مرة عند الفتح، ورفضه لا يوقف شيئًا (انظر localdb) */
+  useEffect(() => {
+    void ensurePersistence().then(setPersistence);
+  }, []);
 
   /* فتح قسم يبدأ من تلاميذه دائمًا، لا من آخر شاشة تُرك عندها قسم آخر */
   useEffect(() => {
@@ -1088,7 +1102,72 @@ export default function AppClient({
    * فلا تبقى أقسام أحدهما وعلاماته بعد خروجه. وإن بقي شيء لم يُرسل، يُسأل
    * أولًا — فالخروج يضيّعه.
    */
+  /* ---------- «نسختي» ---------- */
+
+  /**
+   * نسخة الآن: من الخادم كاملةً إن أمكن، وإلا من نسخة الجهاز (دون اتصال، أو
+   * جلسة منتهية) — فالخروج والتصدير لا يتوقّفان على الشبكة. والطابور معها
+   * منفصلًا. null إن لم تُحمَّل البيانات بعد: ملفٌّ فارغ يُظنّ نسخةً أسوأ من لا ملف.
+   */
+  const makeBackup = useCallback(async (): Promise<Backup | null> => {
+    if (outbox.online) {
+      try {
+        const { data } = await supabase.auth.getSession();
+        if (data.session?.user.id === teacherId) {
+          return await exportFromServer(supabase, { id: teacherId, email }, outbox.queue);
+        }
+      } catch {
+        // الشبكة سقطت في منتصف القراءة: نسخة الجهاز أدناه
+      }
+    }
+    if (loading) return null;
+    return buildBackup({
+      source: "device",
+      teacher: {
+        id: teacherId,
+        email,
+        full_name: profile.full_name,
+        subject: profile.subject,
+        school_name: null,
+      },
+      data: normalizeData({
+        schools,
+        classes,
+        class_groups: groups,
+        students: baseStudents,
+        criteria,
+        components,
+        records: baseRecords,
+        readings: baseReadings,
+        tp_sessions: baseSessions,
+        tp_marks: baseTpMarks,
+      }),
+      pending: outbox.queue,
+    });
+  }, [
+    outbox.online, outbox.queue, supabase, teacherId, email, loading, profile, schools, classes,
+    groups, baseStudents, criteria, components, baseRecords, baseReadings, baseSessions, baseTpMarks,
+  ]);
+
+  const recordExported = useCallback((backup: Backup) => {
+    setExportedOps(new Set(backup.pending.map(opFingerprint)));
+  }, []);
+
+  /** للخروج: ملف «نسختي» بما لم يُرسل. true إن بدأ التنزيل. */
+  async function saveBeforeSignOut(): Promise<boolean> {
+    const backup = await makeBackup();
+    if (!backup) return false;
+    const ok = downloadBlob(backupFileName(new Date(), "json"), backupJson(backup));
+    if (ok) recordExported(backup);
+    return ok;
+  }
+
   async function signOut() {
+    // الخروج يمسح الطابور: لا يتمّ وفيه ما لم يُحفظ في الخادم ولا في ملف
+    if (!canSignOut(outbox.queue, exportedOps)) {
+      setConfirmSignOut(true);
+      return;
+    }
     setConfirmSignOut(false);
     await kvDel(`snapshot:${teacherId}`);
     await kvDel(`queue:${teacherId}`);
@@ -1112,6 +1191,7 @@ export default function AppClient({
   const manySchools = groupBySchool(classes, schools).length > 1;
   const layerStack: Array<[boolean, () => void]> = [
     [confirmSignOut, () => setConfirmSignOut(false)],
+    [backupOpen, () => setBackupOpen(false)],
     [showPending, () => setShowPending(false)],
     [
       criterionChange !== null,
@@ -1161,6 +1241,7 @@ export default function AppClient({
             waiting={waiting}
             online={outbox.online}
             sending={outbox.sending}
+            needsLogin={outbox.needsLogin}
             label={pendingLabel(queue)}
             onClick={() => setShowPending(true)}
           />
@@ -1340,6 +1421,9 @@ export default function AppClient({
               onRenameSchool={renameSchool}
               onDeleteSchool={deleteSchool}
               onSignOut={() => (waiting.total ? setConfirmSignOut(true) : void signOut())}
+              onBackup={() => setBackupOpen(true)}
+              persistence={persistence}
+              onPersist={() => void ensurePersistence().then(setPersistence)}
             />
           )}
         </div>
@@ -1501,6 +1585,7 @@ export default function AppClient({
           online={outbox.online}
           sending={outbox.sending}
           lastSyncedAt={outbox.lastSyncedAt}
+          needsLogin={outbox.needsLogin}
           nameOf={(id) => students.find((s) => s.id === id)?.full_name ?? "تلميذ محذوف"}
           onClose={() => setShowPending(false)}
           onFlush={outbox.flush}
@@ -1509,9 +1594,25 @@ export default function AppClient({
         />
       )}
 
+      {backupOpen && (
+        <BackupSheet
+          supabase={supabase}
+          teacherId={teacherId}
+          online={outbox.online}
+          queue={queue}
+          makeBackup={makeBackup}
+          onExported={recordExported}
+          onImported={() => void load()}
+          onReplay={(ops) => ops.forEach((op) => outbox.push(op))}
+          onClose={() => setBackupOpen(false)}
+        />
+      )}
+
       {confirmSignOut && (
         <ConfirmSignOutSheet
           label={pendingLabel(queue)}
+          saved={canSignOut(queue, exportedOps)}
+          onSave={saveBeforeSignOut}
           onCancel={() => setConfirmSignOut(false)}
           onShow={() => {
             setConfirmSignOut(false);
