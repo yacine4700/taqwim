@@ -23,6 +23,10 @@ function passwordProblem(password, again) {
 
 function translateAuthError(message) {
   const m = message.toLowerCase();
+  // Supabase Auth: "User is banned" (دخول)، "Invalid Refresh Token: User Banned" (تجديد)
+  if (m.includes("user is banned") || m.includes("user banned")) {
+    return "حسابك موقوف مؤقتًا. يُرجى التواصل مع صاحب التطبيق.";
+  }
   if (m.includes("invalid login")) return "البريد أو كلمة السر غير صحيحة.";
   if (m.includes("already registered")) return "هذا البريد مسجّل. سجّل الدخول به.";
   if (m.includes("rate limit") || m.includes("too many") || m.includes("seconds")) {
@@ -45,7 +49,7 @@ function confirmMatches(typed, email) {
   return typed.trim().toLowerCase() === want;
 }
 
-const PRIVACY_VERSION = "2026-10-16";
+const PRIVACY_VERSION = "2026-10-22";
 
 function consentProblem(accepted) {
   return accepted ? null : "للمتابعة وافق على سياسة الخصوصية.";
@@ -98,6 +102,8 @@ eq("القصر قبل التطابق", passwordProblem("12", "34"), "كلمة ا
 
 /* الرسائل */
 eq("دخول خاطئ", translateAuthError("Invalid login credentials"), "البريد أو كلمة السر غير صحيحة.");
+eq("حساب موقوف", translateAuthError("User is banned"), "حسابك موقوف مؤقتًا. يُرجى التواصل مع صاحب التطبيق.");
+eq("تجديد حساب موقوف", translateAuthError("Invalid Refresh Token: User Banned"), "حسابك موقوف مؤقتًا. يُرجى التواصل مع صاحب التطبيق.");
 eq("حدّ البريد", translateAuthError("email rate limit exceeded"), "طلبات كثيرة في وقت قصير. انتظر دقيقة ثم أعد المحاولة.");
 eq("كلمة قديمة", translateAuthError("New password should be different from the old password."), "اختر كلمة سر مختلفة عن القديمة.");
 eq("جلسة مفقودة", translateAuthError("Auth session missing!"), "انتهت صلاحية الرابط. اطلب رابطًا جديدًا.");
@@ -118,7 +124,7 @@ eq("بلا موافقة تُرفض", consentProblem(false), "للمتابعة و
 eq("بموافقة تمرّ", consentProblem(true), null);
 const meta = signupMetadata("أستاذ تجريبي", new Date("2026-10-16T13:00:00.000Z"));
 eq("الاسم يُحفظ", meta.full_name, "أستاذ تجريبي");
-eq("نسخة السياسة تُحفظ", meta.privacy_version, "2026-10-16");
+eq("نسخة السياسة تُحفظ", meta.privacy_version, "2026-10-22");
 eq("تاريخ الموافقة بصيغة ISO", meta.privacy_accepted_at, "2026-10-16T13:00:00.000Z");
 
 /* تغيير كلمة السر من داخل الحساب */

@@ -8,6 +8,10 @@ import {
   signupMetadata,
   translateAuthError as translate,
 } from "@/lib/auth";
+import { BANNED_MESSAGE } from "@/lib/account";
+
+/** بريد التواصل لصاحب الحساب الموقوف (متغيّر بيئة، كما في صفحة الخصوصية). */
+const CONTACT = process.env.NEXT_PUBLIC_CONTACT_EMAIL;
 
 export default function LoginPage() {
   const router = useRouter();
@@ -175,7 +179,19 @@ export default function LoginPage() {
           </label>
         )}
 
-        {message && <div className={bad ? "note bad" : "note"}>{message}</div>}
+        {message && (
+          <div className={bad ? "note bad" : "note"}>
+            {message}
+            {message === BANNED_MESSAGE && CONTACT && (
+              <>
+                {" "}
+                <a href={`mailto:${CONTACT}`} dir="ltr">
+                  {CONTACT}
+                </a>
+              </>
+            )}
+          </div>
+        )}
 
         <button className="btn" type="submit" disabled={busy}>
           {busy

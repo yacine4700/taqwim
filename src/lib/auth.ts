@@ -30,6 +30,10 @@ export function passwordProblem(password: string, again: string): string | null 
 
 export function translateAuthError(message: string): string {
   const m = message.toLowerCase();
+  // Supabase Auth: "User is banned" (دخول)، "Invalid Refresh Token: User Banned" (تجديد)
+  if (m.includes("user is banned") || m.includes("user banned")) {
+    return "حسابك موقوف مؤقتًا. يُرجى التواصل مع صاحب التطبيق.";
+  }
   if (m.includes("invalid login")) return "البريد أو كلمة السر غير صحيحة.";
   if (m.includes("already registered")) return "هذا البريد مسجّل. سجّل الدخول به.";
   if (m.includes("rate limit") || m.includes("too many") || m.includes("seconds")) {
@@ -61,7 +65,7 @@ export function confirmMatches(typed: string, email: string): boolean {
  * نسخة سياسة الخصوصية التي يوافق عليها المسجِّل. تُسجَّل مع الموافقة في بيانات
  * المستخدم، فإذا تغيّرت السياسة جوهريًا غُيّر هذا الرقم وعُرف من وافق على أي نسخة.
  */
-export const PRIVACY_VERSION = "2026-10-16";
+export const PRIVACY_VERSION = "2026-10-22";
 
 /** الموافقة شرط إنشاء الحساب: لا تُملأ عنه، ولا يكفيها وسم HTML وحده. */
 export function consentProblem(accepted: boolean): string | null {

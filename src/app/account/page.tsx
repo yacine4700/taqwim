@@ -3,22 +3,24 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
-import { confirmMatches, translateAuthError } from "@/lib/auth";
-import { kvDel } from "@/lib/localdb";
+import { confirmMatches } from "@/lib/auth";
+import { DELETION_GRACE_DAYS, deletionErrorMessage, purgeDateLabel } from "@/lib/account";
 import { pendingLabel } from "@/lib/outbox";
 import { readPendingOps } from "@/lib/pendingOnDevice";
 
 /**
- * حذف الحساب. لا رجعة فيه، فلا تكفيه نقرة: يُكتب البريد للتأكيد، ويُقال
- * صراحةً ما سيُمحى وما لم يُرسل بعد. الحذف نفسه دالة في القاعدة
- * (delete_my_account) تحذف حساب المتصل وحده، والباقي يتبعه بالحذف التسلسلي.
+ * طلب حذف الحساب. لا يُحذف شيء الآن: يبدأ مهلة 7 أيام يستطيع الأستاذ خلالها
+ * الإلغاء، ثم يحذفه التشغيل الليلي بعد أخذ نسخة. يُكتب البريد وكلمة المرور:
+ * الدخول بكلمة المرور يسجّل في الخادم وقت إدخالها لهذه الجلسة، والدالة
+ * request_account_deletion ترفض إن مضى عليه أكثر من 10 دقائق، فلا يكفي هاتف مفتوح.
  */
 export default function AccountPage() {
   const router = useRouter();
   const [email, setEmail] = useState<string | null>(null);
-  const [userId, setUserId] = useState("");
   const [unsent, setUnsent] = useState("");
   const [typed, setTyped] = useState("");
+  const [password, setPassword] = useState("");
+  const [due, setDue] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
 
@@ -32,7 +34,6 @@ export default function AccountPage() {
         return;
       }
       setEmail(data.user.email ?? "");
-      setUserId(data.user.id);
       const ops = await readPendingOps();
       if (alive) setUnsent(pendingLabel(ops));
     })();
@@ -43,30 +44,43 @@ export default function AccountPage() {
 
   async function remove(event: React.FormEvent) {
     event.preventDefault();
-    if (!email || !confirmMatches(typed, email)) return;
+    if (!email || !confirmMatches(typed, email) || !password) return;
     setBusy(true);
     setMessage("");
     const supabase = createClient();
-    const { error } = await supabase.rpc("delete_my_account");
-    if (error) {
-      // الدالة لم تُطبَّق بعد في القاعدة: لا شيء حُذف، والرسالة تقول ذلك بدل نصّ خام
-      const missing =
-        error.code === "PGRST202" || error.message.toLowerCase().includes("could not find");
-      setMessage(
-        missing
-          ? "الحذف غير مُفعَّل على الخادم بعد، ولم يُحذف شيء. أبلغ صاحب التطبيق."
-          : translateAuthError(error.message),
-      );
+    // دخول جديد بكلمة المرور: يثبت للخادم أنها أُدخلت الآن في هذه الجلسة.
+    const signIn = await supabase.auth.signInWithPassword({ email, password });
+    setPassword("");
+    if (signIn.error) {
+      setMessage(deletionErrorMessage(signIn.error));
       setBusy(false);
       return;
     }
-    // الحساب انمحى: تُمسح نسخة الجهاز وطابوره أيضًا ثم تنتهي الجلسة
-    await kvDel(`snapshot:${userId}`);
-    await kvDel(`queue:${userId}`);
-    navigator.serviceWorker?.controller?.postMessage({ type: "clear-cache" });
-    await supabase.auth.signOut({ scope: "local" });
-    router.push("/login?deleted=1");
-    router.refresh();
+    const { data, error } = await supabase.rpc("request_account_deletion");
+    if (error) {
+      setMessage(deletionErrorMessage(error));
+      setBusy(false);
+      return;
+    }
+    setDue(typeof data === "string" ? data : null);
+    setBusy(false);
+  }
+
+  if (due) {
+    return (
+      <div className="auth gut">
+        <div className="authbox">
+          <h1>طُلب حذف حسابك</h1>
+          <p className="lead">
+            يُحذف حسابك وكل ما فيه نهائيًا يوم {purgeDateLabel(due) ?? "بعد 7 أيام"}. إلى ذلك
+            اليوم تستطيع الدخول وتنزيل «نسختي» أو إلغاء الحذف، ولا تُعدَّل العلامات.
+          </p>
+          <a className="btn" href="/app">
+            رجوع إلى التطبيق
+          </a>
+        </div>
+      </div>
+    );
   }
 
   if (email === null) {
@@ -88,7 +102,9 @@ export default function AccountPage() {
           </a>
           <h1>حذف الحساب</h1>
           <p className="lead">
-            سيُمحى حسابك وكل أقسامك وتلاميذك وعلاماتك نهائيًا، ولا يمكن استرجاعها.
+            يُحذف حسابك وكل أقسامك وتلاميذك وعلاماتك نهائيًا بعد {DELETION_GRACE_DAYS} أيام.
+            خلال هذه الأيام تستطيع إلغاء الطلب، ولا تُعدَّل العلامات. بعدها لا يمكن
+            استرجاع شيء من التطبيق.
           </p>
         </div>
 
@@ -112,14 +128,25 @@ export default function AccountPage() {
           />
         </label>
 
+        <label>
+          كلمة المرور:
+          <input
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            dir="ltr"
+            autoComplete="current-password"
+          />
+        </label>
+
         {message && <div className="note bad">{message}</div>}
 
         <button
           className="btn danger"
           type="submit"
-          disabled={busy || !confirmMatches(typed, email)}
+          disabled={busy || !confirmMatches(typed, email) || !password}
         >
-          {busy ? "لحظة…" : "احذف حسابي نهائيًا"}
+          {busy ? "لحظة…" : `احذف حسابي بعد ${DELETION_GRACE_DAYS} أيام`}
         </button>
       </form>
     </div>
