@@ -44,7 +44,7 @@ export default function AccountPage() {
 
   async function remove(event: React.FormEvent) {
     event.preventDefault();
-    if (!email || !confirmMatches(typed, email) || !password) return;
+    if (!email || unsent || !confirmMatches(typed, email) || !password) return;
     setBusy(true);
     setMessage("");
     const supabase = createClient();
@@ -110,7 +110,8 @@ export default function AccountPage() {
 
         {unsent && (
           <div className="note warn">
-            {unsent} بعد، وستضيع مع الحذف. ارجع إلى التطبيق وانتظر إرسالها أوّلًا.
+            {unsent} بعد. ارجع إلى التطبيق وانتظر حتى تصل، ثم اطلب الحذف: بعد الطلب
+            لا تُقبل العلامات، فتبقى في هذا الجهاز حتى تُلغي الطلب.
           </div>
         )}
 
@@ -144,7 +145,7 @@ export default function AccountPage() {
         <button
           className="btn danger"
           type="submit"
-          disabled={busy || !confirmMatches(typed, email) || !password}
+          disabled={busy || !!unsent || !confirmMatches(typed, email) || !password}
         >
           {busy ? "لحظة…" : `احذف حسابي بعد ${DELETION_GRACE_DAYS} أيام`}
         </button>

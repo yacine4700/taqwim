@@ -1,0 +1,38 @@
+# اختبارات ترحيلات قاعدة البيانات على PostgreSQL 17 (نسخة الإنتاج).
+# قاعدة مؤقتة تُنشأ وتُمحى داخل التشغيل: لا أسرار، ولا اتصال بأي قاعدة خارجية.
+name: اختبارات القاعدة
+
+on:
+  push:
+    paths:
+      - "supabase/**"
+      - "scripts/check-db.sh"
+      - ".github/workflows/db-tests.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pg17:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: تثبيت PostgreSQL 17
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-common >/dev/null
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y >/dev/null
+          sudo apt-get install -y -qq postgresql-17 >/dev/null
+          # الخدمة التي يشغّلها التثبيت غير لازمة: الاختبار ينشئ قاعدته المؤقتة بنفسه.
+          sudo systemctl stop postgresql || true
+          /usr/lib/postgresql/17/bin/postgres --version
+
+      - name: الترحيل والاختبارات والتراجع
+        run: |
+          out=$(sudo PG_BIN=/usr/lib/postgresql/17/bin scripts/check-db.sh 2>&1) || { echo "$out"; exit 1; }
+          echo "$out" | grep -E "^Postgres:|^==|^ok |passed|FAIL"
+          echo "$out" | grep -q "PostgreSQL) 17\." || { echo "::error::لم يعمل على 17"; exit 1; }
+          echo "$out" | grep -q " 0 failed" || { echo "::error::فشل اختبار"; exit 1; }

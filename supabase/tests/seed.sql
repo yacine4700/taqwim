@@ -29,6 +29,12 @@ begin
   end loop;
 end $$;
 
+-- هويات الدخول كما ينشئها Supabase Auth للتسجيل بالبريد (لاختبار نسخها واستعادتها).
+insert into auth.identities (id, user_id, provider, provider_id, identity_data, created_at, updated_at)
+select gen_random_uuid(), u.id, 'email', u.id::text,
+       jsonb_build_object('sub', u.id::text, 'email', u.email, 'email_verified', true), u.created_at, u.created_at
+from auth.users u;
+
 -- جلسات: A بكلمة مرور قبل دقيقتين، وA بكلمة مرور قبل 11 دقيقة، وB حديثة، وM.
 insert into auth.sessions (id, user_id, created_at, updated_at, aal) values
   ('5e550000-0000-4000-8000-0000000000a1', 'aaaaaaaa-0000-4000-8000-00000000000a', now(), now(), 'aal1'),

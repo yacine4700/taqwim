@@ -10,7 +10,9 @@ import {
   classifyFailure,
   enqueue,
   isPermanent,
+  mayFailSilently,
   newOp,
+  writesBlocked,
   opFingerprint,
 } from "../src/lib/outbox.ts";
 
@@ -92,6 +94,28 @@ t("الدمج يُبقي المعرّف", q2[0].id, q1[0].id);
 t("تعديل بعد التصدير → الخروج ممنوع حتى يُصدَّر من جديد", canSignOut(q2, exported), false);
 t("عملية جديدة بعد التصدير → الخروج ممنوع", canSignOut([...q1, rec(S2, { part: 1 })], exported), false);
 t("عملية وصلت الخادم بعد التصدير → الخروج مسموح", canSignOut([q1[1]], exported), true);
+
+// — حساب مجمَّد (مهلة حذف أو إيقاف): لا تعثّر ولا محاولة تُحسب، والطابور يتوقّف
+{
+  const op = rec(S1, { part: 2 });
+  const out = afterFailure({ ...op, tries: 2 }, "frozen", "مجمَّد", 1000);
+  t("مجمَّد: لا تُعلَّم متعثّرة", out.op.blocked, false);
+  t("مجمَّد: لا تُحسب محاولة", out.op.tries, 2);
+  t("مجمَّد: لا تأخير قبل الإرسال بعد الإلغاء", out.op.nextTry, op.nextTry);
+  t("مجمَّد: تتوقّف الجولة", out.stop, true);
+  t("مجمَّد: لا يُطلب دخول", out.needsLogin, false);
+  t("مجمَّد: المحتوى لم يتغيّر (فلا تكرار ولا ضياع)", opFingerprint(out.op), opFingerprint(op));
+}
+t("حذف محاولة قراءة قد يضيع بصمت", mayFailSilently(newOp("reading-del", { reading_id: "r1" })), true);
+t("مسح علامة حصة قد يضيع بصمت", mayFailSilently(newOp("tp-mark", { session_id: "s", student_id: S1, score: null, absent: false })), true);
+t("تعديل التلميذ قد يضيع بصمت", mayFailSilently(newOp("student", { student_id: S1, patch: { note: "x" } })), true);
+t("علامة حصة ليست حذفًا", mayFailSilently(newOp("tp-mark", { session_id: "s", student_id: S1, score: 12, absent: false })), false);
+t("غياب ليس حذفًا", mayFailSilently(newOp("tp-mark", { session_id: "s", student_id: S1, score: null, absent: true })), false);
+t("علامات الفصل upsert: الرفض صريح", mayFailSilently(rec(S1, { part: 1 })), false);
+t("الحالة: مجمَّد", writesBlocked({ purge_after: "x", writes_blocked: true }), true);
+t("الحالة: غير مجمَّد", writesBlocked({ purge_after: null, writes_blocked: false }), false);
+t("الحالة: ردّ قديم بلا الحقل", writesBlocked({ purge_after: null }), false);
+t("الحالة: لا ردّ", writesBlocked(null), false);
 
 console.log(`\n${passed} ok, ${failed} failed`);
 if (failed) process.exit(1);

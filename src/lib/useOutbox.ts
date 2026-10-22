@@ -18,7 +18,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { createClient } from "@/lib/supabase/client";
 import { kvGet, kvSet } from "@/lib/localdb";
-import { afterFailure, classifyFailure, enqueue, type Op } from "@/lib/outbox";
+import { afterFailure, classifyFailure, enqueue, mayFailSilently, writesBlocked, type Op } from "@/lib/outbox";
 
 type Supabase = ReturnType<typeof createClient>;
 
@@ -56,6 +56,8 @@ export type Outbox = {
    * ولم تُعلَّم متعثّرة، وتُرسل وحدها بعد الدخول من جديد.
    */
   needsLogin: boolean;
+  /** الحساب مجدول للحذف أو موقوف: لا يُرسل شيء حتى يُلغى ذلك، ولا يضيع شيء. */
+  frozen: boolean;
   push: (op: Op) => void;
   flush: () => void;
   retry: (id: string) => void;
@@ -74,6 +76,8 @@ export function useOutbox(
   const [sending, setSending] = useState(false);
   const [lastSyncedAt, setLastSyncedAt] = useState<number | null>(null);
   const [needsLogin, setNeedsLogin] = useState(false);
+  /** الحساب مجدول للحذف أو موقوف: الطابور محفوظ ومتوقّف حتى يُلغى ذلك. */
+  const [frozen, setFrozen] = useState(false);
 
   const queueRef = useRef<Op[]>([]);
   const flushingRef = useRef(false);
@@ -241,6 +245,21 @@ export function useOutbox(
     }
   }, [supabase, teacherId]);
 
+  /**
+   * هل الكتابة ممنوعة على هذا الحساب الآن (مهلة حذف أو إيقاف)؟ "network" إن
+   * تعذّر السؤال: لا يُرسل ما قد يضيع بصمت حتى تُعرف الحالة. والدالة غير
+   * موجودة (قبل الترحيل) تعني أنه لا تجميد أصلًا.
+   */
+  const accountState = useCallback(async (): Promise<"ok" | "frozen" | "network"> => {
+    try {
+      const { data, error } = await supabase.rpc("my_account_status");
+      if (error) return error.code === "PGRST202" ? "ok" : "network";
+      return writesBlocked(data) ? "frozen" : "ok";
+    } catch {
+      return "network";
+    }
+  }, [supabase]);
+
   const flush = useCallback(() => {
     void (async () => {
       if (flushingRef.current || !readyRef.current) return;
@@ -260,6 +279,15 @@ export function useOutbox(
         setNeedsLogin(false);
 
         const round = queueRef.current.filter((op) => !op.blocked);
+        if (round.some(mayFailSilently)) {
+          const state = await accountState();
+          if (state === "network") return;
+          if (state === "frozen") {
+            setFrozen(true);
+            return;
+          }
+          setFrozen(false);
+        }
         for (const queued of round) {
           const live = queueRef.current.find((op) => op.id === queued.id);
           if (!live || live.blocked || live.nextTry > Date.now()) continue;
@@ -269,13 +297,14 @@ export function useOutbox(
           inFlightRef.current = null;
 
           if (result.ok) {
+            setFrozen(false);
             // تُنقل إلى نسخة الخادم ثم تخرج من الطابور، فلا ترتجف الشاشة.
             appliedRef.current(live);
             setQ((q) => q.filter((op) => op.id !== live.id));
             continue;
           }
 
-          const kind =
+          let kind =
             result.kind ??
             classifyFailure({
               code: result.code,
@@ -283,8 +312,19 @@ export function useOutbox(
               thrown: result.thrown,
               hasSession: true,
             });
+          // 42501 والجلسة سليمة: رفضٌ للعملية، أو حساب مجمَّد؟ يُسأل الخادم.
+          if (kind === "rejected" && result.code === "42501") {
+            const state = await accountState();
+            if (state === "frozen") kind = "frozen";
+            else if (state === "network") kind = "network";
+          }
+          if (kind === "frozen") setFrozen(true);
           const message =
-            kind === "auth" ? "انتهت الجلسة: تُرسل بعد الدخول من جديد" : result.message;
+            kind === "auth"
+              ? "انتهت الجلسة: تُرسل بعد الدخول من جديد"
+              : kind === "frozen"
+                ? "الحساب مجدول للحذف أو موقوف: تُرسل بعد الإلغاء"
+                : result.message;
           let outcome: ReturnType<typeof afterFailure> | null = null;
           setQ((q) =>
             q.map((op) => {
@@ -304,7 +344,7 @@ export function useOutbox(
         setSending(false);
       }
     })();
-  }, [send, sessionState, setQ]);
+  }, [send, sessionState, accountState, setQ]);
 
   const push = useCallback(
     (op: Op) => {
@@ -399,6 +439,7 @@ export function useOutbox(
     sending,
     lastSyncedAt,
     needsLogin,
+    frozen,
     push,
     flush,
     retry,

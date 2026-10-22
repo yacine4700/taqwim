@@ -6,7 +6,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 MIG="$ROOT/supabase/migrations/20261022130000_admin_and_deletion_grace.sql"
 DOWN="$ROOT/supabase/rollback/20261022130000_admin_and_deletion_grace.down.sql"
 T="$ROOT/supabase/tests"
-BIN="$(ls -d /usr/lib/postgresql/*/bin | sort -V | tail -1)"
+BIN="${PG_BIN:-$(ls -d /usr/lib/postgresql/*/bin | sort -V | tail -1)}"
 DIR="$(mktemp -d)"; chmod 755 "$DIR"; chown postgres "$DIR"
 PORT=55432
 cleanup() { su postgres -c "$BIN/pg_ctl -s -D $DIR/data stop -m fast" >/dev/null 2>&1 || true; rm -rf "$DIR"; }

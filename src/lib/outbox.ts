@@ -353,10 +353,15 @@ export function isPermanent(code: string | null | undefined): boolean {
  * - "rejected": رفضٌ حقيقي والجلسة سليمة (قيد، أو صلاحية على صف ليس له).
  *   تُعلَّم متعثّرة ويقرّر فيها الأستاذ.
  *
+ * - "frozen": الحساب مجدول للحذف أو موقوف، فالقاعدة تمنع كل كتابة (سياسات
+ *   guard_*). لا ذنب للعملية: تبقى كما هي بلا محاولة تُحسب، ويتوقّف الطابور حتى
+ *   يُلغى الحذف أو يُرفع الإيقاف. لا يستنتجه classifyFailure من الرمز وحده:
+ *   useOutbox يسأل الخادم (my_account_status) عند 42501.
+ *
  * والفرق بين الثانية والثالثة في رمز 42501 (منعته RLS) هو وجود الجلسة: بلا
  * جلسة يُرسَل الطلب بدور anon فتمنعه RLS، وليس ذلك رفضًا للعلامة نفسها.
  */
-export type FailureKind = "network" | "auth" | "rejected";
+export type FailureKind = "network" | "auth" | "rejected" | "frozen";
 
 export function classifyFailure(failure: {
   code?: string | null;
@@ -389,6 +394,10 @@ export function afterFailure(
   if (kind === "auth") {
     // لا محاولة تُحسب ولا تأخير: تُرسل فور عودة الجلسة
     return { op: { ...op, error: message }, stop: true, needsLogin: true };
+  }
+  if (kind === "frozen") {
+    // كالجلسة المنتهية: لا تُعلَّم متعثّرة ولا تُحسب محاولة، وتُرسل بعد الإلغاء.
+    return { op: { ...op, error: message }, stop: true, needsLogin: false };
   }
   if (kind === "rejected") {
     return {
@@ -465,4 +474,23 @@ export function newOp<T extends Op["kind"]>(
     nextTry: 0,
     ...rest,
   } as Extract<Op, { kind: T }>;
+}
+
+/**
+ * عمليات قد «تنجح» على صفر صفوف حين تمنعها RLS: الحذف (محاولة قراءة، مسح علامة
+ * حصة) وتعديل بيانات التلميذ. لا يُرجع الخادم فيها خطأً، فلو أُرسلت والحساب
+ * مجمَّد (مجدول للحذف أو موقوف) لخرج الحذف من الطابور ولم يُحذف شيء، ولعُلِّم
+ * التعديل متعثّرًا. فقبل إرسال جولة فيها واحدة منها يُسأل الخادم عن الحساب.
+ * أما الإضافة والتحديث بـ upsert فترفضهما القاعدة بخطأ صريح (42501).
+ */
+export function mayFailSilently(op: Op): boolean {
+  if (op.kind === "reading-del" || op.kind === "student") return true;
+  if (op.kind === "tp-mark") return op.score === null && !op.absent;
+  return false;
+}
+
+/** ردّ my_account_status: هل الكتابة ممنوعة على هذا الحساب الآن؟ */
+export function writesBlocked(status: unknown): boolean {
+  if (!status || typeof status !== "object") return false;
+  return (status as Record<string, unknown>).writes_blocked === true;
 }

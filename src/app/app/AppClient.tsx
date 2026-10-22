@@ -1242,6 +1242,7 @@ export default function AppClient({
             online={outbox.online}
             sending={outbox.sending}
             needsLogin={outbox.needsLogin}
+            frozen={outbox.frozen}
             label={pendingLabel(queue)}
             onClick={() => setShowPending(true)}
           />
@@ -1586,6 +1587,7 @@ export default function AppClient({
           sending={outbox.sending}
           lastSyncedAt={outbox.lastSyncedAt}
           needsLogin={outbox.needsLogin}
+            frozen={outbox.frozen}
           nameOf={(id) => students.find((s) => s.id === id)?.full_name ?? "تلميذ محذوف"}
           onClose={() => setShowPending(false)}
           onFlush={outbox.flush}

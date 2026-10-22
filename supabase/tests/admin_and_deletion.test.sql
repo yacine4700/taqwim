@@ -85,6 +85,7 @@ select tests.claims(:B, :sB);
 set role authenticated;
 select tests.ok('B الموقوف لا يقرأ شيئًا بتوكنه القديم', (select count(*) from public.students) + (select count(*) from public.teachers) = 0);
 select tests.fails('B الموقوف لا يضيف', $$insert into public.schools (teacher_id, name) values ('bbbbbbbb-0000-4000-8000-00000000000b', 'x')$$, '42501');
+select tests.ok('B الموقوف: my_account_status يقول writes_blocked', (public.my_account_status() ->> 'writes_blocked')::boolean);
 select tests.ok('B الموقوف لا يعدّل (0 صفوف)',
   tests.val($$with u as (update public.records set devoir = 0 returning 1) select count(*) from u$$) = '0');
 reset role;
@@ -152,6 +153,14 @@ select public.request_account_deletion();
 reset role;
 select tests.ok('تكرار الطلب لا يغيّر الموعد', (select purge_after::text from private.deletion_requests where user_id = :A) = :'due1');
 
+-- الطابور خلال المهلة: لماذا يسأل التطبيق قبل إرسال الحذف، وأن الإعادة بعد الإلغاء لا تكرّر.
+set role authenticated;
+select tests.ok('my_account_status: writes_blocked خلال المهلة', (public.my_account_status() ->> 'writes_blocked')::boolean);
+select tests.ok('حذف محاولة قراءة خلال المهلة: «ينجح» على صفر صفوف بلا خطأ (فلا يُرسل والحساب مجمَّد)',
+  tests.val($$with d as (delete from public.readings where id = (select id from public.readings limit 1) returning 1) select count(*) from d$$) = '0');
+select tests.fails('upsert محاولة قراءة خلال المهلة: رفض صريح 42501',
+  $$insert into public.readings (id, teacher_id, student_id, term, score) select '7e570000-0000-4000-8000-000000000001', teacher_id, id, 1, 3 from public.students limit 1 on conflict (id) do update set score = excluded.score$$, '42501');
+reset role;
 -- الإلغاء من الأستاذ.
 set role authenticated;
 select tests.ok('A يلغي الطلب', public.cancel_account_deletion());
@@ -160,6 +169,16 @@ select tests.ok('بعد الإلغاء: الكتابة تعود',
 reset role;
 select tests.ok('بعد الإلغاء: بيانات A كما كانت حرفًا بحرف', tests.fp(:A) = :'fp_a0');
 
+select tests.ok('بعد الإلغاء: writes_blocked = false', not (public.my_account_status() ->> 'writes_blocked')::boolean);
+-- العملية المحفوظة في الطابور تُرسل بعد الإلغاء مرتين (إعادة بعد ردّ ضائع): صفّ واحد.
+select tests.val($$insert into public.readings (id, teacher_id, student_id, term, score) select '7e570000-0000-4000-8000-000000000001', teacher_id, id, 1, 3 from public.students order by id limit 1 on conflict (id) do update set score = excluded.score returning 1$$);
+select tests.val($$insert into public.readings (id, teacher_id, student_id, term, score) select '7e570000-0000-4000-8000-000000000001', teacher_id, id, 1, 3 from public.students order by id limit 1 on conflict (id) do update set score = excluded.score returning 1$$);
+select tests.ok('بعد الإلغاء: المحاولة المؤجّلة سُجّلت مرة واحدة', (select count(*) from public.readings where id = '7e570000-0000-4000-8000-000000000001') = 1);
+delete from public.readings where id = '7e570000-0000-4000-8000-000000000001';
+reset role;
+select tests.fp(:A) as fp_a0 \gset
+select tests.claims(:A, :sA);
+set role authenticated;
 -- الإلغاء من المشرف.
 select tests.claims(:A, :sA);
 set role authenticated;

@@ -223,9 +223,12 @@ stable
 security definer
 set search_path = ''
 as $$
+  -- writes_blocked: يسأل عنه طابور التطبيق قبل إرسال حذف، لأن RLS لا تُرجع خطأً
+  -- على الحذف الممنوع بل صفر صفوف، فيضيع الحذف بصمت لو أُرسل.
   select jsonb_build_object(
     'deletion_requested_at', d.requested_at,
-    'purge_after', d.purge_after)
+    'purge_after', d.purge_after,
+    'writes_blocked', private.write_blocked())
   from (select (select auth.uid()) as uid) me
   left join private.deletion_requests d on d.user_id = me.uid
   where me.uid is not null;
