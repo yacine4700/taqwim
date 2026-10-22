@@ -26,6 +26,26 @@ echo "== الترحيل (بدور postgres، كما في الإنتاج)"
 as postgres --single-transaction -f "$MIG"
 as supabase_admin -f "$T/admin_and_deletion.test.sql"
 
+echo "== سباق الإلغاء والحذف النهائي (جلستان متزامنتان)"
+R=dddddddd-0000-4000-8000-00000000000d
+as supabase_admin -At -c "insert into auth.users (id, email, aud, role) values ('$R', 'race@x.dz', 'authenticated', 'authenticated');
+  insert into private.deletion_requests (user_id, requested_at, purge_after) values ('$R', now() - interval '8 days', now() - interval '1 day');" >/dev/null
+# الإلغاء يبدأ أولًا ولم يُثبَّت بعد، ثم يبدأ الحذف الليلي: يجب أن ينتظر ثم لا يحذف شيئًا.
+as supabase_admin -At -c "begin; delete from private.deletion_requests where user_id = '$R'; select pg_sleep(3); commit;" >/dev/null &
+cancel_pid=$!
+sleep 1
+start=$(date +%s.%N)
+purged=$(as supabase_admin -At -c "set role taqwim_purger; select private.purge_deleted_accounts();")
+elapsed=$(echo "$(date +%s.%N) - $start" | bc)
+wait $cancel_pid
+alive=$(as supabase_admin -At -c "select count(*) from auth.users where id = '$R'")
+if [ "$purged" = "0" ] && [ "$alive" = "1" ] && [ "$(echo "$elapsed > 1.5" | bc)" = "1" ]; then
+  echo "ok  إلغاء سبق الحذف الليلي: انتظر الحذفُ ثم لم يحذف الحساب (حُذف $purged، انتظر ${elapsed%.*} ث)"
+else
+  echo "FAIL: سباق الإلغاء — حُذف $purged، الحساب باقٍ=$alive، الانتظار=$elapsed"; exit 1
+fi
+as supabase_admin -At -c "delete from auth.users where id = '$R'" >/dev/null
+
 echo "== التراجع"
 as supabase_admin -At -c "insert into private.deletion_requests (user_id, purge_after) values ('bbbbbbbb-0000-4000-8000-00000000000b', now() + interval '7 days')"
 if as postgres --single-transaction -f "$DOWN" 2>"$DIR/down.err"; then

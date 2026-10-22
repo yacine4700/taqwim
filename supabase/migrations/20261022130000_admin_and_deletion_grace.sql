@@ -361,10 +361,16 @@ declare
   due uuid[];
   n integer;
 begin
-  select coalesce(array_agg(d.user_id order by d.purge_after), '{}')
+  -- for update: إلغاء يصل أثناء التشغيل ينتظر حتى ينتهي، وإلغاء سبقه لا يُرى هنا.
+  -- بدون القفل كان يمكن أن يُلغي الأستاذ طلبه بين القراءة والحذف فيُحذف حسابه رغم الإلغاء.
+  select coalesce(array_agg(s.user_id order by s.purge_after), '{}')
     into due
-  from private.deletion_requests d
-  where d.purge_after <= now();
+  from (
+    select d.user_id, d.purge_after
+    from private.deletion_requests d
+    where d.purge_after <= now()
+    for update
+  ) s;
 
   n := cardinality(due);
   if n = 0 then
