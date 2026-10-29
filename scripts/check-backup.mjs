@@ -13,6 +13,7 @@ import {
   conflictCount,
   currentState,
   deriveId,
+  importOwner,
   parseBackup,
   planImport,
   planSize,
@@ -150,6 +151,12 @@ class Server {
           else s.t[table].push(row);
         }
       },
+      async remove(table, match) {
+        s.tick();
+        const rows = s.own(table, uid).filter((r) => Object.entries(match).every(([k, v]) => r[k] === v));
+        if (!rows.length) throw new Error("لم يُحذف شيء في الخادم");
+        s.t[table] = s.t[table].filter((r) => !rows.includes(r));
+      },
       async update(table, match, patch) {
         s.tick();
         const rows = s.own(table, uid).filter((r) => Object.entries(match).every(([k, v]) => r[k] === v));
@@ -268,6 +275,13 @@ const countsABefore = server.count(A);
 const stateB = await currentState(dbB, B);
 const planB = await planImport(parsed.backup, stateB);
 t("الملف من حساب آخر يُعلَّم", planB.foreign, true);
+// حاجز البريد: حسابٌ أُعيد إنشاؤه ببريد صاحب الملف يمرّ، وغيره لا يمرّ بلا كتابة بريد الملف
+t("حساب أُعيد إنشاؤه بالبريد نفسه", importOwner(parsed.backup, { teacherId: B, email: backupA.teacher.email }), "recreated");
+t("البريد نفسه مع اختلاف الحالة والمسافات", importOwner(parsed.backup, { teacherId: B, email: `  ${backupA.teacher.email.toUpperCase()} ` }), "recreated");
+t("الحساب نفسه", importOwner(parsed.backup, { teacherId: A, email: "x@y.z" }), "same");
+t("بريد مختلف = شخص آخر", importOwner(parsed.backup, { teacherId: B, email: "other@test.invalid" }), "other");
+t("لا بريد في الملف = شخص آخر", importOwner({ ...parsed.backup, teacher: { ...parsed.backup.teacher, email: "" } }, { teacherId: B, email: "" }), "other");
+t("بريد الحساب الحالي فارغ لا يطابق ملفًا بلا بريد", importOwner({ ...parsed.backup, teacher: { ...parsed.backup.teacher, email: "" } }, { teacherId: B, email: "" }), "other");
 t("كل الصفوف جديدة على الحساب", [planB.insert.classes.length, planB.insert.students.length, planB.insert.records.length, planB.insert.tp_marks.length], [2, 12, 20, 8]);
 t("المعيار الجديد يُضاف، والمختلف تعارضٌ لا يُكتب فوقه", [planB.insert.criteria.map((c) => c.code), planB.conflicts.criteria.map((c) => c.key)], [["oral"], ["part"]]);
 t("مركّبتان مختلفتان تعارض", planB.conflicts.components.map((c) => c.key).sort(), ["devoir", "exam"]);
@@ -360,6 +374,41 @@ const rest = await applyImport(dbC, planC2, C, noReplace);
 t("الإكمال نجح", rest.ok, true);
 t("بلا تكرار بعد الإكمال", server.count(C).students, 12);
 t("التحقّق بعد الإكمال", (await verifyImport(dbC, planC2, noReplace)).ok, true);
+
+/* ---------- معيار حذفه الأستاذ: لا يعود مع الحساب الجديد ---------- */
+
+console.log("— معيار محذوف في الحساب السابق");
+const noTool = structuredClone(parsed.backup);
+noTool.data.criteria = noTool.data.criteria.filter((c) => c.code !== "tool");
+const XD = server.signUp();
+const dbX = server.db(XD);
+const planX = await planImport(noTool, await currentState(dbX, XD));
+t("المعيار الزائد في الحساب الجديد يُرصد", planX.conflicts.extra_criteria.map((c) => c.key), ["tool"]);
+t("ويُحسب في اختلاف الإعدادات", conflictCount(planX).settings >= 1, true);
+const noReplaceX = { replaceSettings: false, replaceMarks: false };
+t("بلا موافقة لا يُحذف", [(await applyImport(dbX, planX, XD, noReplaceX)).ok, server.own("criteria", XD).some((c) => c.code === "tool")], [true, true]);
+const planX2 = await planImport(noTool, await currentState(dbX, XD));
+const replaceX = { replaceSettings: true, replaceMarks: false };
+const resX = await applyImport(dbX, planX2, XD, replaceX);
+t("بموافقة صريحة يُحذف", [resX.ok, server.own("criteria", XD).some((c) => c.code === "tool")], [true, false]);
+t("والتحقّق يشهد بذلك", (await verifyImport(dbX, planX2, replaceX)).ok, true);
+const planX3 = await planImport(noTool, await currentState(dbX, XD));
+t("ولا شيء بعده", [planX3.conflicts.extra_criteria.length, planSize(planX3)], [0, 0]);
+const xAvg = averagesOf((await readAccount(dbX)).data);
+const aAvg = averagesOf(noTool.data);
+const same = [...aAvg.keys()].every((k) => {
+  const [old, term] = k.split(":");
+  const mapped = planX2.idMap.get(old);
+  return JSON.stringify(xAvg.get(`${mapped}:${term}`)?.avg) === JSON.stringify(aAvg.get(k).avg);
+});
+t("معدّلات الحساب الجديد = معدّلات الملف بعد حذف المعيار", same, true);
+// الحساب نفسه (استيراد ملف أقدم): المعيار الذي أضافه الأستاذ بعد الملف لا يُحذف
+const sameAcct = await planImport(noTool, await currentState(dbA, A));
+t("استيراد في الحساب نفسه لا يحذف شيئًا", sameAcct.conflicts.extra_criteria, []);
+// ملف بلا معايير لا يُفرغ حساب أحد
+const emptyCrit = structuredClone(parsed.backup);
+emptyCrit.data.criteria = [];
+t("ملف بلا معايير لا يحذف معايير الحساب", (await planImport(emptyCrit, await currentState(server.db(server.signUp()), XD))).conflicts.extra_criteria, []);
 
 /* ---------- العزل ---------- */
 

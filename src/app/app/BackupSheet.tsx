@@ -8,6 +8,8 @@ import {
   backupFileName,
   backupSheets,
   conflictCount,
+  importOwner,
+  normEmail,
   currentState,
   parseBackup,
   planImport,
@@ -94,10 +96,12 @@ export function canShareFiles(): boolean {
  * الطابور على الصف نفسه. ولا يكتب شيئًا قبل أن يرى الأستاذ ما سيحدث ويوافق.
  */
 export function BackupSheet({
-  supabase, teacherId, online, queue, makeBackup, onExported, onImported, onReplay, onClose,
+  supabase, teacherId, email, online, queue, makeBackup, onExported, onImported, onReplay, onClose,
 }: {
   supabase: Supabase;
   teacherId: string;
+  /** بريد الحساب الحالي: يُقارَن ببريد صاحب الملف. */
+  email: string;
   online: boolean;
   queue: Op[];
   /** نسخة الآن: من الخادم إن أمكن، وإلا من الجهاز. */
@@ -115,7 +119,7 @@ export function BackupSheet({
 
   const [file, setFile] = useState<Backup | null>(null);
   const [plan, setPlan] = useState<ImportPlan | null>(null);
-  const [foreignOk, setForeignOk] = useState(false);
+  const [typedEmail, setTypedEmail] = useState("");
   const [options, setOptions] = useState<ImportOptions>({ replaceSettings: false, replaceMarks: false });
   const [replay, setReplay] = useState(false);
   const [done, setDone] = useState<{ ok: boolean; text: string; problems: string[] } | null>(null);
@@ -160,7 +164,7 @@ export function BackupSheet({
     setPlan(null);
     setDone(null);
     setMessage(null);
-    setForeignOk(false);
+    setTypedEmail("");
     setReplay(false);
     setOptions({ replaceSettings: false, replaceMarks: false });
     setBusy("قراءة الملف…");
@@ -212,7 +216,7 @@ export function BackupSheet({
       }
       setBusy("التحقّق مما كُتب…");
       const check = await verifyImport(db, plan, options);
-      const toReplay = replay && !plan.foreign ? plan.pending : [];
+      const toReplay = replay && owner !== "other" ? plan.pending : [];
       if (toReplay.length) onReplay(toReplay);
       setDone({
         ok: check.ok,
@@ -234,8 +238,12 @@ export function BackupSheet({
   const conflicts = plan ? conflictCount(plan) : null;
   const size = plan ? planSize(plan) : 0;
   const blockedByQueue = queue.length > 0;
+  const owner = file ? importOwner(file, { teacherId, email }) : "same";
+  // ملف شخص آخر: لا يمضي إلا إن كتب المستخدم بريد الملف بنفسه (لا مربع اختيار يُنقر دون قراءة).
+  const fileEmail = normEmail(file?.teacher.email);
+  const otherConfirmed = owner !== "other" || (fileEmail !== "" && normEmail(typedEmail) === fileEmail);
   const canRun =
-    !!plan && !busy && online && !blockedByQueue && (!plan.foreign || foreignOk) &&
+    !!plan && !busy && online && !blockedByQueue && otherConfirmed &&
     (size > 0 || options.replaceSettings || options.replaceMarks || (replay && plan.pending.length > 0));
 
   return (
@@ -352,20 +360,38 @@ export function BackupSheet({
 
             {plan && (
               <>
-                {plan.foreign && (
+                {owner === "recreated" && (
+                  <div className="note" style={{ marginTop: 12 }}>
+                    الملف من حسابك السابق (بريده <bdi dir="ltr">{file?.teacher.email}</bdi> مطابق لبريدك). الحساب أُعيد
+                    إنشاؤه بمعرّف جديد، فتُنسب الصفوف إلى حسابك الحالي.
+                  </div>
+                )}
+                {owner === "other" && (
                   <div className="note warn" style={{ marginTop: 12 }}>
-                    هذا الملف من حساب آخر
-                    {file?.teacher.email ? (
+                    هذا الملف ليس من حسابك: بريده
+                    {fileEmail ? (
                       <>
-                        {" "}(<bdi dir="ltr">{file.teacher.email}</bdi>)
+                        {" "}<bdi dir="ltr">{file?.teacher.email}</bdi>
                       </>
-                    ) : null}
-                    .
-                    ما فيه سيُضاف إلى حسابك أنت، باسمك، ولا يُمسّ ذلك الحساب.
-                    <label style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8 }}>
-                      <input type="checkbox" checked={foreignOk} onChange={(e) => setForeignOk(e.target.checked)} />
-                      فهمت، أضفه إلى حسابي
-                    </label>
+                    ) : (
+                      " غير مذكور فيه"
+                    )}
+                    ، وبريدك <bdi dir="ltr">{email}</bdi>. ما فيه سيُضاف إلى حسابك أنت، باسمك، ولا يُمسّ ذلك الحساب.
+                    {fileEmail ? (
+                      <label style={{ display: "block", marginTop: 8 }}>
+                        إن كنت تقصد ذلك فعلًا فاكتب بريد الملف هنا للمتابعة:
+                        <input
+                          type="email"
+                          dir="ltr"
+                          value={typedEmail}
+                          onChange={(e) => setTypedEmail(e.target.value)}
+                          autoComplete="off"
+                          style={{ display: "block", width: "100%", marginTop: 6 }}
+                        />
+                      </label>
+                    ) : (
+                      " لا يمكن استيراده لأن صاحبه غير معروف."
+                    )}
                   </div>
                 )}
 
@@ -395,8 +421,9 @@ export function BackupSheet({
                 {conflicts && conflicts.settings > 0 && (
                   <div className="note warn" style={{ marginTop: 12 }}>
                     {conflicts.settings} من المعايير والمركّبات في حسابك تختلف عن الملف (
-                    {[...plan.conflicts.criteria, ...plan.conflicts.components].map((c) => c.label).join("، ")}).
+                    {[...plan.conflicts.criteria, ...plan.conflicts.extra_criteria, ...plan.conflicts.components].map((c) => c.label).join("، ")}).
                     تُترك كما هي ما لم تختر غير ذلك. استبدالها يغيّر حساب كل العلامات الحالية.
+                    {plan.conflicts.extra_criteria.length > 0 && " المعايير التي ليست في الملف تُحذف من حسابك عند الاستبدال، فهي ما حذفتَه من حسابك السابق."}
                     <label style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8 }}>
                       <input
                         type="checkbox"
@@ -428,13 +455,13 @@ export function BackupSheet({
                   <div className="note" style={{ marginTop: 12 }}>
                     في الملف {plan.pending.length + plan.pendingOrphans} عملية لم تصل الخادم يوم صُدِّر.
                     {plan.pendingOrphans > 0 && ` ${plan.pendingOrphans} منها لتلاميذ ليسوا في الملف ولا في حسابك، فتُترك.`}
-                    {plan.pending.length > 0 && !plan.foreign && (
+                    {plan.pending.length > 0 && owner !== "other" && (
                       <label style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8 }}>
                         <input type="checkbox" checked={replay} onChange={(e) => setReplay(e.target.checked)} />
                         أعد إرسال {plan.pending.length} منها (تحلّ محلّ قيم أولئك التلاميذ في الخادم)
                       </label>
                     )}
-                    {plan.pending.length > 0 && plan.foreign && " عمليات حساب آخر لا تُعاد في حسابك."}
+                    {plan.pending.length > 0 && owner === "other" && " عمليات حساب آخر لا تُعاد في حسابك."}
                   </div>
                 )}
 

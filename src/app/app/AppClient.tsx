@@ -1598,6 +1598,7 @@ export default function AppClient({
         <BackupSheet
           supabase={supabase}
           teacherId={teacherId}
+          email={email}
           online={outbox.online}
           queue={queue}
           makeBackup={makeBackup}

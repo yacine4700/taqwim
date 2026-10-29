@@ -549,6 +549,12 @@ export type ImportPlan = {
   kept: Record<"schools" | "classes" | "class_groups" | "students" | "readings" | "tp_sessions" | "criteria" | "components" | "records" | "tp_marks", number>;
   conflicts: {
     criteria: Conflict<BCriterion>[];
+    /**
+     * معايير في الحساب وليست في الملف، وتُسجَّل فقط حين يكون الملف من حساب آخر (حساب أُعيد إنشاؤه):
+     * المعيار الذي حذفه الأستاذ يعود مع كل حساب جديد بقيمه الافتراضية، فيغيّر مقام التقويم المستمر
+     * ومعه كل معدّل. لا يُحذف إلا مع موافقة «استبدال الإعدادات».
+     */
+    extra_criteria: Array<{ key: string; label: string; id: string }>;
     components: Conflict<BComponent>[];
     records: Conflict<BRecord>[];
     tp_marks: Conflict<BTpMark>[];
@@ -597,6 +603,25 @@ function allIds(backup: Backup): string[] {
     if (op.kind === "tp-session") out.add(op.session.id);
   }
   return [...out];
+}
+
+/** البريد للمقارنة: بلا مسافات ولا فرق حالة أحرف. */
+export const normEmail = (v: string | null | undefined): string => (v ?? "").trim().toLowerCase();
+
+/**
+ * صاحب الملف قياسًا إلى الحساب الذي يستورد الآن:
+ *   same     — المعرّف نفسه: ملف هذا الحساب.
+ *   recreated — معرّف مختلف وبريد مطابق: الحساب أُعيد إنشاؤه (بعد ضياع المشروع)،
+ *              وهذا بالذات ما يحدث في الاستعادة من الصفر. يُسمح دون تحذير مخيف.
+ *   other    — معرّف وبريد مختلفان، أو لا بريد في الملف: ملف شخص آخر، أو لا دليل
+ *              على صاحبه. لا يُستورد إلا بعد أن يكتب المستخدم بريد الملف بنفسه.
+ * التحقق على الواجهة بين الأستاذ وملفّه؛ الحاجز الحقيقي للبيانات يبقى RLS.
+ */
+export type ImportOwner = "same" | "recreated" | "other";
+export function importOwner(backup: Backup, current: { teacherId: string; email: string }): ImportOwner {
+  if (backup.teacher.id === current.teacherId) return "same";
+  const mine = normEmail(current.email);
+  return mine !== "" && mine === normEmail(backup.teacher.email) ? "recreated" : "other";
 }
 
 export async function planImport(backup: Backup, current: CurrentState): Promise<ImportPlan> {
@@ -654,7 +679,7 @@ export async function planImport(backup: Backup, current: CurrentState): Promise
     group_id: mapOpt(r.group_id),
   }));
 
-  const conflicts: ImportPlan["conflicts"] = { criteria: [], components: [], records: [], tp_marks: [] };
+  const conflicts: ImportPlan["conflicts"] = { criteria: [], extra_criteria: [], components: [], records: [], tp_marks: [] };
 
   const curCriteria = new Map(cur.criteria.map((c) => [c.code, c]));
   insert.criteria = [];
@@ -663,6 +688,12 @@ export async function planImport(backup: Backup, current: CurrentState): Promise
     if (!have) insert.criteria.push(c);
     else if (sameCriterion(have, c)) kept.criteria++;
     else conflicts.criteria.push({ key: c.code, label: have.label, current: have, incoming: c, id: have.id });
+  }
+  if (backup.teacher.id !== current.teacherId && d.criteria.length > 0) {
+    const inFile = new Set(d.criteria.map((c) => c.code));
+    for (const c of cur.criteria) {
+      if (!inFile.has(c.code)) conflicts.extra_criteria.push({ key: c.code, label: c.label, id: c.id });
+    }
   }
   const curComponents = new Map(cur.components.map((c) => [c.code, c]));
   insert.components = [];
@@ -803,7 +834,7 @@ export function planSize(plan: ImportPlan): number {
 
 export function conflictCount(plan: ImportPlan): { settings: number; marks: number } {
   return {
-    settings: plan.conflicts.criteria.length + plan.conflicts.components.length,
+    settings: plan.conflicts.criteria.length + plan.conflicts.extra_criteria.length + plan.conflicts.components.length,
     marks: plan.conflicts.records.length + plan.conflicts.tp_marks.length,
   };
 }
@@ -841,6 +872,8 @@ export type Db = {
   insert(table: Table, rows: Loose[]): Promise<void>;
   upsert(table: Table, rows: Loose[], onConflict: string): Promise<void>;
   update(table: Table, match: Loose, patch: Loose): Promise<void>;
+  /** حذف صف بمعرّفه (للمعايير الزائدة وحدها). يرمي إن لم يُحذف شيء. */
+  remove(table: Table, match: Loose): Promise<void>;
 };
 
 export async function readAccount(db: Db): Promise<{ data: BackupData; profile: CurrentState["profile"]; criteria: CurrentState["data"]["criteria"]; components: CurrentState["data"]["components"] }> {
@@ -916,6 +949,10 @@ export async function applyImport(
         await db.update("criteria", { id: c.id }, { label, kind, base, ceiling });
         written++;
       }
+      for (const c of plan.conflicts.extra_criteria) {
+        await db.remove("criteria", { id: c.id });
+        written++;
+      }
       for (const c of plan.conflicts.components) {
         const { label, weight, active } = c.incoming;
         await db.update("components", { id: c.id }, { label, weight, active });
@@ -989,6 +1026,12 @@ export async function verifyImport(
     checked++;
     const got = crit.get(c.code);
     if (!got || !sameCriterion(got, c)) problems.push(`المعيار «${c.label}» لا يطابق الملف`);
+  }
+  if (options.replaceSettings) {
+    for (const c of plan.conflicts.extra_criteria) {
+      checked++;
+      if (crit.has(c.key)) problems.push(`المعيار «${c.label}» لم يُحذف وليس في الملف`);
+    }
   }
   const comp = index(d.components, (c) => c.code);
   const wantComponents = [

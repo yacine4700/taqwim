@@ -69,6 +69,13 @@ export function supabaseDb(supabase: Supabase): Db {
       if (error) throw new Error(error.message);
       if (!data || data.length === 0) throw new Error("لم يُعدَّل شيء في الخادم");
     },
+    async remove(table, match) {
+      let query = supabase.from(table).delete();
+      for (const [column, value] of Object.entries(match)) query = query.eq(column, value);
+      const { data, error } = await query.select("*");
+      if (error) throw new Error(error.message);
+      if (!data || data.length === 0) throw new Error("لم يُحذف شيء في الخادم");
+    },
   };
 }
 
