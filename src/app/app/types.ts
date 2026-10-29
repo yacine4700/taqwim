@@ -48,7 +48,7 @@ export const STATE_TAGS = [
   "يحتاج تشجيعًا",
 ];
 
-export type Tab = "classes" | "session" | "stats" | "docs" | "settings";
+export type Tab = "classes" | "stats" | "docs" | "settings";
 
 /**
  * بيانات الأستاذ كما تُطبع في رأس الكشف.

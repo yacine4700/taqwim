@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
+import { liveDraft, READING_COLUMN, toggleVolunteer, type ReadingDraft } from "@/lib/readingDraft";
 import { nameMatches } from "@/lib/names";
 import {
   bump,
@@ -20,11 +21,13 @@ import {
 import { Klass, Student } from "./types";
 import { state } from "./parts";
 import { MARK_HINT, readMark } from "./StudentSheet";
+import { ReadingPanel } from "./ReadingPanel";
 
 export function ClassView({
   klass, students, term, criteria, components, recordOf,
   averageOf, readingCount, stats, tp, onGroups,
   onBack, onPick, onDelete, onAddStudents, onCriterion, onMark,
+  column, onColumn, reading, readCount, onReadCount, draft, onDraft, onSaveReadings,
 }: {
   klass: Klass;
   students: Student[];
@@ -45,9 +48,22 @@ export function ClassView({
   onAddStudents: () => void;
   onCriterion: (studentId: string, code: string, value: number | null) => void;
   onMark: (studentId: string, field: MarkField, value: number | null) => void;
+  /**
+   * العمود المفتوح: `r:` القراءة، `c:` معيار، `m:` مركّبة. فارغ = جدول المعدلات.
+   * يعيش في AppClient لكل قسم: من خرج إلى تبويب آخر ورجع يجد عموده.
+   */
+  column: string | null;
+  onColumn: (column: string | null) => void;
+  /** معيار القراءة المحسوب تلقائيًا، إن أبقاه الأستاذ في معاييره. */
+  reading: Criterion | undefined;
+  readCount: number;
+  onReadCount: (n: number) => void;
+  /** قائمة القراءة غير المحفوظة لهذا القسم. */
+  draft: ReadingDraft<Student>;
+  onDraft: (next: ReadingDraft<Student>) => void;
+  onSaveReadings: (entries: Array<{ studentId: string; score: number }>) => Promise<boolean>;
 }) {
-  /** العمود المفتوح: `c:` معيار و`m:` مركّبة. فارغ = جدول المعدلات المعتاد. */
-  const [column, setColumn] = useState<string | null>(null);
+  const setColumn = onColumn;
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<"all" | "todo" | "low">("all");
   /** «حذف القسم» مطويّ: كان بجوار «+ تلميذ» بالحجم نفسه في أسفل كل قسم. */
@@ -59,14 +75,22 @@ export function ClassView({
     .sort((a, b) => (b.average ?? 0) - (a.average ?? 0));
   const rank = new Map(ranked.map((r, i) => [r.student.id, i + 1]));
 
-  // معيار القراءة لا يُنقَّط بيد: نقطته من محاولات الحصة.
+  /*
+   * القراءة أول الرقاقات: هي ما يُستعمل أمام القسم أكثر من غيره، والأستاذ
+   * يتنقّل في الحصة بينها وبين أعمدة التقويم المستمر. ومعيار القراءة نفسه لا
+   * يُنقَّط بيد: نقطته من المحاولات، فلا عمود له بين المعايير.
+   */
   const columns = [
+    { key: READING_COLUMN, label: "قراءة" },
     ...criteria.filter((c) => c.kind !== "auto").map((c) => ({ key: `c:${c.code}`, label: c.label })),
     ...components
       .filter((c) => c.code !== "cc" && c.active)
       .map((c) => ({ key: `m:${c.code}`, label: c.label })),
   ];
   const open = columns.find((c) => c.key === column) ?? null;
+  const isReading = open?.key === READING_COLUMN;
+  const live = liveDraft(draft, students);
+  const inDraft = new Set(live.picked.map((p) => p.id));
   const openCriterion = open?.key.startsWith("c:")
     ? criteria.find((c) => `c:${c.code}` === open.key) ?? null
     : null;
@@ -83,6 +107,7 @@ export function ClassView({
    * لم يُدخَل له شيء في هذا العمود، وفي الجدول العادي من لا علامة له أصلًا.
    */
   const waiting = (student: Student) => {
+    if (isReading) return readingCount(student.id) === 0;
     const record = recordOf(student.id);
     if (openCriterion) return typeof record?.criteria?.[openCriterion.code] !== "number";
     if (openMark) return record?.[openMark] === null || record?.[openMark] === undefined;
@@ -118,7 +143,9 @@ export function ClassView({
         <div>
           <h2>{klass.name}</h2>
           <p>
-            {open
+            {isReading
+              ? `الفصل ${term} · قراءة`
+              : open
               ? `الفصل ${term} · تنقّط عمود ${open.label}`
               : `الفصل ${term} · معدل القسم ${fmt(stats.mean)}`}
           </p>
@@ -150,7 +177,7 @@ export function ClassView({
 
       {/* الواجب يُصحَّح للقسم كله مرة واحدة، لا تلميذًا تلميذًا: يُختار العمود
           مرة ثم يُنزَل على الأسماء بعدّاد لكل سطر. */}
-      {students.length > 0 && columns.length > 0 && (
+      {students.length > 0 && (
         <div className="colbar">
           <span className="collab">عرض:</span>
           <div className="chips">
@@ -181,6 +208,19 @@ export function ClassView({
         </div>
       )}
 
+      {isReading && students.length > 0 && (
+        <ReadingPanel
+          students={students}
+          attemptsOf={readingCount}
+          reading={reading}
+          count={readCount}
+          onCount={onReadCount}
+          draft={live}
+          onDraft={onDraft}
+          onSave={onSaveReadings}
+        />
+      )}
+
       {/* عدّاد التقدّم وتصفيته في زرّ واحد: الرقم يقول أين وقفت، والضغط
           يُظهر الباقين وحدهم فلا يُبحث عنهم بالنظر في ستّة وثلاثين سطرًا. */}
       {students.length > 0 && (
@@ -194,7 +234,7 @@ export function ClassView({
               onClick={() => setFilter(filter === "todo" ? "all" : "todo")}
               disabled={todo === 0}
             >
-              {open ? "بلا إدخال" : "بلا علامة"} {todo}
+              {isReading ? "لم يقرأ بعد" : open ? "بلا إدخال" : "بلا علامة"} {todo}
             </button>
             {!open && (
               <button
@@ -209,7 +249,7 @@ export function ClassView({
           <div className="hspace" />
           <span
             className={todo === 0 ? "pill ok" : "pill"}
-            title={open ? `أدخلتَ لـ ${filled} من ${students.length}` : `نُقِّط ${filled} من ${students.length}`}
+            title={isReading ? `قرأ ${filled} من ${students.length} مرة على الأقل` : open ? `أدخلتَ لـ ${filled} من ${students.length}` : `نُقِّط ${filled} من ${students.length}`}
           >
             {filled}/{students.length}
           </span>
@@ -249,7 +289,9 @@ export function ClassView({
             {query
               ? `لا اسم يطابق «${query}»`
               : filter === "todo"
-                ? "لم يبقَ أحد — القسم كله منقَّط"
+                ? isReading
+                  ? "قرأ القسم كله مرة على الأقل"
+                  : "لم يبقَ أحد — القسم كله منقَّط"
                 : "لا أحد تحت 10"}
           </h3>
           <button
@@ -274,7 +316,26 @@ export function ClassView({
                     <small className="nbadge" title={state(student)}>{state(student)}</small>
                   )}
                 </button>
-                {columnLocked && tp.averageOf(student.id) !== null ? (
+                {isReading ? (
+                  <>
+                    <span className="sreads num" title="محاولات هذا الفصل">
+                      {readingCount(student.id) ? `${readingCount(student.id)}×` : "—"}
+                    </span>
+                    {/* المتطوّع: من رفع يده يُضاف إلى القائمة فوق، والنقرة الثانية تُخرجه */}
+                    <button
+                      className="volbtn"
+                      aria-pressed={inDraft.has(student.id)}
+                      aria-label={
+                        inDraft.has(student.id)
+                          ? `أخرج ${student.full_name} من قائمة القراءة`
+                          : `أضف ${student.full_name} إلى قائمة القراءة`
+                      }
+                      onClick={() => onDraft(toggleVolunteer(live, student))}
+                    >
+                      {inDraft.has(student.id) ? "✓" : "+"}
+                    </button>
+                  </>
+                ) : columnLocked && tp.averageOf(student.id) !== null ? (
                   <span className="rowlock num" title="محسوبة من حصص الأعمال التطبيقية">
                     {fmt(tp.averageOf(student.id))} / 20 · حصص
                   </span>
@@ -315,7 +376,7 @@ export function ClassView({
       <div className="pickbar">
         {open ? (
           <button className="btn ghost" onClick={() => setColumn(null)}>
-            أنهِ العمود
+            {isReading ? "أنهِ القراءة" : "أنهِ العمود"}
           </button>
         ) : (
           <>

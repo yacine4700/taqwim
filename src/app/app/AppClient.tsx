@@ -49,9 +49,15 @@ import {
 } from "@/lib/scoring";
 import { Klass, NO_PROFILE, Profile, School, Snapshot, Student, Tab } from "./types";
 import { today } from "./util";
+import {
+  emptyDraft,
+  migrateWhere,
+  openClassAfterTab,
+  READING_COLUMN,
+  type ReadingDraft,
+} from "@/lib/readingDraft";
 import { ClassesView } from "./ClassesView";
 import { ClassView } from "./ClassView";
-import { SessionView } from "./SessionView";
 import { StatsView } from "./StatsView";
 import { DocsView } from "./DocsView";
 import { SettingsView } from "./SettingsView";
@@ -105,16 +111,16 @@ export default function AppClient({
   const [exporting, setExporting] = useState(false);
   const [newSchool, setNewSchool] = useState(false);
   const [printing, setPrinting] = useState<string | null>(null);
-  /* اختيار تبويب الحصة يُحفظ مع بقية المكان: الأستاذ يقرأ لقسم واحد في الحصة */
-  const [sessionClass, setSessionClass] = useState("");
-  const [sessionCount, setSessionCount] = useState(5);
+  /* عدد القرّاء في الحصة يُحفظ مع بقية المكان: الأستاذ يقرأ لعدد ثابت غالبًا */
+  const [readCount, setReadCount] = useState(5);
   /**
-   * أسماء الحصة ونقاطها غير المحفوظة هنا لا في SessionView: التبويب يُفكّ
-   * عند مغادرته، ومن غادره ليتحقّق من شيء فقد القائمة التي اختارها.
-   * في الذاكرة فقط: إعادة فتح التطبيق تبدأ حصة جديدة.
+   * العمود المفتوح وقائمة القراءة غير المحفوظة، لكل قسم، هنا لا في ClassView:
+   * الأستاذ يتنقّل في الحصة بين القراءة وأعمدة التقويم المستمر وبين التبويبات،
+   * وClassView يُفكّ عند مغادرته فكان يُضيّع عموده وقائمته. في الذاكرة فقط:
+   * إعادة فتح التطبيق تبدأ حصة جديدة (والعمود المفتوح يُحفظ مع المكان).
    */
-  const [sessionPicked, setSessionPicked] = useState<Student[]>([]);
-  const [sessionScores, setSessionScores] = useState<Record<string, number | "skip">>({});
+  const [columnOf, setColumnOf] = useState<Record<string, string | null>>({});
+  const [drafts, setDrafts] = useState<Record<string, ReadingDraft<Student>>>({});
   const [hideStart, setHideStart] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<Klass | null>(null);
   const [confirmCriterion, setConfirmCriterion] = useState<Criterion | null>(null);
@@ -373,36 +379,36 @@ export default function AppClient({
         openClass: string | null;
         sessionClass?: string;
         sessionCount?: number;
+        columnOf?: Record<string, string | null>;
         hideStart?: boolean;
         openSchool?: string | null;
       }>(whereKey);
       if (!saved) return;
       if (saved.term >= 1 && saved.term <= 3) setTerm(saved.term);
-      if (saved.tab) setTab(saved.tab);
-      if (saved.sessionClass && classes.some((c) => c.id === saved.sessionClass)) {
-        setSessionClass(saved.sessionClass);
-      }
-      if (saved.sessionCount && saved.sessionCount >= 3) setSessionCount(saved.sessionCount);
+      /* تبويب «الحصة» حُذف: من تركه هناك يُفتح له قسمها على القراءة */
+      const where = migrateWhere(saved, (id) => classes.some((c) => c.id === id));
+      if (where.tab) setTab(where.tab as Tab);
+      const columns = { ...(saved.columnOf ?? {}) };
+      if (where.readingIn) columns[where.readingIn] = READING_COLUMN;
+      setColumnOf(columns);
+      if (saved.sessionCount && saved.sessionCount >= 3) setReadCount(saved.sessionCount);
       if (saved.hideStart) setHideStart(true);
       if (saved.openSchool) setOpenSchool(saved.openSchool);
       // القسم قد يكون حُذف من جهاز آخر، فلا يُفتح إلا إن كان ما يزال موجودًا.
-      if (saved.openClass && classes.some((c) => c.id === saved.openClass)) {
-        setOpenClass(saved.openClass);
-      }
+      if (where.openClass) setOpenClass(where.openClass);
     })();
   }, [classes, whereKey]);
 
   useEffect(() => {
     if (!restoredRef.current) return;
     void kvSet(whereKey, {
-      tab, term, openClass, openSchool, sessionClass, sessionCount, hideStart,
+      tab, term, openClass, openSchool, sessionCount: readCount, columnOf, hideStart,
     });
-  }, [tab, term, openClass, openSchool, sessionClass, sessionCount, hideStart, whereKey]);
+  }, [tab, term, openClass, openSchool, readCount, columnOf, hideStart, whereKey]);
 
   /* المحاولات تُسجَّل في الفصل المعروض لحظة الحفظ: قائمة اختيرت في ف1 لا تُحفظ في ف2 */
   useEffect(() => {
-    setSessionPicked([]);
-    setSessionScores({});
+    setDrafts({});
   }, [term]);
 
   /* عودة الشبكة: أعد القراءة من الخادم مرة واحدة، لا عند كل تبدّل حالة */
@@ -1210,6 +1216,8 @@ export default function AppClient({
     [newSchool, () => setNewSchool(false)],
     [openStudent !== null, () => setOpenStudentId(null)],
     [tab !== "classes", () => setTab("classes")],
+    /* الرجوع من العمود المفتوح إلى جدول القسم قبل الخروج منه */
+    [openClass !== null && !!columnOf[openClass], () => setColumnOf((c) => ({ ...c, [openClass!]: null }))],
     [classSection === "groups" && openClass !== null, () => setClassSection("students")],
     [openClass !== null, () => setOpenClass(null)],
     [openSchool !== null && manySchools, () => setOpenSchool(null)],
@@ -1272,7 +1280,7 @@ export default function AppClient({
           )}
 
           {/* التنبيه حيث تُكتب العلامات فقط، ولا يمنع شيئًا: الأستاذ قد يُدخل علامات فصل سابق عن قصد */}
-          {((tab === "classes" && openClass) || tab === "session") &&
+          {tab === "classes" && openClass &&
             curTerm !== null &&
             term !== curTerm &&
             termDismissed !== term && (
@@ -1342,6 +1350,14 @@ export default function AppClient({
                 onMark={(studentId, field, value) =>
                   saveRecord(studentId, { [field]: value } as Partial<RecordRow>)
                 }
+                column={columnOf[openClass] ?? null}
+                onColumn={(column) => setColumnOf((c) => ({ ...c, [openClass]: column }))}
+                reading={criteria.find((c) => c.kind === "auto")}
+                readCount={readCount}
+                onReadCount={setReadCount}
+                draft={drafts[openClass] ?? emptyDraft<Student>()}
+                onDraft={(next) => setDrafts((d) => ({ ...d, [openClass]: next }))}
+                onSaveReadings={addReadings}
               />
             ) : (
               <ClassesView
@@ -1362,26 +1378,6 @@ export default function AppClient({
                 onDismissStart={() => setHideStart(true)}
               />
             ))}
-
-          {tab === "session" && (
-            <SessionView
-              classes={classes}
-              schools={schools}
-              studentsOf={studentsOf}
-              attemptsOf={(id) => readingsOf(id).length}
-              term={term}
-              reading={criteria.find((c) => c.kind === "auto")}
-              classId={sessionClass}
-              onClassId={setSessionClass}
-              count={sessionCount}
-              onCount={setSessionCount}
-              picked={sessionPicked}
-              setPicked={setSessionPicked}
-              scores={sessionScores}
-              setScores={setSessionScores}
-              onSave={addReadings}
-            />
-          )}
 
           {tab === "stats" && (
             <StatsView
@@ -1433,8 +1429,10 @@ export default function AppClient({
       <Tabs
         tab={tab}
         onChange={(t) => {
+          /* من تبويب آخر إلى «الأقسام»: القسم يبقى مفتوحًا بعموده وقائمته؛
+             والنقر على «الأقسام» وهو فيها يُغلقه إلى القائمة */
+          setOpenClass((open) => openClassAfterTab(tab, t, open));
           setTab(t);
-          if (t === "classes") setOpenClass(null);
         }}
       />
 
