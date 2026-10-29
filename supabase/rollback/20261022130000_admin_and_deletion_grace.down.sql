@@ -58,9 +58,10 @@ end $$;
 drop function if exists public.request_account_deletion();
 drop function if exists public.cancel_account_deletion();
 drop function if exists public.my_account_status();
+drop function if exists public.am_i_admin();
 drop function if exists public.admin_list_teachers();
-drop function if exists public.admin_set_disabled(uuid, boolean);
-drop function if exists public.admin_cancel_deletion(uuid);
+drop function if exists public.admin_set_disabled(uuid, boolean, text);
+drop function if exists public.admin_cancel_deletion(uuid, text);
 drop function if exists public.admin_log_recent(integer);
 
 revoke all on schema private from taqwim_purger;

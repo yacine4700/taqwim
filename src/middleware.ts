@@ -30,7 +30,15 @@ export async function middleware(request: NextRequest) {
   } = await supabase.auth.getUser();
 
   const path = request.nextUrl.pathname;
-  if (!user && ["/app", "/account", "/admin"].some((p) => path.startsWith(p))) {
+  // الإشراف له صفحة دخول خاصة به؛ ولا يُحوَّل صاحب جلسة قائمة عنها (قد يحتاج إعادة الرمز).
+  const adminArea = path === "/admin" || path.startsWith("/admin/");
+  if (!user && adminArea && path !== "/admin/login") {
+    const url = request.nextUrl.clone();
+    url.pathname = "/admin/login";
+    url.search = "";
+    return NextResponse.redirect(url);
+  }
+  if (!user && ["/app", "/account"].some((p) => path.startsWith(p))) {
     const url = request.nextUrl.clone();
     url.pathname = "/login";
     return NextResponse.redirect(url);

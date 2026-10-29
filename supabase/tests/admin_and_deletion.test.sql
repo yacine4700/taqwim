@@ -9,6 +9,15 @@
 \set sB '''5e550000-0000-4000-8000-0000000000b1'''
 \set sM '''5e550000-0000-4000-8000-0000000000e1'''
 
+-- يعيد نصّ الخطأ لأمر (أو «no error»)، ليفرّق الاختبار بين رسالة forbidden وmfa_required.
+create function tests.err(stmt text) returns text language plpgsql as $$
+begin
+  execute stmt;
+  return 'no error';
+exception when others then
+  return sqlerrm;
+end $$;
+
 -- الخطوة اليدوية بعد الترحيل: تعيين المشرف.
 insert into private.admins (user_id, note) values (:M, 'test');
 
@@ -37,22 +46,36 @@ select tests.fails('A لا يستدعي is_admin مباشرة', 'select private.
 -- A يحاول أن يصير مشرفًا عبر جلسة aal2 مزوّرة في claims: لا يكفي لأنه ليس في الجدول.
 select tests.claims(:A, :sA, 'aal2');
 select tests.fails('A بجلسة aal2 ليس مشرفًا', 'select * from public.admin_list_teachers()', '42501');
+select tests.ok('A غير المدرج يسمع forbidden دائمًا لا mfa_required',
+  tests.err('select * from public.admin_list_teachers()') = 'forbidden');
+select tests.ok('am_i_admin لغير المشرف: listed=false وready=false وبلا تفاصيل',
+  public.am_i_admin() = '{"listed": false, "ready": false}'::jsonb);
+select tests.fails('A لا يستدعي mfa_verified_at مباشرة', 'select private.mfa_verified_at()', '42501');
 reset role;
 
 set role anon;
 select set_config('request.jwt.claims', '', false);
 select tests.fails('anon لا يستدعي دوال المشرف', 'select * from public.admin_list_teachers()', '42501');
 select tests.fails('anon لا يطلب حذفًا', 'select public.request_account_deletion()', '42501');
+select tests.fails('anon لا يستدعي am_i_admin', 'select public.am_i_admin()', '42501');
 reset role;
 
 -- ============================================================
 -- 2) المشرف
 -- ============================================================
+select count(*) as log0 from private.audit_log \gset
 select tests.claims(:M, :sM, 'aal1');
 set role authenticated;
 select tests.fails('المشرف بجلسة aal1 مرفوض', 'select * from public.admin_list_teachers()', '42501');
+select tests.ok('المشرف المدرج بجلسة aal1 يسمع mfa_required',
+  tests.err('select * from public.admin_list_teachers()') = 'mfa_required');
+select tests.ok('am_i_admin للمشرف بجلسة aal1: listed وليس ready',
+  (public.am_i_admin() ->> 'listed')::boolean and not (public.am_i_admin() ->> 'ready')::boolean);
 select tests.claims(:M, :sM, 'aal2');
 select tests.ok('المشرف aal2 يرى 3 حسابات', (select count(*) from public.admin_list_teachers()) = 3);
+select tests.ok('am_i_admin للمشرف: ready وينتهي التحقّق خلال أقل من 12 ساعة وأكثر من 11',
+  (public.am_i_admin() ->> 'ready')::boolean
+  and (public.am_i_admin() ->> 'mfa_expires_at')::timestamptz between now() + interval '11 hours' and now() + interval '12 hours');
 select tests.ok('أعداد A صحيحة (1 قسم، 3 تلاميذ، 3 سجلات)',
   (select classes = 1 and students = 3 and records = 3 and status = 'active' from public.admin_list_teachers() where id = :A));
 select tests.ok('المشرف لا يرى تلاميذ أحد', (select count(*) from public.students) = 0);
@@ -61,6 +84,62 @@ select tests.fails('المشرف لا يقرأ private.admins مباشرة', 'se
 select tests.fails('المشرف لا يعطّل نفسه', $$select public.admin_set_disabled('eeeeeeee-0000-4000-8000-00000000000e', true)$$, '42501');
 select tests.fails('المشرف لا يعطّل حسابًا غير موجود', $$select public.admin_set_disabled('00000000-0000-4000-8000-000000000000', true)$$, 'P0002');
 select tests.fails('المشرف لا يستدعي الحذف النهائي', 'select private.purge_deleted_accounts()', '42501');
+reset role;
+
+select tests.ok('عرض القائمة وam_i_admin لا يكتبان في السجلّ',
+  (select count(*) from private.audit_log) = :log0);
+
+-- ---- عمر التحقّق الثنائي وبقاء الجلسة -----------------------------------------------
+-- (يُجرَّب كل شرط وحده ثم يُعاد كما كان.)
+select tests.claims(:M, :sM, 'aal2');
+update auth.mfa_amr_claims set updated_at = now() - interval '13 hours' where session_id = :sM and authentication_method = 'totp';
+set role authenticated;
+select tests.ok('رمز TOTP قبل 13 ساعة: mfa_required', tests.err('select * from public.admin_list_teachers()') = 'mfa_required');
+select tests.fails('رمز TOTP قديم: لا إيقاف', $$select public.admin_set_disabled('bbbbbbbb-0000-4000-8000-00000000000b', true)$$, '42501');
+select tests.ok('am_i_admin: ready=false والرمز منتهٍ', not (public.am_i_admin() ->> 'ready')::boolean and (public.am_i_admin() ->> 'mfa_expires_at')::timestamptz < now());
+reset role;
+update auth.mfa_amr_claims set updated_at = now() - interval '11 hours 59 minutes' where session_id = :sM and authentication_method = 'totp';
+set role authenticated;
+select tests.ok('رمز قبل 11 ساعة و59 دقيقة: ما زال ساريًا', (select count(*) from public.admin_list_teachers()) = 3);
+reset role;
+update auth.mfa_amr_claims set updated_at = now() - interval '12 hours 1 minute' where session_id = :sM and authentication_method = 'totp';
+set role authenticated;
+select tests.ok('رمز قبل 12 ساعة ودقيقة: منتهٍ', tests.err('select * from public.admin_list_teachers()') = 'mfa_required');
+reset role;
+update auth.mfa_amr_claims set updated_at = now() - interval '2 minutes' where session_id = :sM and authentication_method = 'totp';
+
+-- كلمة المرور الحديثة وحدها لا تكفي: لا سطر totp ⇒ مرفوض ولو كان JWT يقول aal2.
+update auth.mfa_amr_claims set authentication_method = 'otp' where session_id = :sM and authentication_method = 'totp';
+set role authenticated;
+select tests.ok('JWT يقول aal2 ولا سطر totp في الخادم: مرفوض', tests.err('select * from public.admin_list_teachers()') = 'mfa_required');
+reset role;
+update auth.mfa_amr_claims set authentication_method = 'totp' where session_id = :sM and authentication_method = 'otp';
+
+-- الجلسة: منتهية، أو لحساب آخر، أو غير موجودة، أو session_id مفقود/تالف.
+update auth.sessions set not_after = now() - interval '1 minute' where id = :sM;
+set role authenticated;
+select tests.ok('جلسة المشرف منتهية (not_after): مرفوض', tests.err('select * from public.admin_list_teachers()') = 'mfa_required');
+reset role;
+update auth.sessions set not_after = null where id = :sM;
+select tests.claims(:M, :sB, 'aal2');
+set role authenticated;
+select tests.ok('session_id لجلسة أستاذ آخر: مرفوض', tests.err('select * from public.admin_list_teachers()') = 'mfa_required');
+reset role;
+select tests.claims(:M, '5e550000-0000-4000-8000-0000000000ff', 'aal2');
+set role authenticated;
+select tests.ok('session_id غير موجود (خرج المشرف): مرفوض', tests.err('select * from public.admin_list_teachers()') = 'mfa_required');
+reset role;
+select tests.claims(:M, null, 'aal2');
+set role authenticated;
+select tests.ok('بلا session_id: مرفوض', tests.err('select * from public.admin_list_teachers()') = 'mfa_required');
+reset role;
+select set_config('request.jwt.claims', '{"sub":"eeeeeeee-0000-4000-8000-00000000000e","role":"authenticated","aal":"aal2","session_id":"not-a-uuid"}', false);
+set role authenticated;
+select tests.ok('session_id تالف: مرفوض', tests.err('select * from public.admin_list_teachers()') = 'mfa_required');
+reset role;
+select tests.claims(:M, :sM, 'aal2');
+set role authenticated;
+select tests.ok('بعد إعادة كل شيء: المشرف يعمل', (select count(*) from public.admin_list_teachers()) = 3);
 reset role;
 
 -- أعمدة القائمة: لا شيء من محتوى البيانات.
@@ -75,8 +154,10 @@ select tests.ok('القائمة لا تعيد أسماء تلاميذ ولا ع�
 -- ============================================================
 select tests.claims(:M, :sM, 'aal2');
 set role authenticated;
-select public.admin_set_disabled(:B, true);
+select public.admin_set_disabled(:B, true, E'  شكوى من مدير المؤسسة  ');
 reset role;
+select tests.ok('السبب يُسجَّل مشذّبًا في السجلّ',
+  (select detail ->> 'reason' from private.audit_log where action = 'disable' and target_id = :B order by id desc limit 1) = 'شكوى من مدير المؤسسة');
 select tests.ok('التعطيل يضع banned_until في المستقبل', (select banned_until > now() + interval '50 years' from auth.users where id = :B));
 select tests.ok('التعطيل يحذف جلسات B (فلا تجديد)', (select count(*) from auth.sessions where user_id = :B) = 0);
 select tests.ok('التعطيل لا يغيّر بيانات B', tests.fp(:B) = :'fp_b0');
@@ -94,6 +175,15 @@ set role authenticated;
 select tests.ok('القائمة تُظهر B موقوفًا', (select status from public.admin_list_teachers() where id = :B) = 'disabled');
 select public.admin_set_disabled(:B, false);
 reset role;
+select tests.ok('إعادة التفعيل بلا سبب: detail فارغ', (select detail from private.audit_log where action = 'enable' and target_id = :B order by id desc limit 1) = '{}'::jsonb);
+set role authenticated;
+select tests.claims(:M, :sM, 'aal2');
+select public.admin_set_disabled(:B, true, repeat('س', 500));
+select public.admin_set_disabled(:B, false, '   ');
+reset role;
+select tests.ok('السبب الطويل يُقصّ إلى 300 حرف',
+  (select char_length(detail ->> 'reason') from private.audit_log where action = 'disable' and target_id = :B order by id desc limit 1) = 300);
+select tests.ok('سبب من فراغ فقط يُهمَل', (select detail from private.audit_log where action = 'enable' and target_id = :B order by id desc limit 1) = '{}'::jsonb);
 select tests.ok('إعادة التفعيل ترفع الإيقاف', (select banned_until is null from auth.users where id = :B));
 select tests.ok('بيانات B كما كانت بعد الإعادة', tests.fp(:B) = :'fp_b0');
 select tests.claims(:B, :sB);
@@ -185,7 +275,10 @@ set role authenticated;
 select public.request_account_deletion();
 select tests.claims(:M, :sM, 'aal2');
 select tests.ok('القائمة تُظهر A مجدولًا للحذف', (select status from public.admin_list_teachers() where id = :A) = 'deletion_pending');
-select tests.ok('المشرف يلغي حذف A', public.admin_cancel_deletion(:A));
+select tests.ok('المشرف يلغي حذف A', public.admin_cancel_deletion(:A, 'طلب الأستاذ هاتفيًا'));
+select tests.ok('سبب الإلغاء في السجلّ',
+  (select detail ->> 'reason' from public.admin_log_recent(5) where action = 'cancel_deletion' and actor_kind = 'admin' limit 1) = 'طلب الأستاذ هاتفيًا');
+select tests.ok('السجلّ لا يحوي عرض قائمة', not exists (select 1 from public.admin_log_recent(200) where action = 'list'));
 select tests.ok('السجلّ يقرؤه المشرف', (select count(*) from public.admin_log_recent(100)) >= 5);
 reset role;
 select tests.ok('لا طلبات معلّقة بعد الإلغاء', (select count(*) from private.deletion_requests) = 0);
@@ -229,12 +322,15 @@ select tests.ok('anon لا يملك تشغيل أي دالة جديدة',
   not exists (select 1 from pg_proc p where p.pronamespace in ('public'::regnamespace, 'private'::regnamespace)
               and p.proname in ('request_account_deletion','cancel_account_deletion','my_account_status','admin_list_teachers',
                                 'admin_set_disabled','admin_cancel_deletion','admin_log_recent','purge_deleted_accounts',
-                                'is_admin','require_admin','read_blocked','write_blocked')
+                                'am_i_admin','is_admin','require_admin','read_blocked','write_blocked',
+                                'mfa_verified_at','mfa_max_age')
               and has_function_privilege('anon', p.oid, 'execute')),
   (select string_agg(p.oid::regprocedure::text, ', ') from pg_proc p where p.pronamespace in ('public'::regnamespace, 'private'::regnamespace) and has_function_privilege('anon', p.oid, 'execute')));
 select tests.ok('authenticated لا يملك الحذف النهائي ولا is_admin',
   not has_function_privilege('authenticated', 'private.purge_deleted_accounts(integer)', 'execute')
-  and not has_function_privilege('authenticated', 'private.is_admin()', 'execute'));
+  and not has_function_privilege('authenticated', 'private.is_admin()', 'execute')
+  and not has_function_privilege('authenticated', 'private.mfa_verified_at()', 'execute')
+  and not has_function_privilege('authenticated', 'private.require_admin()', 'execute'));
 select tests.ok('لا أحد من أدوار API يقرأ جداول private',
   not exists (select 1 from pg_class c, unnest(array['anon','authenticated','service_role']) r
               where c.relnamespace = 'private'::regnamespace and c.relkind = 'r'

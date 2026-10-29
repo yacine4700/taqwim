@@ -3,7 +3,11 @@
 -- ما يضيفه:
 --   * مخطّط private (غير مكشوف لواجهة API) فيه: المشرفون، طلبات الحذف، السجلّ.
 --   * دوال RPC للأستاذ: طلب الحذف (بعد إدخال كلمة المرور خلال 10 دقائق)، إلغاؤه، حالته.
---   * دوال RPC للمشرف (aal2 إجباري): القائمة والأعداد، التعطيل/الإعادة، إلغاء حذف، السجلّ.
+--   * دوال RPC للمشرف: القائمة والأعداد، التعطيل/الإعادة، إلغاء حذف، السجلّ، وam_i_admin
+--     التي تقول للمتصل عن نفسه وحده هل هو مشرف وهل تحقّقه الثنائي ساري. الشرط في كل دالة إدارية:
+--     في private.admins، وجلسة aal2، وإدخال رمز TOTP في هذه الجلسة خلال آخر 12 ساعة، والجلسة
+--     ما زالت قائمة وغير منتهية (تُقرأ كلها من جداول الخادم، لا مما يرسله العميل).
+--     السجلّ لا يكتب عرض القائمة: العمليات التي تغيّر شيئًا فقط، ومعها السبب إن كُتب.
 --   * سياسات تقييدية جديدة على الجداول الأحد عشر:
 --       - الحساب الموقوف: لا قراءة ولا كتابة، ولو بقي معه access token صادر قبل الإيقاف.
 --       - الحساب المجدول للحذف: قراءة فقط (لتنزيل «نسختي»)، ولا كتابة حتى يُلغى الطلب.
@@ -47,7 +51,7 @@ create table private.audit_log (
   actor_kind text not null check (actor_kind in ('admin', 'teacher', 'system')),
   actor_id   uuid,
   action     text not null check (action in (
-               'list', 'disable', 'enable', 'cancel_deletion',
+               'disable', 'enable', 'cancel_deletion',
                'request_deletion', 'purge')),
   target_id  uuid,
   detail     jsonb not null default '{}'::jsonb
@@ -60,7 +64,52 @@ revoke all on all sequences in schema private from public, anon, authenticated, 
 -- دوال مساعدة (داخلية)
 -- ---------------------------------------------------------------------------
 
--- مشرف = في الجدول + جلسة aal2 (رمز التحقّق الثنائي أُدخل في هذه الجلسة).
+-- أقصى عمر لتحقّق TOTP: بعده تُطلب إعادة الرمز. تعريف واحد تقرؤه كل الدوال.
+create function private.mfa_max_age()
+returns interval
+language sql
+immutable
+as $$ select interval '12 hours' $$;
+
+-- لحظة آخر إدخال لرمز TOTP في جلسة المتصل الحالية، أو null إن لم يوجد أو لم تعد الجلسة
+-- قائمة. الجلسة تُقرأ من auth.sessions: من خرج أو أُوقف حسابه (حُذفت جلساته) يسقط فورًا
+-- ولو بقي access token صادر قبل ذلك صالحًا، وكذلك الجلسة المنتهية (not_after).
+-- التحقّق الثنائي يبقى aal2 في JWT طوال عمر الجلسة (أيامًا)، فلا يكفي وحده.
+create function private.mfa_verified_at()
+returns timestamptz
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+declare
+  uid uuid := auth.uid();
+  sid uuid;
+  at  timestamptz;
+begin
+  if uid is null then
+    return null;
+  end if;
+  begin
+    sid := nullif(auth.jwt() ->> 'session_id', '')::uuid;
+  exception when invalid_text_representation then
+    return null;
+  end;
+  if sid is null then
+    return null;
+  end if;
+  select max(c.updated_at) into at
+  from auth.sessions s
+  join auth.mfa_amr_claims c on c.session_id = s.id
+  where s.id = sid
+    and s.user_id = uid
+    and (s.not_after is null or s.not_after > now())
+    and c.authentication_method = 'totp';
+  return at;
+end;
+$$;
+
+-- مشرف = في الجدول + جلسة aal2 + رمز TOTP حديث في جلسة قائمة.
 create function private.is_admin()
 returns boolean
 language sql
@@ -69,9 +118,12 @@ security definer
 set search_path = ''
 as $$
   select coalesce((select auth.jwt() ->> 'aal') = 'aal2', false)
-     and exists (select 1 from private.admins a where a.user_id = (select auth.uid()));
+     and exists (select 1 from private.admins a where a.user_id = (select auth.uid()))
+     and coalesce((select private.mfa_verified_at()) > now() - private.mfa_max_age(), false);
 $$;
 
+-- الرسالتان تفرّقان لواجهة المشرف بين «لا صلاحية» و«أعد الرمز». الثانية لا تصل إلا لمن
+-- هو في الجدول فعلًا؛ غيره يسمع «forbidden» دائمًا فلا يعرف من هو مشرف.
 create function private.require_admin()
 returns uuid
 language plpgsql
@@ -80,8 +132,12 @@ security definer
 set search_path = ''
 as $$
 begin
-  if not private.is_admin() then
+  if not exists (select 1 from private.admins a where a.user_id = (select auth.uid())) then
     raise exception 'forbidden' using errcode = '42501';
+  end if;
+  if not private.is_admin() then
+    raise exception 'mfa_required' using errcode = '42501',
+      hint = 'أدخل رمز التحقّق الثنائي من جديد';
   end if;
   return auth.uid();
 end;
@@ -113,8 +169,9 @@ as $$
       or exists (select 1 from private.deletion_requests d where d.user_id = (select auth.uid()));
 $$;
 
-revoke all on function private.is_admin(), private.require_admin(),
-  private.read_blocked(), private.write_blocked() from public, anon, authenticated, service_role;
+revoke all on function private.mfa_max_age(), private.mfa_verified_at(), private.is_admin(),
+  private.require_admin(), private.read_blocked(), private.write_blocked()
+  from public, anon, authenticated, service_role;
 -- السياسات تُقيَّم بدور المستخدم، فيلزمه حقّ تشغيل هاتين فقط.
 grant execute on function private.read_blocked(), private.write_blocked() to authenticated;
 
@@ -238,6 +295,39 @@ $$;
 -- دوال المشرف
 -- ---------------------------------------------------------------------------
 
+-- يسأل بها المتصل عن نفسه وحده (لا معامل، فلا تُستعمل لسؤال عن غيره). لا تكتب في السجلّ.
+--   listed: هل هو في private.admins (غير المشرف يرى false وnull في الباقي).
+--   ready:  هل يقبل الخادم دوال الإشراف منه الآن.
+--   mfa_expires_at: متى يسقط تحقّقه الثنائي؛ null إن لم يُدخل الرمز في هذه الجلسة.
+create function public.am_i_admin()
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+declare
+  uid uuid := auth.uid();
+  listed boolean;
+  at timestamptz;
+begin
+  if uid is null then
+    raise exception 'not authenticated' using errcode = '28000';
+  end if;
+  listed := exists (select 1 from private.admins a where a.user_id = uid);
+  if not listed then
+    return jsonb_build_object('listed', false, 'ready', false);
+  end if;
+  at := private.mfa_verified_at();
+  return jsonb_build_object(
+    'listed', true,
+    'aal', auth.jwt() ->> 'aal',
+    'mfa_verified_at', at,
+    'mfa_expires_at', at + private.mfa_max_age(),
+    'ready', private.is_admin());
+end;
+$$;
+
 -- القائمة: هويّة الحساب وحالته وأعداد بياناته. لا أسماء تلاميذ ولا علامات.
 create function public.admin_list_teachers()
 returns table (
@@ -248,11 +338,8 @@ language plpgsql
 security definer
 set search_path = ''
 as $$
-declare
-  me uuid := private.require_admin();
 begin
-  insert into private.audit_log (actor_kind, actor_id, action)
-  values ('admin', me, 'list');
+  perform private.require_admin();
 
   return query
   select u.id, u.email::text, t.full_name, u.created_at, u.last_sign_in_at,
@@ -277,7 +364,7 @@ $$;
 
 -- التعطيل يمنع الدخول وتجديد الجلسة (Supabase Auth يرفض المحظور)، ويحذف الجلسات
 -- القائمة، والسياسات التقييدية تمنع ما بقي من access token حتى ينتهي. البيانات لا تُمسّ.
-create function public.admin_set_disabled(target uuid, disabled boolean)
+create function public.admin_set_disabled(target uuid, disabled boolean, reason text default null)
 returns timestamptz
 language plpgsql
 security definer
@@ -286,6 +373,7 @@ as $$
 declare
   me uuid := private.require_admin();
   until timestamptz;
+  why text := nullif(left(btrim(coalesce(reason, '')), 300), '');
 begin
   if target is null or disabled is null then
     raise exception 'invalid arguments' using errcode = '22023';
@@ -304,13 +392,14 @@ begin
     delete from auth.sessions where user_id = target;
   end if;
 
-  insert into private.audit_log (actor_kind, actor_id, action, target_id)
-  values ('admin', me, case when disabled then 'disable' else 'enable' end, target);
+  insert into private.audit_log (actor_kind, actor_id, action, target_id, detail)
+  values ('admin', me, case when disabled then 'disable' else 'enable' end, target,
+          case when why is null then '{}'::jsonb else jsonb_build_object('reason', why) end);
   return until;
 end;
 $$;
 
-create function public.admin_cancel_deletion(target uuid)
+create function public.admin_cancel_deletion(target uuid, reason text default null)
 returns boolean
 language plpgsql
 security definer
@@ -319,12 +408,14 @@ as $$
 declare
   me uuid := private.require_admin();
   found_one boolean;
+  why text := nullif(left(btrim(coalesce(reason, '')), 300), '');
 begin
   delete from private.deletion_requests where user_id = target;
   found_one := found;
   if found_one then
-    insert into private.audit_log (actor_kind, actor_id, action, target_id)
-    values ('admin', me, 'cancel_deletion', target);
+    insert into private.audit_log (actor_kind, actor_id, action, target_id, detail)
+    values ('admin', me, 'cancel_deletion', target,
+            case when why is null then '{}'::jsonb else jsonb_build_object('reason', why) end);
   end if;
   return found_one;
 end;
@@ -395,14 +486,14 @@ $$;
 -- الصلاحيات
 -- ---------------------------------------------------------------------------
 revoke all on function public.request_account_deletion(), public.cancel_account_deletion(),
-  public.my_account_status(), public.admin_list_teachers(),
-  public.admin_set_disabled(uuid, boolean), public.admin_cancel_deletion(uuid),
+  public.my_account_status(), public.am_i_admin(), public.admin_list_teachers(),
+  public.admin_set_disabled(uuid, boolean, text), public.admin_cancel_deletion(uuid, text),
   public.admin_log_recent(integer), private.purge_deleted_accounts(integer)
   from public, anon, authenticated, service_role;
 
 grant execute on function public.request_account_deletion(), public.cancel_account_deletion(),
-  public.my_account_status(), public.admin_list_teachers(),
-  public.admin_set_disabled(uuid, boolean), public.admin_cancel_deletion(uuid),
+  public.my_account_status(), public.am_i_admin(), public.admin_list_teachers(),
+  public.admin_set_disabled(uuid, boolean, text), public.admin_cancel_deletion(uuid, text),
   public.admin_log_recent(integer)
   to authenticated;
 

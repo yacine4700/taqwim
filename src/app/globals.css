@@ -618,3 +618,27 @@ a.btn, a.swap { text-decoration: none; }
 .delta.down { color: var(--danger); }
 .termnote { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
 .termnote span { flex: 1 1 160px; }
+
+/* ---- صفحة الإشراف (/admin) ---- */
+.adm { max-width: 760px; margin: 0 auto; padding-block: 20px 40px; }
+.adm-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 6px; }
+.adm-head h1 { margin: 0; font-size: 23px; }
+.adm-head small { color: var(--faint); }
+.adm-head-side { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; text-align: end; }
+.adm-warn { color: var(--sand); font-weight: 600; }
+.adm .lead { margin: 6px 0 14px; color: var(--muted); font-size: 13px; line-height: 1.8; }
+.adm-stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.adm-stats .stat { padding: 10px 12px; }
+.adm-search { width: 100%; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 11px; }
+.adm-item { border-bottom: 1px solid var(--line); }
+.adm-item:last-child { border-bottom: 0; }
+.adm-item.bad { background: var(--danger-soft); }
+.adm-item .prow { border-bottom: 0; }
+.adm-confirm { padding: 4px 12px 12px; display: flex; flex-direction: column; gap: 10px; }
+.adm-confirm p { margin: 0; font-size: 13px; line-height: 1.8; }
+.adm-confirm label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; font-weight: 600; }
+.adm-confirm input { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 10px; font-weight: 400; }
+.adm-confirm-row { display: flex; gap: 8px; }
+@media (min-width: 560px) {
+  .adm-stats { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}

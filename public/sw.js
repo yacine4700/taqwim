@@ -112,6 +112,9 @@ self.addEventListener("fetch", (event) => {
   // طلبات React للتنقّل الداخلي: لا تُخبَّأ، فهي ليست صفحة كاملة.
   if (url.searchParams.has("_rsc")) return;
 
+  // الإشراف لا يُخبَّأ أبدًا: لا نسخة منه تُعرض بلا شبكة، ولا يُخبَّأ ما فيه من أسماء الحسابات.
+  if (url.pathname === "/admin" || url.pathname.startsWith("/admin/")) return;
+
   if (request.mode === "navigate") {
     event.respondWith(handlePage(request));
     return;
