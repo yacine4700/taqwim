@@ -8,7 +8,7 @@ import {
   signupMetadata,
   translateAuthError as translate,
 } from "@/lib/auth";
-import { BANNED_MESSAGE } from "@/lib/account";
+import { BANNED_MESSAGE, isBannedError } from "@/lib/account";
 
 /** بريد التواصل لصاحب الحساب الموقوف (متغيّر بيئة، كما في صفحة الخصوصية). */
 const CONTACT = process.env.NEXT_PUBLIC_CONTACT_EMAIL;
@@ -85,7 +85,8 @@ export default function LoginPage() {
       const { error } = await supabase.auth.signInWithPassword({ email, password });
       if (error) {
         setBad(true);
-        setMessage(translate(error.message));
+        // الحظر يُعرف برمزه (user_banned) لا بنصّه وحده: النص إنجليزي وقد يتغيّر
+        setMessage(isBannedError(error) ? BANNED_MESSAGE : translate(error.message));
       } else {
         router.push("/app");
         router.refresh();

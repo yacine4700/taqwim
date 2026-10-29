@@ -4,6 +4,7 @@ import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { adminProblemMessage, classifyAdminError, cleanCode, codeReady, parseAdminState } from "@/lib/admin";
+import { BANNED_MESSAGE, isBannedError } from "@/lib/account";
 
 type Phase = "checking" | "credentials" | "enroll" | "verify";
 
@@ -98,8 +99,8 @@ function AdminLogin() {
     if (error) {
       setBusy(false);
       setMessage(
-        /banned/i.test(error.message)
-          ? "الحساب موقوف."
+        isBannedError(error)
+          ? BANNED_MESSAGE
           : /rate limit|too many/i.test(error.message)
             ? "محاولات كثيرة. انتظر دقيقة ثم أعد المحاولة."
             : "البريد أو كلمة السر غير صحيحة.",
