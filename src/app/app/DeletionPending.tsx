@@ -21,7 +21,7 @@ export default function DeletionPending({
   teacherId: string;
 }) {
   const router = useRouter();
-  const [busy, setBusy] = useState<"" | "cancel" | "backup">("");
+  const [busy, setBusy] = useState<"" | "cancel" | "backup" | "signout">("");
   const [message, setMessage] = useState("");
   const [bad, setBad] = useState(false);
 
@@ -35,6 +35,14 @@ export default function DeletionPending({
       setBusy("");
       return;
     }
+    router.refresh();
+  }
+
+  /** الخروج متاح خلال المهلة: لا يمسّ الطابور المحلي، فإن ألغى الحذف ودخل عاد كل شيء. */
+  async function signOut() {
+    setBusy("signout");
+    await createClient().auth.signOut();
+    router.push("/login");
     router.refresh();
   }
 
@@ -67,6 +75,9 @@ export default function DeletionPending({
         </button>
         <button className="btn ghost" onClick={backup} disabled={busy !== ""}>
           {busy === "backup" ? "لحظة…" : "نزّل «نسختي»"}
+        </button>
+        <button className="btn ghost" onClick={signOut} disabled={busy !== ""}>
+          {busy === "signout" ? "لحظة…" : "تسجيل الخروج"}
         </button>
       </div>
     </div>
