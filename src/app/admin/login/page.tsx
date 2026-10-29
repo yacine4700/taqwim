@@ -27,8 +27,6 @@ function AdminLogin() {
   const [secret, setSecret] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
-  // حساب لم يُدرج في private.admins بعد: يُسمح له بربط تطبيق المصادقة وحده، ولا يدخل اللوحة.
-  const [unlisted, setUnlisted] = useState(false);
 
   /** بعد جلسة قائمة: إلى اللوحة إن كان التحقّق ساريًا، وإلا إلى خطوة الرمز. */
   async function proceed(): Promise<void> {
@@ -45,21 +43,13 @@ function AdminLogin() {
     }
     const state = parseAdminState(me.data);
     if (!state.listed) {
-      // الترتيب الآمن لحساب جديد: يُربط تطبيق المصادقة أولًا من هنا، ثم يُدرج الحساب في
-      // private.admins بعد ذلك. فلا تمرّ لحظة يكون فيها الحساب مشرفًا وبلا عامل مربوط
-      // بهاتف صاحبه. الحساب الذي له عامل مؤكَّد مسبقًا (أستاذ عادي مثلًا) يُخرَج برسالة عامة.
-      const existing = await supabase.auth.mfa.listFactors();
-      if (existing.data?.totp.some((f) => f.status === "verified")) {
-        await supabase.auth.signOut();
-        setMessage("لا صلاحية لهذا الحساب هنا.");
-        setPhase("credentials");
-        return;
-      }
-      setUnlisted(true);
-      setPhase("enroll");
+      // غير المُدرج في private.admins لا يرى شيئًا من خطوات المشرف، لا الربط ولا الرمز:
+      // يُخرَج برسالة عامة. يُدرج صاحب الخادم الحساب أولًا ثم يربط صاحبه التطبيق (ADMIN_SETUP.md).
+      await supabase.auth.signOut();
+      setMessage("لا صلاحية لهذا الحساب هنا.");
+      setPhase("credentials");
       return;
     }
-    setUnlisted(false);
     if (state.ready) {
       router.replace("/admin");
       router.refresh();
@@ -149,15 +139,6 @@ function AdminLogin() {
     }
     setQr("");
     setSecret("");
-    if (unlisted) {
-      // رُبط التطبيق. لا لوحة بعد: يُدرج صاحب الخادم الحساب ثم يعود المشرف فيدخل بالرمز.
-      await supabase.auth.signOut();
-      setBusy(false);
-      setUnlisted(false);
-      setPhase("credentials");
-      setMessage("رُبط تطبيق المصادقة بهذا الحساب. بعد أن يُدرج صاحب الخادم الحساب في المشرفين ادخل من جديد بالرمز.");
-      return;
-    }
     // القاعدة هي التي تقول إن التحقّق صار ساريًا، لا مجرّد نجاح الطلب.
     const me = await supabase.rpc("am_i_admin");
     setBusy(false);
@@ -238,9 +219,7 @@ function AdminLogin() {
         {phase === "enroll" && !qr && (
           <>
             <p className="lead">
-              {unlisted
-                ? "هذا الحساب غير مُدرج في الإشراف بعد، ويمكنك الآن تجهيز تطبيق المصادقة ليكون جاهزًا حين يُدرج. لا دخول إلى اللوحة قبل الإدراج."
-                : "لم يُربط تطبيق مصادقة بهذا الحساب بعد. اربط Google Authenticator أو ما يماثله، فالرمز يُطلب في كل دخول وبعد كل 12 ساعة."}
+              لم يُربط تطبيق مصادقة بهذا الحساب بعد. اربط Google Authenticator أو ما يماثله، فالرمز يُطلب عند كل دخول جديد وبعد كل 12 ساعة.
             </p>
             <button className="btn" type="button" onClick={startEnroll} disabled={busy}>
               {busy ? "لحظة…" : "اربط تطبيق المصادقة"}
