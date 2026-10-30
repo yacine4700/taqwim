@@ -45,6 +45,14 @@ export function translateAuthError(message: string): string {
   if (m.includes("session") && m.includes("missing")) {
     return "انتهت صلاحية الرابط. اطلب رابطًا جديدًا.";
   }
+  // فشل الإرسال من جهة الخادم (SMTP): "Error sending confirmation email" وأخواتها.
+  // يجب أن يسبق فرع «email» وإلا ظهر للأستاذ أن بريده خاطئ وهو صحيح.
+  if (m.includes("error sending")) {
+    return "تعذّر إرسال الرسالة إلى بريدك الآن. أعد المحاولة بعد قليل، وإن تكرّر فأخبر صاحب التطبيق.";
+  }
+  if (m.includes("email not confirmed")) {
+    return "لم تؤكّد بريدك بعد. افتح رسالة التأكيد التي أرسلناها إليك.";
+  }
   if (m.includes("password")) return `كلمة السر لا تصلح: ${MIN_PASSWORD} أحرف على الأقل.`;
   if (m.includes("email")) return "راجع صيغة البريد الإلكتروني.";
   return message;

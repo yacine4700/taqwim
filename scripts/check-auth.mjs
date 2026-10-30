@@ -38,6 +38,14 @@ function translateAuthError(message) {
   if (m.includes("session") && m.includes("missing")) {
     return "انتهت صلاحية الرابط. اطلب رابطًا جديدًا.";
   }
+  // فشل الإرسال من جهة الخادم (SMTP): "Error sending confirmation email" وأخواتها.
+  // يجب أن يسبق فرع «email» وإلا ظهر للأستاذ أن بريده خاطئ وهو صحيح.
+  if (m.includes("error sending")) {
+    return "تعذّر إرسال الرسالة إلى بريدك الآن. أعد المحاولة بعد قليل، وإن تكرّر فأخبر صاحب التطبيق.";
+  }
+  if (m.includes("email not confirmed")) {
+    return "لم تؤكّد بريدك بعد. افتح رسالة التأكيد التي أرسلناها إليك.";
+  }
   if (m.includes("password")) return `كلمة السر لا تصلح: ${MIN_PASSWORD} أحرف على الأقل.`;
   if (m.includes("email")) return "راجع صيغة البريد الإلكتروني.";
   return message;
@@ -109,6 +117,12 @@ eq("كلمة قديمة", translateAuthError("New password should be different f
 eq("جلسة مفقودة", translateAuthError("Auth session missing!"), "انتهت صلاحية الرابط. اطلب رابطًا جديدًا.");
 eq("كلمة قصيرة من الخادم", translateAuthError("Password should be at least 6 characters"), "كلمة السر لا تصلح: 6 أحرف على الأقل.");
 eq("رسالة مجهولة تمرّ كما هي", translateAuthError("boom"), "boom");
+const SEND_FAILED = "تعذّر إرسال الرسالة إلى بريدك الآن. أعد المحاولة بعد قليل، وإن تكرّر فأخبر صاحب التطبيق.";
+eq("فشل إرسال التأكيد (SMTP) ليس خطأ صيغة", translateAuthError("Error sending confirmation email"), SEND_FAILED);
+eq("فشل إرسال الاستعادة", translateAuthError("Error sending recovery email"), SEND_FAILED);
+eq("بريد غير مؤكَّد", translateAuthError("Email not confirmed"), "لم تؤكّد بريدك بعد. افتح رسالة التأكيد التي أرسلناها إليك.");
+eq("صيغة بريد خاطئة تبقى كما كانت", translateAuthError('Email address "x" is invalid'), "راجع صيغة البريد الإلكتروني.");
+eq("حدّ البريد يسبق فرع الإرسال", translateAuthError("email rate limit exceeded"), "طلبات كثيرة في وقت قصير. انتظر دقيقة ثم أعد المحاولة.");
 
 /* تأكيد الحذف */
 eq("البريد نفسه", confirmMatches("a@b.com", "a@b.com"), true);
