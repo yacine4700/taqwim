@@ -31,9 +31,11 @@ import type { Op } from "./outbox";
 import {
   applyTpTarget,
   componentValues,
+  DEFAULT_READING_CODE,
   termAverage,
   tpAverages,
   type CriterionKind,
+  type Reading,
 } from "./scoring";
 
 export const BACKUP_FORMAT = "taqwim-backup";
@@ -95,6 +97,8 @@ export type BReading = {
   score: number;
   read_on: string;
   note: string | null;
+  /** معيار السحب الذي تنتمي إليه المحاولة؛ نسخة قديمة بلا هذا الحقل تعني معيار القراءة. */
+  criterion_code: string;
 };
 export type BSession = {
   id: string;
@@ -240,6 +244,7 @@ export function normalizeData(raw: Partial<Record<keyof BackupData, Loose[]>>): 
       score: num(r.score),
       read_on: str(r.read_on).slice(0, 10),
       note: strOrNull(r.note),
+      criterion_code: typeof r.criterion_code === "string" && r.criterion_code ? r.criterion_code : DEFAULT_READING_CODE,
     })),
     tp_sessions: rows("tp_sessions").map((r) => ({
       id: str(r.id),
@@ -440,6 +445,8 @@ export function parseBackup(text: string): ParseResult {
       need(finite(r.score) && r.score >= 0, `محاولة القراءة رقم ${i + 1}: نقطة غير صالحة.`);
       need(typeof r.read_on === "string" && DATE.test(r.read_on), `محاولة القراءة رقم ${i + 1}: تاريخ غير صالح.`);
       need(r.note === undefined || optText(r.note), `محاولة القراءة رقم ${i + 1}: ملاحظة غير صالحة.`);
+      need(r.criterion_code === undefined || (typeof r.criterion_code === "string" && r.criterion_code.length > 0 && r.criterion_code.length <= 40),
+        `محاولة القراءة رقم ${i + 1}: معيار غير صالح.`);
     });
     rows("tp_sessions").forEach((r, i) => {
       need(classes.has(r.class_id as string), `حصة الأعمال التطبيقية رقم ${i + 1}: لقسم ليس في الملف.`);
@@ -825,7 +832,7 @@ export const COLUMNS: Record<Table, string> = {
   criteria: "id,code,label,kind,base,ceiling,position",
   components: "id,code,label,weight,position,active",
   records: "student_id,term,criteria,tp,devoir,exam",
-  readings: "id,student_id,term,score,read_on,note",
+  readings: "id,student_id,term,score,read_on,note,criterion_code",
   tp_sessions: "id,class_id,group_id,term,held_on,title",
   tp_marks: "session_id,student_id,score,absent",
   teachers: "full_name,subject,school_name",
@@ -1038,7 +1045,7 @@ function pickComparable(table: keyof BackupData, row: object): unknown {
     case "students":
       return [r.id, r.class_id, r.full_name, r.group_id, r.note, r.tags];
     case "readings":
-      return [r.id, r.student_id, r.term, Number(r.score), r.read_on];
+      return [r.id, r.student_id, r.term, Number(r.score), r.read_on, r.criterion_code ?? DEFAULT_READING_CODE];
     case "tp_sessions":
       return [r.id, r.class_id, r.group_id, r.term, r.held_on, r.title];
     default:
@@ -1073,7 +1080,7 @@ export function averagesOf(data: BackupData): Map<string, { cc: number | null; a
     const tp = tpAverages(data.tp_marks, data.tp_sessions, t);
     const recordOf = new Map(data.records.filter((r) => r.term === t).map((r) => [r.student_id, r]));
     for (const s of data.students) {
-      const reads = data.readings.filter((r) => r.term === t && r.student_id === s.id);
+      const reads = data.readings.filter((r) => r.term === t && r.student_id === s.id) as Reading[];
       const record = applyTpTarget(recordOf.get(s.id), s.id, t, tp.get(s.id) ?? null, targetOf.get(s.class_id) ?? null, criteria);
       const values = componentValues(criteria, record, reads);
       const touched = !!recordOf.get(s.id) || reads.length > 0 || tp.has(s.id);

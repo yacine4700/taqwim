@@ -390,6 +390,10 @@ t("غائب وله علامة", mutate((b) => { const m = b.data.tp_marks.find((
 t("فوج من قسم آخر", mutate((b) => (b.data.students[9].group_id = g1)).ok, false);
 t("علامتان للتلميذ والفصل نفسيهما", mutate((b) => b.data.records.push({ ...b.data.records[0] })).ok, false);
 t("جدول مفقود", mutate((b) => delete b.data.readings).ok, false);
+const oldReadings = mutate((b) => { for (const r of b.data.readings) delete r.criterion_code; });
+t("ملف قديم بلا criterion_code يُقبل وتأخذ محاولاته معيار القراءة", [oldReadings.ok, oldReadings.ok && oldReadings.backup.data.readings.every((r) => r.criterion_code === "read")], [true, true]);
+t("الملف الجديد يحمل كود المعيار", backupA.data.readings.every((r) => typeof r.criterion_code === "string" && r.criterion_code.length > 0), true);
+t("كود معيار فارغ يُرفض", mutate((b) => (b.data.readings[0].criterion_code = "")).ok, false);
 t("نوع معيار مجهول", mutate((b) => (b.data.criteria[0].kind = "magic")).ok, false);
 const strangeOps = mutate((b) => b.pending.push({ id: "x", at: 1, kind: "future-op" }));
 t("معلّقة مجهولة النوع تُترك وتُعدّ، والملف يُقبل", [strangeOps.ok, strangeOps.droppedPending], [true, 1]);

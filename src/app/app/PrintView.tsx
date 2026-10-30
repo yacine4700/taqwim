@@ -22,6 +22,8 @@ import {
   type Component,
   type Criterion,
   type Reading,
+  readingAverage,
+  readingsFor,
   type RecordRow,
 } from "@/lib/scoring";
 
@@ -149,12 +151,8 @@ export default function PrintView({
                 {detailed &&
                   criteria.map((c) => {
                     if (c.kind === "auto") {
-                      // معيار القراءة: نقطته متوسط محاولات الفصل.
-                      const average =
-                        row.readings.length === 0
-                          ? null
-                          : row.readings.reduce((sum, r) => sum + Number(r.score), 0) /
-                            row.readings.length;
+                      // نقطة معيار السحب: متوسط محاولات الفصل لهذا المعيار وحده.
+                      const average = readingAverage(readingsFor(row.readings, c.code));
                       return (
                         <td key={c.id} className="num">
                           {average === null ? "—" : fmt(average, 1)}

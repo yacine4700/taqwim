@@ -17,6 +17,7 @@ import {
   type Criterion,
   type MarkField,
   type Reading,
+  readingsFor,
   type RecordRow,
   type TpTarget,
 } from "@/lib/scoring";
@@ -110,7 +111,7 @@ export function readMark(
 }
 
 export function StudentSheet({
-  student, term, readOnly, criteria, record, readings, components, tp,
+  student, term, readOnly, criteria, record, readings: allReadings, components, tp,
   onClose, onCriterion, onMark, onRemoveReading, onEdit, onDelete,
   position, count, onStep,
 }: {
@@ -149,8 +150,8 @@ export function StudentSheet({
     return () => clearTimeout(timer);
   }, [armed]);
   const tags = student.tags ?? [];
-  const cc = continuousMark(criteria, record, readings);
-  const average = termAverage(components, componentValues(criteria, record, readings));
+  const cc = continuousMark(criteria, record, allReadings);
+  const average = termAverage(components, componentValues(criteria, record, allReadings));
   const ccLabel = components.find((c) => c.code === "cc")?.label ?? "التقويم المستمر";
   // لا تُعرض إلا المركّبات المفعّلة: المطفأة خارجة من المعدل، فعرض خانة لها
   // يعني أن يُنقّط الأستاذ نقطة لا تُحسب.
@@ -231,6 +232,8 @@ export function StudentSheet({
         <fieldset className="rofield" disabled={readOnly}>
         {criteria.map((c) => {
           if (c.kind === "auto") {
+            // محاولات هذا المعيار وحده: لكل معيار من نوعه سجلّه ومتوسطه.
+            const readings = readingsFor(allReadings, c.code);
             const avg = readingAverage(readings);
             return (
               <div key={c.id} className="fld">

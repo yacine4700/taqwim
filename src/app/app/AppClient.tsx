@@ -46,6 +46,7 @@ import {
   type Component,
   type Criterion,
   type Reading,
+  readingsFor,
   type RecordRow,
   type TpMark,
   type TpSession,
@@ -55,6 +56,7 @@ import {
 import { Klass, NO_PROFILE, Profile, School, Snapshot, Student, Tab } from "./types";
 import { today } from "./util";
 import {
+  draftKey,
   emptyDraft,
   migrateWhere,
   openClassAfterTab,
@@ -266,7 +268,7 @@ export default function AppClient({
       supabase.from("criteria").select("id,code,label,kind,base,ceiling,position").order("position"),
       supabase.from("components").select("id,code,label,weight,position,active").order("position"),
       supabase.from("records").select("student_id,term,criteria,tp,devoir,exam"),
-      supabase.from("readings").select("id,student_id,term,score,read_on").order("read_on"),
+      supabase.from("readings").select("id,student_id,term,score,read_on,criterion_code").order("read_on"),
       supabase.from("teachers").select("full_name,subject").eq("id", teacherId).maybeSingle(),
     ]);
     const failure =
@@ -618,7 +620,10 @@ export default function AppClient({
     saveRecord(studentId, { criteria: map });
   }
 
-  async function addReadings(entries: Array<{ studentId: string; score: number }>) {
+  async function addReadings(
+    code: string,
+    entries: Array<{ studentId: string; score: number }>,
+  ) {
     if (locked) {
       lockedSay();
       return false;
@@ -632,6 +637,7 @@ export default function AppClient({
         term,
         score: entry.score,
         read_on: day,
+        criterion_code: code,
       };
       outbox.push(newOp("reading-add", { reading }));
     }
@@ -1444,7 +1450,9 @@ export default function AppClient({
                 components={components}
                 recordOf={effectiveRecordOf}
                 averageOf={averageOf}
-                readingCount={(id) => readingsOf(id).length}
+                readingCount={(id, code) =>
+                  (code === undefined ? readingsOf(id) : readingsFor(readingsOf(id), code)).length
+                }
                 stats={statsOf(openClass)}
                 tp={{
                   target: classes.find((c) => c.id === openClass)?.tp_target ?? null,
@@ -1461,11 +1469,12 @@ export default function AppClient({
                 }
                 column={columnOf[openClass] ?? null}
                 onColumn={(column) => setColumnOf((c) => ({ ...c, [openClass]: column }))}
-                reading={criteria.find((c) => c.kind === "auto")}
                 readCount={readCount}
                 onReadCount={setReadCount}
-                draft={drafts[openClass] ?? emptyDraft<Student>()}
-                onDraft={(next) => setDrafts((d) => ({ ...d, [openClass]: next }))}
+                draftOf={(code) => drafts[draftKey(openClass, code)] ?? emptyDraft<Student>()}
+                onDraft={(code, next) =>
+                  setDrafts((d) => ({ ...d, [draftKey(openClass, code)]: next }))
+                }
                 onSaveReadings={addReadings}
               />
             ) : (

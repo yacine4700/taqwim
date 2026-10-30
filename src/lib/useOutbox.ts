@@ -20,6 +20,7 @@ import type { createClient } from "@/lib/supabase/client";
 import { kvGet, kvSet } from "@/lib/localdb";
 import { closedTermOf, termName } from "@/lib/terms";
 import { afterFailure, classifyFailure, enqueue, mayFailSilently, writesBlocked, type Op } from "@/lib/outbox";
+import { DEFAULT_READING_CODE } from "@/lib/scoring";
 
 type Supabase = ReturnType<typeof createClient>;
 
@@ -145,6 +146,8 @@ export function useOutbox(
               term: op.reading.term,
               score: op.reading.score,
               read_on: op.reading.read_on,
+              // عملية سبقت التحديث بلا كود تُعامَل كمحاولة معيار القراءة، كما تفعل القاعدة.
+              criterion_code: op.reading.criterion_code ?? DEFAULT_READING_CODE,
             },
             { onConflict: "id" },
           );

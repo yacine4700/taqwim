@@ -9,7 +9,7 @@
  * المسودّة تعيش لكل قسم وحده: من انتقل إلى عمود «المشاركة» ثم عاد، أو خرج
  * من القسم ورجع، يجد أسماءه ونقاطه كما تركها. وهي في الذاكرة فقط كما كانت.
  */
-import { pickForSession } from "./scoring";
+import { DEFAULT_READING_CODE, pickForSession } from "./scoring";
 
 export type ReadingScore = number | "skip";
 
@@ -20,6 +20,26 @@ export type ReadingDraft<S extends { id: string }> = {
 
 /** مفتاح وضع القراءة في شريط «عرض:»، بجوار `c:` للمعايير و`m:` للمركّبات. */
 export const READING_COLUMN = "r:reading";
+
+/**
+ * عمود السحب لمعيار: معيار القراءة الافتراضي يبقى بمفتاحه القديم فلا يضيع مكان محفوظ
+ * على هاتف، وغيره `r:<code>`.
+ */
+export function readingColumnKey(code: string): string {
+  return code === DEFAULT_READING_CODE ? READING_COLUMN : `r:${code}`;
+}
+
+/** كود المعيار الذي يسحب له هذا العمود، أو null إن لم يكن عمود سحب. */
+export function drawCodeOf(key: string | null | undefined): string | null {
+  if (!key) return null;
+  if (key === READING_COLUMN) return DEFAULT_READING_CODE;
+  return key.startsWith("r:") ? key.slice(2) : null;
+}
+
+/** مفتاح المسودّة: لكل قسم ولكل معيار مسودّته، فلا تختلط قائمتا معيارين. */
+export function draftKey(classId: string, code: string): string {
+  return `${classId}|${code}`;
+}
 
 export function emptyDraft<S extends { id: string }>(): ReadingDraft<S> {
   return { picked: [], scores: {} };

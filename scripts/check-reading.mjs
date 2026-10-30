@@ -5,7 +5,16 @@
    وخطّاف scripts/ts-resolve.mjs. */
 
 import {
+  DEFAULT_READING_CODE,
+  autoCriteria,
+  continuousMark,
+  readingsFor,
+} from "../src/lib/scoring.ts";
+import {
   READING_COLUMN,
+  drawCodeOf,
+  draftKey,
+  readingColumnKey,
   draftEntries,
   emptyDraft,
   liveDraft,
@@ -100,6 +109,24 @@ t("تبويب آخر: كما هو",
 t("قسم مفتوح حُذف لا يُفتح",
   migrateWhere({ tab: "classes", openClass: "gone" }, exists),
   { tab: "classes", openClass: null, readingIn: null });
+
+console.log("— أعمدة السحب لكل معيار");
+t("معيار القراءة يبقى بمفتاحه القديم", readingColumnKey("read"), READING_COLUMN);
+t("غيره r:<code>", readingColumnKey("oral"), "r:oral");
+t("كود المفتاح القديم", drawCodeOf(READING_COLUMN), DEFAULT_READING_CODE);
+t("كود مفتاح معيار", drawCodeOf("r:oral"), "oral");
+t("عمود معيار عادي ليس سحبًا", drawCodeOf("c:part"), null);
+t("لا عمود مفتوح", drawCodeOf(null), null);
+t("مسودّتان لمعيارين في قسم واحد", draftKey("k1", "read") !== draftKey("k1", "oral"), true);
+t("المعايير من نوع السحب", autoCriteria([{ code: "a", kind: "add" }, { code: "oral", kind: "auto" }]).map((c) => c.code), ["oral"]);
+t("محاولة قديمة بلا كود تُحسب للقراءة", readingsFor([{ score: 1 }, { score: 2, criterion_code: "oral" }], "read").length, 1);
+const crit = (code, kind = "auto") => ({ id: code, code, label: code, kind, base: 0, ceiling: 4, position: 0 });
+t("المحاكاة بالشفرة الحقيقية: القراءة 2.5 والشفوية 3 لا يتكرران",
+  Math.round(continuousMark([crit("read"), crit("oral")], undefined, [
+    { id: "1", student_id: "s", term: 1, score: 2.5, read_on: "x", criterion_code: "read" },
+    { id: "2", student_id: "s", term: 1, score: 4, read_on: "x", criterion_code: "oral" },
+    { id: "3", student_id: "s", term: 1, score: 2, read_on: "x", criterion_code: "oral" },
+  ]) * 100) / 100, 13.75); // (2.5+3) على سقفين 8، لا (2.5+2.83)×2
 
 console.log(`\n${passed} ok, ${failed} failed`);
 process.exit(failed ? 1 : 0);

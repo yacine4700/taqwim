@@ -5,8 +5,11 @@ function readingAverage(readings) {
   return readings.reduce((s, r) => s + Number(r.score), 0) / readings.length;
 }
 
+const readingCode = (r) => r.criterion_code ?? "read";
+const readingsFor = (readings, code) => readings.filter((r) => readingCode(r) === code);
+
 function criterionValue(c, record, readings) {
-  if (c.kind === "auto") return readingAverage(readings);
+  if (c.kind === "auto") return readingAverage(readingsFor(readings, c.code));
   const raw = record?.criteria?.[c.code];
   return typeof raw === "number" ? raw : null;
 }
@@ -89,6 +92,20 @@ console.log("\n1. مطابقة نتائج القاعدة الحقيقية");
 t("disc=-0.5 لا شيء غيره", continuousMark(DEF, { criteria: { disc: -0.5 } }, []), 18.75);
 t("disc=-4, part=1", continuousMark(DEF, { criteria: { disc: -4, part: 1 } }, []), 8.3333);
 t("قراءة 2 بلا سجل", continuousMark(DEF, undefined, [{ score: 2 }]), 16.6667);
+
+console.log("\n1ب. محاولات كل معيار من نوع السحب تُحسب له وحده (مطابق لـ v_continuous بعد الترحيل)");
+const TWO = [...DEF, { code: "oral", kind: "auto", base: 0, ceiling: 4 }];
+const reads2 = [
+  { score: 2.5, criterion_code: "read" },
+  { score: 4, criterion_code: "oral" },
+  { score: 2, criterion_code: "oral" },
+];
+// الانضباط والأدوات 4+4، القراءة 2.5، الشفوية 3، على سقوف 16 (part وhw لم يُقيَّما فلا يدخلان).
+t("معيارا سحب بمحاولاتهما", continuousMark(TWO, undefined, reads2), (4 + 4 + 2.5 + 3) / 16 * 20);
+t("محاولة بلا كود = معيار القراءة", continuousMark(DEF, undefined, [{ score: 2 }]), continuousMark(DEF, undefined, [{ score: 2, criterion_code: "read" }]));
+t("محاولات معيار آخر لا تدخل القراءة", continuousMark(DEF, undefined, [{ score: 4, criterion_code: "oral" }]), null);
+t("معيار سحب بلا محاولات يخرج ولا يُحسب صفرًا", continuousMark(TWO, undefined, [{ score: 2, criterion_code: "read" }]), continuousMark(DEF, undefined, [{ score: 2, criterion_code: "read" }]));
+t("حذف المعيار يُخرج محاولاته من الحساب", continuousMark(DEF, undefined, reads2), continuousMark(DEF, undefined, [{ score: 2.5, criterion_code: "read" }]));
 
 console.log("\n2. القاعدة: المعيار غير المقيَّم يخرج ولا يُحسب صفرًا");
 t("لا شيء مطلقًا → null", continuousMark(DEF, undefined, []), null);

@@ -49,7 +49,30 @@ export type Reading = {
   term: number;
   score: number;
   read_on: string;
+  /**
+   * كود المعيار (من نوع auto) الذي تنتمي إليه المحاولة. غائب في محاولة سُجّلت قبل أن
+   * تنتمي المحاولات إلى معايير (طابور قديم على هاتف)، وتُعامَل كمحاولة معيار القراءة.
+   * القاعدة تفعل الشيء نفسه بقيمة افتراضية: يجب أن يبقيا متطابقين.
+   */
+  criterion_code?: string;
 };
+
+/** كود معيار القراءة الافتراضي، وهو ما تأخذه المحاولة بلا كود. */
+export const DEFAULT_READING_CODE = "read";
+
+export function readingCode(reading: Reading): string {
+  return reading.criterion_code ?? DEFAULT_READING_CODE;
+}
+
+/** محاولات معيار واحد وحده. */
+export function readingsFor(readings: Reading[], code: string): Reading[] {
+  return readings.filter((r) => readingCode(r) === code);
+}
+
+/** المعايير التي تُحسب من محاولات السحب في الحصة. */
+export function autoCriteria(criteria: Criterion[]): Criterion[] {
+  return criteria.filter((c) => c.kind === "auto");
+}
 
 /** متوسط محاولات القراءة، أو null إن لم يُقرأ له بعد. */
 export function readingAverage(readings: Reading[]): number | null {
@@ -64,7 +87,7 @@ function criterionValue(
   record: RecordRow | undefined,
   readings: Reading[],
 ): number | null {
-  if (criterion.kind === "auto") return readingAverage(readings);
+  if (criterion.kind === "auto") return readingAverage(readingsFor(readings, criterion.code));
   const raw = record?.criteria?.[criterion.code];
   return typeof raw === "number" ? raw : null;
 }

@@ -101,6 +101,7 @@ export function ConfirmCriterionSheet({
         <p className="lead">
           سيخرج من التقويم المستمر في كل الأقسام والفصول، وتُستبعد العلامات
           المسجَّلة فيه من الحساب. بقية المعايير تبقى كما هي.
+          {criterion.kind === "auto" && " محاولات السحب فيه تبقى محفوظة ولا تضيع."}
         </p>
         <div className="srow2">
           <button className="btn ghost" onClick={onCancel}>تراجع</button>
