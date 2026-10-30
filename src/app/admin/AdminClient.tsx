@@ -131,7 +131,8 @@ export default function AdminClient({
   const [pending, setPending] = useState<Pending | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
-  const [done, setDone] = useState("");
+  /** تأكيد العملية: النص، وأين يظهر (row:<id> · term:<سنة>:<فصل> · year:<سنة> · أو أي نطاق آخر ⇒ أعلى المحتوى). */
+  const [done, setDone] = useState<{ text: string; scope: string } | null>(null);
   const [code, setCode] = useState("");
   /* الرزنامة: الصفوف، وما يُحرَّر الآن (فصل واحد أو سنة جديدة كاملة) */
   const [terms, setTerms] = useState<AdminTermRow[]>([]);
@@ -231,10 +232,10 @@ export default function AdminClient({
     if (phase === "ready" && expiresAt && left <= 0) setPhase("reverify");
   }, [phase, expiresAt, left]);
 
-  // الإشعار عائم قرب الإبهام ويزول وحده، فلا يبقى أعلى صفحة طويلة خارج الشاشة.
+  // التأكيد يظهر عند ما عُدِّل (الصفّ أو الفصل)، ويزول وحده بعد ثوانٍ.
   useEffect(() => {
     if (!done) return;
-    const id = setTimeout(() => setDone(""), 5000);
+    const id = setTimeout(() => setDone(null), 5000);
     return () => clearTimeout(id);
   }, [done]);
 
@@ -248,7 +249,8 @@ export default function AdminClient({
     if (!pending) return;
     setBusy(true);
     setMessage("");
-    setDone("");
+    setDone(null);
+    const target = pending.id;
     const reason = cleanReason(pending.reason);
     const { error } =
       pending.action === "cancel"
@@ -266,9 +268,10 @@ export default function AdminClient({
       return;
     }
     setPending(null);
-    setDone(
-      pending.action === "disable" ? "أُوقف الحساب." : pending.action === "enable" ? "أُعيد تفعيل الحساب." : "أُلغي طلب الحذف.",
-    );
+    setDone({
+      text: pending.action === "disable" ? "أُوقف الحساب." : pending.action === "enable" ? "أُعيد تفعيل الحساب." : "أُلغي طلب الحذف.",
+      scope: `row:${target}`,
+    });
     await load();
   }
 
@@ -306,12 +309,12 @@ export default function AdminClient({
     if (!editing) return;
     setBusy(true);
     setTermError("");
-    setDone("");
+    setDone(null);
     const saved = await saveTerm(editing.school_year, editing.term, editing.draft);
     setBusy(false);
     if (!saved) return;
     setEditing(null);
-    setDone(`حُفظ الفصل ${editing.term} من ${editing.school_year}.`);
+    setDone({ text: `حُفظ الفصل ${editing.term} من ${editing.school_year}.`, scope: `term:${editing.school_year}:${editing.term}` });
     await load();
   }
 
@@ -319,7 +322,7 @@ export default function AdminClient({
     if (!newYear) return;
     setBusy(true);
     setTermError("");
-    setDone("");
+    setDone(null);
     // بالترتيب: إن فشل فصل يتوقف الباقي، وما حُفظ قبله يبقى ويظهر بعد إعادة التحميل.
     let saved = 0;
     for (let i = 0; i < 3; i++) {
@@ -329,7 +332,7 @@ export default function AdminClient({
     setBusy(false);
     if (saved === 3) {
       setNewYear(null);
-      setDone(`أُضيفت رزنامة ${newYear.label}.`);
+      setDone({ text: `أُضيفت رزنامة ${newYear.label}.`, scope: `year:${newYear.label}` });
     } else if (saved > 0) {
       setTermError((e) => `حُفظ ${saved} من 3 فصول فقط. ${e}`);
     }
@@ -515,6 +518,19 @@ export default function AdminClient({
       </div>
     ) : null;
 
+  /** هل يظهر التأكيد في مكانه (الصفّ أو الفصل)؟ وإلا فشريط صغير أعلى المحتوى. */
+  const doneInPlace =
+    !!done &&
+    ((done.scope.startsWith("row:") &&
+      (tab === "accounts" ? shown : tab === "deletions" ? deletions : []).some((t) => `row:${t.id}` === done.scope)) ||
+      ((done.scope.startsWith("term:") || done.scope.startsWith("year:")) && tab === "calendar"));
+  const doneAt = (scope: string) =>
+    done?.scope === scope ? (
+      <small className="adm-done" role="status">
+        ✓ {done.text}
+      </small>
+    ) : null;
+
   const row = (t: AdminTeacher) => (
     <div key={t.id} className={t.status === "active" ? "adm-item" : "adm-item bad"}>
       <div className="prow">
@@ -530,6 +546,7 @@ export default function AdminClient({
           <small>
             {t.last_activity ? `آخر نشاط ${day(t.last_activity)}` : "لم ينقّط بعد"} · آخر دخول {day(t.last_sign_in_at)}
           </small>
+          {doneAt(`row:${t.id}`)}
           {t.status !== "active" && (
             <small className="perr">
               {t.status === "disabled"
@@ -613,7 +630,11 @@ export default function AdminClient({
       </details>
 
       {message && <div className="note bad" role="alert">{message}</div>}
-      {done && <div className="note adm-toast" role="status">{done}</div>}
+      {done && !doneInPlace && (
+        <div className="note adm-done-top" role="status">
+          ✓ {done.text}
+        </div>
+      )}
 
       {/* ما يحتاج انتباهًا: يُخفى منه ما يظهر أصلًا في التبويب المفتوح */}
       {attention.some((a) => a.tab !== tab) && (
@@ -754,6 +775,7 @@ export default function AdminClient({
           {groupByYear(terms).map((y) => (
             <div key={y.school_year} className="card adm-year">
               <h3>{y.school_year}</h3>
+              {doneAt(`year:${y.school_year}`)}
               {y.terms.map((t, i) => {
                 const term = i + 1;
                 const isEditing = editing?.school_year === y.school_year && editing.term === term;
@@ -785,6 +807,7 @@ export default function AdminClient({
                         الفصل {term}
                         {t && <span className={`adm-phase ${phaseOn(t, today)}`}>{PHASE_LABEL[phaseOn(t, today)]}</span>}
                       </b>
+                      {doneAt(`term:${y.school_year}:${term}`)}
                       {t ? (
                         <>
                           <small>من {isoDay(t.starts_on)} إلى {isoDay(t.ends_on)}</small>
@@ -825,7 +848,7 @@ export default function AdminClient({
           terms={terms}
           today={today}
           onProblem={handleProblem}
-          onSaved={setDone}
+          onSaved={(text) => setDone({ text, scope: "backup" })}
           onTermsChanged={load}
         />
       )}

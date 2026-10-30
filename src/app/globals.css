@@ -666,7 +666,9 @@ a.btn, a.swap { text-decoration: none; }
 .adm-phase { display: inline-block; margin-inline-start: 8px; padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; background: var(--surface-2); color: var(--muted); }
 .adm-phase.current { background: var(--primary-soft); color: var(--primary); }
 .adm-phase.grace { background: var(--sand-soft); color: var(--sand); }
-.adm-toast { position: fixed; inset-inline: 12px; bottom: 16px; z-index: 20; max-width: 460px; margin-inline: auto; box-shadow: var(--shadow); }
+.adm-done { display: block; margin-block: 3px; font-size: 12px; font-weight: 700; color: var(--primary); }
+.adm-done-top { position: sticky; top: 8px; z-index: 5; background: var(--primary-soft); color: var(--primary); font-weight: 600; box-shadow: var(--shadow); }
+.adm-year > .adm-done { grid-column: 1 / -1; }
 
 /* الشاشات العريضة: لا يبقى عمود الهاتف موسَّطًا. الحسابات والسجلّ بطاقات في عمودين، وفصول السنة جنبًا إلى جنب */
 @media (min-width: 1000px) {
@@ -691,7 +693,6 @@ a.btn, a.swap { text-decoration: none; }
   .adm-year .adm-term:not(.editing) .clearb { align-self: flex-start; }
   .adm-year > .adm-confirm .adm-dates { grid-template-columns: 1fr; }
   .adm-year > .adm-confirm .adm-dates label:last-child { max-width: none; }
-  .adm-toast { inset-inline-start: auto; inset-inline-end: 24px; margin-inline: 0; width: 360px; }
 }
 /* الرزنامة: بطاقة لكل سنة، وصفّ لكل فصل */
 .adm-year { padding: 12px; margin-bottom: 10px; }
