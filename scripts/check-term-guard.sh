@@ -6,6 +6,8 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PRE="$ROOT/supabase/migrations/20261022130000_admin_and_deletion_grace.sql"
 MIG="$ROOT/supabase/migrations/20261030090000_term_calendar_and_guard.sql"
 DOWN="$ROOT/supabase/rollback/20261030090000_term_calendar_and_guard.down.sql"
+MIG2="$ROOT/supabase/migrations/20261030120000_admin_term_calendar.sql"
+DOWN2="$ROOT/supabase/rollback/20261030120000_admin_term_calendar.down.sql"
 T="$ROOT/supabase/tests"
 BIN="${PG_BIN:-$(ls -d /usr/lib/postgresql/*/bin | sort -V | tail -1)}"
 DIR="$(mktemp -d)"; chmod 755 "$DIR"; chown postgres "$DIR"
@@ -35,8 +37,15 @@ else echo "FAIL: النسختان تختلفان"; diff "$DIR/ts.txt" "$DIR/sql.
 
 as supabase_admin -f "$T/term_guard.test.sql"
 
+echo "== تعديل الروزنامة من المشرف (ترحيل 20261030120000)"
+as postgres --single-transaction -f "$MIG2"
+as supabase_admin -f "$T/admin_term_calendar.test.sql"
+as postgres --single-transaction -f "$DOWN2" && echo "ok  التراجع عن دالة المشرف نظيف"
+as postgres --single-transaction -f "$MIG2" && echo "ok  وإعادة تطبيقها"
+
 echo "== التراجع لا يمسّ علامة، ثم إعادة الترحيل"
 before=$(as supabase_admin -At -c "select tests.fp('aaaaaaaa-0000-4000-8000-00000000000a') || tests.fp('bbbbbbbb-0000-4000-8000-00000000000b')")
+as postgres --single-transaction -f "$DOWN2"
 as postgres --single-transaction -f "$DOWN"
 after=$(as supabase_admin -At -c "select tests.fp('aaaaaaaa-0000-4000-8000-00000000000a') || tests.fp('bbbbbbbb-0000-4000-8000-00000000000b')")
 [ "$before" = "$after" ] && echo "ok  بيانات الأساتذة كما هي بعد التراجع" || { echo "FAIL: تغيّرت البيانات"; exit 1; }

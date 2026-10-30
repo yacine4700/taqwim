@@ -27,7 +27,7 @@ export type AdminLogRow = {
   actor_kind: "admin" | "teacher" | "system";
   action: string;
   target_email: string | null;
-  detail: { reason?: string } | null;
+  detail: ({ reason?: string } & import("./adminTerms").TermLogDetail) | null;
 };
 
 /** أقصى طول للسبب. القاعدة تقصّ عند هذا الحدّ نفسه. */
@@ -181,6 +181,7 @@ export const ACTION_LABEL: Record<string, string> = {
   cancel_deletion: "إلغاء حذف",
   request_deletion: "طلب حذف",
   purge: "حذف نهائي",
+  set_term: "تعديل الروزنامة",
 };
 
 export const ACTOR_LABEL: Record<AdminLogRow["actor_kind"], string> = {

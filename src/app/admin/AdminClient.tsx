@@ -3,6 +3,21 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { algiersToday } from "@/lib/terms";
+import {
+  GRACE_DEFAULT,
+  calendarIssues,
+  closesOn,
+  graceWord,
+  groupByYear,
+  nextYearLabel,
+  suggestYear,
+  termErrorMessage,
+  termLogSummary,
+  validateTerm,
+  type AdminTermRow,
+  type TermDraft,
+} from "@/lib/adminTerms";
 import {
   ACTION_LABEL,
   ACTOR_LABEL,
@@ -24,7 +39,7 @@ import {
   type StatusFilter,
 } from "@/lib/admin";
 
-type Tab = "accounts" | "deletions" | "log";
+type Tab = "accounts" | "deletions" | "calendar" | "log";
 /** loading: أول تحميل · ready: اللوحة · reverify: التحقّق الثنائي منتهٍ · forbidden: ليس مشرفًا · error: تعذّر التحميل */
 type Phase = "loading" | "ready" | "reverify" | "forbidden" | "error";
 type Pending = { id: string; action: "disable" | "enable" | "cancel"; reason: string };
@@ -77,6 +92,11 @@ export default function AdminClient({
   const [message, setMessage] = useState("");
   const [done, setDone] = useState("");
   const [code, setCode] = useState("");
+  /* الروزنامة: الصفوف، وما يُحرَّر الآن (فصل واحد أو سنة جديدة كاملة) */
+  const [terms, setTerms] = useState<AdminTermRow[]>([]);
+  const [editing, setEditing] = useState<{ school_year: string; term: number; draft: TermDraft } | null>(null);
+  const [newYear, setNewYear] = useState<{ label: string; drafts: TermDraft[] } | null>(null);
+  const [termError, setTermError] = useState("");
   const alive = useRef(true);
 
   useEffect(() => {
@@ -118,9 +138,13 @@ export default function AdminClient({
     setExpiresAt(state.mfaExpiresAt);
     if (!state.ready) return setPhase("reverify");
 
-    const [list, recent] = await Promise.all([
+    const [list, recent, cal] = await Promise.all([
       supabase.rpc("admin_list_teachers"),
       supabase.rpc("admin_log_recent", { max_rows: 60 }),
+      supabase
+        .from("term_calendar")
+        .select("school_year,term,starts_on,ends_on,grace_days")
+        .order("starts_on"),
     ]);
     if (!alive.current) return;
     if (list.error) {
@@ -131,6 +155,16 @@ export default function AdminClient({
     setTeachers((list.data ?? []) as AdminTeacher[]);
     // السجلّ ثانوي: فشله لا يُسقط القائمة، لكن يُقال.
     setLog(recent.error ? [] : ((recent.data ?? []) as AdminLogRow[]));
+    // الروزنامة ثانوية كالسجلّ: فشلها لا يُسقط القائمة (الجدول قد لا يكون رُحِّل بعد).
+    if (!cal.error) {
+      setTerms(
+        ((cal.data ?? []) as AdminTermRow[]).map((r) => ({
+          ...r,
+          term: Number(r.term),
+          grace_days: Number(r.grace_days),
+        })),
+      );
+    }
     setMessage(recent.error ? "تعذّر تحميل سجلّ العمليات." : "");
     setPhase("ready");
   }, [supabase, handleProblem]);
@@ -174,6 +208,70 @@ export default function AdminClient({
     setDone(
       pending.action === "disable" ? "أُوقف الحساب." : pending.action === "enable" ? "أُعيد تفعيل الحساب." : "أُلغي طلب الحذف.",
     );
+    await load();
+  }
+
+  /**
+   * يحفظ فصلًا واحدًا. يفحص أولًا بالقواعد نفسها، ثم تحكم القاعدة. يعيد true إن نجح.
+   * إن انتهى رمز التحقق الثنائي تنتقل اللوحة إلى طلب الرمز ولا يُنفَّذ شيء.
+   */
+  async function saveTerm(school_year: string, term: number, draft: TermDraft): Promise<boolean> {
+    const check = validateTerm(school_year, term, draft);
+    if (!check.ok) {
+      setTermError(check.error);
+      return false;
+    }
+    const { error } = await supabase.rpc("admin_set_term", {
+      p_school_year: school_year,
+      p_term: term,
+      p_starts_on: draft.starts_on,
+      p_ends_on: draft.ends_on,
+      p_grace_days: check.grace,
+      reason: cleanReason(draft.reason),
+    });
+    if (error) {
+      const own = termErrorMessage(error);
+      if (own) setTermError(own);
+      else {
+        setTermError("");
+        handleProblem(error);
+      }
+      return false;
+    }
+    return true;
+  }
+
+  async function submitEditing() {
+    if (!editing) return;
+    setBusy(true);
+    setTermError("");
+    setDone("");
+    const saved = await saveTerm(editing.school_year, editing.term, editing.draft);
+    setBusy(false);
+    if (!saved) return;
+    setEditing(null);
+    setDone(`حُفظ الفصل ${editing.term} من ${editing.school_year}.`);
+    await load();
+  }
+
+  async function submitNewYear() {
+    if (!newYear) return;
+    setBusy(true);
+    setTermError("");
+    setDone("");
+    // بالترتيب: إن فشل فصل يتوقف الباقي، وما حُفظ قبله يبقى ويظهر بعد إعادة التحميل.
+    let saved = 0;
+    for (let i = 0; i < 3; i++) {
+      if (!(await saveTerm(newYear.label, i + 1, newYear.drafts[i]))) break;
+      saved += 1;
+    }
+    setBusy(false);
+    if (saved === 3) {
+      setNewYear(null);
+      setDone(`أُضيفت روزنامة ${newYear.label}.`);
+    } else if (saved > 0) {
+      setTermError((e) => `حُفظ ${saved} من 3 فصول فقط. ${e}`);
+    }
     await load();
   }
 
@@ -414,6 +512,9 @@ export default function AdminClient({
         <button role="tab" aria-pressed={tab === "deletions"} onClick={() => setTab("deletions")}>
           طلبات الحذف ({deletions.length})
         </button>
+        <button role="tab" aria-pressed={tab === "calendar"} onClick={() => setTab("calendar")}>
+          الروزنامة
+        </button>
         <button role="tab" aria-pressed={tab === "log"} onClick={() => setTab("log")}>
           السجلّ
         </button>
@@ -461,6 +562,126 @@ export default function AdminClient({
         </>
       )}
 
+      {tab === "calendar" && (
+        <>
+          <div className="note" style={{ marginBottom: 10 }}>
+            الفصل مفتوح للتنقيط من بدايته حتى نهايته + المهلة، فيُنقَّط الفصلان معًا في أيام المهلة. بعدها
+            يصير الفصل للاطلاع فقط في تطبيق كل الأساتذة. كل تعديل يُسجَّل بقيمه السابقة.
+          </div>
+          {calendarIssues(terms, algiersToday()).map((m) => (
+            <div key={m} className="note warn" style={{ marginBottom: 8 }}>{m}</div>
+          ))}
+
+          {termError && <div className="note bad" role="alert" style={{ marginBottom: 8 }}>{termError}</div>}
+
+          {newYear ? (
+            <div className="card adm-year">
+              <h3>سنة جديدة {newYear.label}</h3>
+              <p className="lead">التواريخ مقترحة من السنة السابقة بإزاحة سنة. عدّلها كما في روزنامة الوزارة.</p>
+              {newYear.drafts.map((d, i) => (
+                <TermFields
+                  key={i}
+                  title={`الفصل ${i + 1}`}
+                  draft={d}
+                  onChange={(next) =>
+                    setNewYear({ ...newYear, drafts: newYear.drafts.map((x, j) => (j === i ? next : x)) })
+                  }
+                  withReason={false}
+                />
+              ))}
+              <div className="adm-confirm-row">
+                <button className="btn sm" disabled={busy} onClick={submitNewYear}>
+                  {busy ? "لحظة…" : "احفظ السنة"}
+                </button>
+                <button className="btn ghost sm" disabled={busy} onClick={() => { setNewYear(null); setTermError(""); }}>
+                  تراجع
+                </button>
+              </div>
+            </div>
+          ) : (
+            !editing && (
+              <button
+                className="btn soft sm"
+                style={{ marginBottom: 10 }}
+                onClick={() => {
+                  const label = nextYearLabel(terms, algiersToday());
+                  setTermError("");
+                  setNewYear({ label, drafts: suggestYear(terms, label) });
+                }}
+              >
+                + أضف السنة {nextYearLabel(terms, algiersToday())}
+              </button>
+            )
+          )}
+
+          {terms.length === 0 && !newYear && (
+            <div className="note">لا فصول في الروزنامة، أو لم يُرحَّل الجدول بعد.</div>
+          )}
+
+          {groupByYear(terms).map((y) => (
+            <div key={y.school_year} className="card adm-year">
+              <h3>{y.school_year}</h3>
+              {y.terms.map((t, i) => {
+                const term = i + 1;
+                const isEditing = editing?.school_year === y.school_year && editing.term === term;
+                if (isEditing && editing) {
+                  return (
+                    <div key={term} className="adm-term editing">
+                      <TermFields
+                        title={`الفصل ${term}`}
+                        draft={editing.draft}
+                        onChange={(draft) => setEditing({ ...editing, draft })}
+                        withReason
+                      />
+                      <div className="adm-confirm-row">
+                        <button className="btn sm" disabled={busy} onClick={submitEditing}>
+                          {busy ? "لحظة…" : "احفظ"}
+                        </button>
+                        <button className="btn ghost sm" disabled={busy} onClick={() => { setEditing(null); setTermError(""); }}>
+                          تراجع
+                        </button>
+                      </div>
+                    </div>
+                  );
+                }
+                return (
+                  <div key={term} className="adm-term">
+                    <div className="k">
+                      <b>الفصل {term}</b>
+                      {t ? (
+                        <>
+                          <small><bdi dir="ltr">{t.starts_on} → {t.ends_on}</bdi></small>
+                          <small>{graceWord(t.grace_days)} · آخر يوم للتنقيط <bdi dir="ltr">{closesOn(t)}</bdi></small>
+                        </>
+                      ) : (
+                        <small className="perr">غير مُدخَل</small>
+                      )}
+                    </div>
+                    {!newYear && !editing && (
+                      <button
+                        className="clearb"
+                        onClick={() => {
+                          setTermError("");
+                          setEditing({
+                            school_year: y.school_year,
+                            term,
+                            draft: t
+                              ? { starts_on: t.starts_on, ends_on: t.ends_on, grace_days: String(t.grace_days), reason: "" }
+                              : { starts_on: "", ends_on: "", grace_days: String(GRACE_DEFAULT), reason: "" },
+                          });
+                        }}
+                      >
+                        {t ? "عدّل" : "أضف"}
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          ))}
+        </>
+      )}
+
       {tab === "log" && (
         <>
           {log.length === 0 ? (
@@ -476,6 +697,7 @@ export default function AdminClient({
                       {l.target_email ? " · " : ""}
                       {l.target_email && <bdi dir="ltr">{l.target_email}</bdi>}
                     </small>
+                    {l.action === "set_term" && <small>{termLogSummary(l.detail)}</small>}
                     {l.detail?.reason && <small>السبب: {l.detail.reason}</small>}
                   </div>
                 </div>
@@ -483,6 +705,55 @@ export default function AdminClient({
             </div>
           )}
         </>
+      )}
+    </div>
+  );
+}
+
+/** حقول فصل واحد: بداية ونهاية ومهلة، والسبب اختياري عند التعديل. */
+function TermFields({
+  title, draft, onChange, withReason,
+}: {
+  title: string;
+  draft: TermDraft;
+  onChange: (next: TermDraft) => void;
+  withReason: boolean;
+}) {
+  return (
+    <div className="adm-confirm" style={{ padding: "6px 0 10px" }}>
+      <b>{title}</b>
+      <div className="adm-dates">
+        <label>
+          البداية
+          <input type="date" dir="ltr" value={draft.starts_on} onChange={(e) => onChange({ ...draft, starts_on: e.target.value })} />
+        </label>
+        <label>
+          النهاية
+          <input type="date" dir="ltr" value={draft.ends_on} onChange={(e) => onChange({ ...draft, ends_on: e.target.value })} />
+        </label>
+        <label>
+          المهلة (أيام)
+          <input
+            type="number"
+            inputMode="numeric"
+            min={0}
+            max={30}
+            dir="ltr"
+            value={draft.grace_days}
+            onChange={(e) => onChange({ ...draft, grace_days: e.target.value })}
+          />
+        </label>
+      </div>
+      {withReason && (
+        <label>
+          السبب (اختياري، يُحفظ في السجلّ)
+          <input
+            value={draft.reason}
+            maxLength={REASON_MAX}
+            placeholder="مثال: تأخّر الاختبارات بقرار الوزارة"
+            onChange={(e) => onChange({ ...draft, reason: e.target.value.slice(0, REASON_MAX) })}
+          />
+        </label>
       )}
     </div>
   );

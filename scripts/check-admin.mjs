@@ -5,6 +5,9 @@ import {
   classifyAdminError, parseAdminState, cleanCode, codeReady, cleanReason, REASON_MAX,
   msLeft, leftLabel, daysLeft, summarize, filterTeachers, adminProblemMessage,
 } from "../src/lib/admin.ts";
+import {
+  groupByYear, closesOn, graceWord, nextYearLabel, suggestYear, validateTerm, termErrorMessage, calendarIssues, termLogSummary,
+} from "../src/lib/adminTerms.ts";
 
 let n = 0;
 const ok = (label, fn) => { fn(); n += 1; console.log("ok ", label); };
@@ -92,6 +95,114 @@ ok("البحث والمرشّح", () => {
   assert.deepEqual(filterTeachers(list, "ياسين", "all").map((x) => x.id), ["1"]);
   assert.deepEqual(filterTeachers(list, "", "disabled").map((x) => x.id), ["2"]);
   assert.deepEqual(filterTeachers(list, "c@", "active").map((x) => x.id), []);
+});
+
+/* ---------- تبويب الروزنامة ---------- */
+const row = (school_year, term, starts_on, ends_on, grace_days = 10) => ({ school_year, term, starts_on, ends_on, grace_days });
+const CAL = [
+  row("2026/2027", 1, "2026-09-01", "2026-12-17"),
+  row("2026/2027", 2, "2026-12-18", "2027-03-18"),
+  row("2026/2027", 3, "2027-03-19", "2027-07-08"),
+];
+const draft = (o = {}) => ({ starts_on: "2027-09-01", ends_on: "2027-12-16", grace_days: "10", reason: "", ...o });
+
+ok("صيغة المهلة بالعربية", () => {
+  assert.deepEqual([0, 1, 2, 3, 10, 11, 30].map(graceWord),
+    ["بلا مهلة", "مهلة يوم واحد", "مهلة يومين", "مهلة 3 أيام", "مهلة 10 أيام", "مهلة 11 يومًا", "مهلة 30 يومًا"]);
+});
+ok("آخر يوم للتنقيط = النهاية + المهلة، عبر الشهر والسنة", () => {
+  assert.equal(closesOn(row("2026/2027", 1, "2026-09-01", "2026-12-17")), "2026-12-27");
+  assert.equal(closesOn(row("2026/2027", 1, "2026-09-01", "2026-12-30", 5)), "2027-01-04");
+  assert.equal(closesOn(row("2026/2027", 1, "2026-09-01", "2026-12-30", 0)), "2026-12-30");
+});
+ok("التجميع بالسنة: الأحدث أولًا وثلاث خانات", () => {
+  const g = groupByYear([...CAL, row("2027/2028", 2, "2027-12-17", "2028-03-16")]);
+  assert.deepEqual(g.map((y) => y.school_year), ["2027/2028", "2026/2027"]);
+  assert.deepEqual(g[0].terms.map((t) => t && t.term), [null, 2, null]);
+  assert.deepEqual(g[1].terms.map((t) => t && t.term), [1, 2, 3]);
+});
+ok("السنة التالية بعد أحدث سنة، ومن تاريخ اليوم إن كان الجدول فارغًا", () => {
+  assert.equal(nextYearLabel(CAL, "2026-10-30"), "2027/2028");
+  assert.equal(nextYearLabel([], "2026-10-30"), "2026/2027");
+  assert.equal(nextYearLabel([], "2027-02-10"), "2026/2027");
+});
+ok("اقتراح سنة جديدة: تواريخ السابقة مزاحة بسنة ومهلتها", () => {
+  const s = suggestYear([row("2026/2027", 1, "2026-09-01", "2026-12-17", 12), ...CAL.slice(1)], "2027/2028");
+  assert.equal(s.length, 3);
+  assert.deepEqual([s[0].starts_on, s[0].ends_on, s[0].grace_days], ["2027-09-01", "2027-12-17", "12"]);
+  assert.deepEqual([s[2].starts_on, s[2].ends_on], ["2028-03-19", "2028-07-08"]);
+});
+ok("اقتراح سنة بلا سابقة: قيم افتراضية داخل السنة", () => {
+  const s = suggestYear([], "2026/2027");
+  assert.equal(s[0].starts_on, "2026-09-01");
+  assert.equal(s[2].ends_on, "2027-07-08");
+  assert.ok(s.every((d) => validateTerm("2026/2027", 1, d).ok));
+});
+ok("التحقق: قيم صحيحة", () => assert.deepEqual(validateTerm("2027/2028", 1, draft()), { ok: true, grace: 10 }));
+ok("التحقق: المهلة 0 و30 مقبولتان، و31 وسالبة وكسرية ونص مرفوضة", () => {
+  assert.equal(validateTerm("2027/2028", 1, draft({ grace_days: "0" })).ok, true);
+  assert.equal(validateTerm("2027/2028", 1, draft({ grace_days: "30" })).ok, true);
+  for (const g of ["31", "-1", "2.5", "", "عشرة"]) assert.equal(validateTerm("2027/2028", 1, draft({ grace_days: g })).ok, false, g);
+});
+ok("التحقق: التواريخ", () => {
+  assert.equal(validateTerm("2027/2028", 1, draft({ starts_on: "2027-07-01", ends_on: "2027-08-31" })).ok, true);
+  assert.equal(validateTerm("2027/2028", 1, draft({ ends_on: "2027-08-01", starts_on: "2027-09-01" })).ok, false);
+  assert.equal(validateTerm("2027/2028", 1, draft({ starts_on: "" })).ok, false);
+  assert.equal(validateTerm("2027/2028", 1, draft({ starts_on: "2027-02-30" })).ok, false);
+  assert.equal(validateTerm("2027/2028", 1, draft({ starts_on: "2027-06-30" })).ok, false);
+  assert.equal(validateTerm("2027/2028", 1, draft({ starts_on: "2027-07-01" })).ok, true);
+  assert.equal(validateTerm("2027/2028", 3, draft({ starts_on: "2028-03-17", ends_on: "2028-09-30" })).ok, true);
+  assert.equal(validateTerm("2027/2028", 3, draft({ starts_on: "2028-03-17", ends_on: "2028-10-01" })).ok, false);
+  assert.equal(validateTerm("2027/2028", 1, draft({ starts_on: "2062-09-01", ends_on: "2062-12-01" })).ok, false);
+});
+ok("التحقق: اسم السنة والفصل", () => {
+  assert.equal(validateTerm("2027-2028", 1, draft()).ok, false);
+  assert.equal(validateTerm("2027/2029", 1, draft()).ok, false);
+  assert.equal(validateTerm("2027/2028", 4, draft()).ok, false);
+});
+ok("رسائل خطأ القاعدة", () => {
+  assert.match(termErrorMessage({ code: "23P01" }), /يتداخل/);
+  assert.match(termErrorMessage({ code: "22023" }), /رفضت القاعدة/);
+  assert.equal(termErrorMessage({ code: "42501" }), null);
+  assert.equal(termErrorMessage(null), null);
+});
+ok("تحذيرات: روزنامة سليمة في وسط الفصل الأول بلا تحذير", () =>
+  assert.deepEqual(calendarIssues(CAL, "2026-10-30"), []));
+ok("تحذير: فصل غائب", () => {
+  const i = calendarIssues(CAL.slice(0, 2), "2026-10-30");
+  assert.deepEqual(i, ["السنة 2026/2027: الفصل 3 غير مُدخَل."]);
+});
+ok("تحذير: فجوة بين فصلين", () => {
+  const i = calendarIssues([CAL[0], row("2026/2027", 2, "2026-12-21", "2027-03-18"), CAL[2]], "2026-10-30");
+  assert.equal(i.length, 1);
+  assert.match(i[0], /3 أيام بين الفصل 1 والفصل 2/);
+});
+ok("تحذير: فجوة يوم واحد بصيغة المفرد", () => {
+  const i = calendarIssues([CAL[0], row("2026/2027", 2, "2026-12-19", "2027-03-18"), CAL[2]], "2026-10-30");
+  assert.match(i[0], /1 يوم بين/);
+});
+ok("تحذير: بلا روزنامة، أو اليوم خارجها", () => {
+  assert.match(calendarIssues([], "2026-10-30")[0], /لا شيء يُقفل/);
+  assert.match(calendarIssues(CAL, "2027-09-10")[0], /لا تغطي تاريخ اليوم/);
+  assert.equal(calendarIssues(CAL, "2027-08-17").some((m) => /لا تغطي/.test(m)), false);
+});
+ok("تحذير الصيف: لم تُضَف روزنامة السنة القادمة", () => {
+  assert.match(calendarIssues(CAL, "2027-07-20")[0], /لم تُضَف روزنامة السنة القادمة/);
+  assert.deepEqual(calendarIssues(CAL, "2027-05-20"), []);
+  const withNext = [...CAL, row("2027/2028", 1, "2027-09-01", "2027-12-16"), row("2027/2028", 2, "2027-12-17", "2028-03-16"), row("2027/2028", 3, "2028-03-17", "2028-07-06")];
+  assert.deepEqual(calendarIssues(withNext, "2027-07-20"), []);
+});
+ok("سطر السجلّ: فصل جديد وتعديل بالقيم السابقة", () => {
+  assert.equal(
+    termLogSummary({ school_year: "2027/2028", term: 1, starts_on: "2027-09-01", ends_on: "2027-12-16", grace_days: 10, previous: null }),
+    "2027/2028 · الفصل 1: من 2027-09-01 إلى 2027-12-16 (مهلة 10 أيام). فصل جديد",
+  );
+  assert.equal(
+    termLogSummary({ school_year: "2026/2027", term: 1, starts_on: "2026-09-01", ends_on: "2026-12-15", grace_days: 12, previous: { starts_on: "2026-09-01", ends_on: "2026-12-17", grace_days: 10 } }),
+    "2026/2027 · الفصل 1: من 2026-09-01 إلى 2026-12-15 (مهلة 12 يومًا). كان: من 2026-09-01 إلى 2026-12-17 (مهلة 10 أيام)",
+  );
+  assert.equal(termLogSummary({ reason: "x" }), "");
+  assert.equal(termLogSummary(null), "");
 });
 
 console.log(`${n} اختبارًا نجحت`);

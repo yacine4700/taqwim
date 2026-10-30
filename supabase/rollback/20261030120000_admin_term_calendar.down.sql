@@ -1,0 +1,4 @@
+-- التراجع عن 20261030120000_admin_term_calendar.
+-- يُزال تعديل الروزنامة من لوحة المشرف فقط. الروزنامة وما فيها من تواريخ تبقى كما هي،
+-- وسجلّ التعديلات السابقة (set_term) يبقى، فلا يُضيَّق قيد الأفعال في السجلّ.
+drop function if exists public.admin_set_term(text, integer, date, date, integer, text);
