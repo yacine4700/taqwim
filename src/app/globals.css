@@ -667,6 +667,32 @@ a.btn, a.swap { text-decoration: none; }
 .adm-phase.current { background: var(--primary-soft); color: var(--primary); }
 .adm-phase.grace { background: var(--sand-soft); color: var(--sand); }
 .adm-toast { position: fixed; inset-inline: 12px; bottom: 16px; z-index: 20; max-width: 460px; margin-inline: auto; box-shadow: var(--shadow); }
+
+/* الشاشات العريضة: لا يبقى عمود الهاتف موسَّطًا. الحسابات والسجلّ بطاقات في عمودين، وفصول السنة جنبًا إلى جنب */
+@media (min-width: 1000px) {
+  .adm { max-width: 1100px; }
+  .adm-search { max-width: 420px; }
+  .adm-stats { gap: 12px; }
+  .adm-stats .stat { padding: 14px 12px; }
+  .adm-stats .stat b { font-size: 24px; }
+  .adm-stats .stat small { font-size: 12px; }
+  .adm .plist { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; border: 0; border-radius: 0; overflow: visible; }
+  .adm .plist > .adm-item,
+  .adm .plist > .prow { border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
+  .adm .plist > .adm-item.bad { background: var(--danger-soft); }
+  .adm .plist > .adm-item:last-child,
+  .adm .plist > .prow:last-child { border-bottom: 1px solid var(--line); }
+  .adm-year { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); column-gap: 20px; align-items: start; }
+  .adm-year > h3,
+  .adm-year > .lead,
+  .adm-year > .adm-confirm-row,
+  .adm-term.editing { grid-column: 1 / -1; }
+  .adm-year .adm-term:not(.editing) { flex-direction: column; align-items: stretch; gap: 8px; }
+  .adm-year .adm-term:not(.editing) .clearb { align-self: flex-start; }
+  .adm-year > .adm-confirm .adm-dates { grid-template-columns: 1fr; }
+  .adm-year > .adm-confirm .adm-dates label:last-child { max-width: none; }
+  .adm-toast { inset-inline-start: auto; inset-inline-end: 24px; margin-inline: 0; width: 360px; }
+}
 /* الرزنامة: بطاقة لكل سنة، وصفّ لكل فصل */
 .adm-year { padding: 12px; margin-bottom: 10px; }
 .adm-year h3 { margin: 0 0 6px; font-size: 15px; }
