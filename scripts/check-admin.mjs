@@ -5,6 +5,7 @@ import {
   classifyAdminError, parseAdminState, cleanCode, codeReady, cleanReason, REASON_MAX,
   msLeft, leftLabel, daysLeft, summarize, filterTeachers, adminProblemMessage,
   countWord, dueWord, attentionItems,
+  parseTab, agoLabel, sortTeachers, statusCounts, filterLog, nextLogLimit, LOG_MAX,
 } from "../src/lib/admin.ts";
 import {
   groupByYear, closesOn, graceWord, nextYearLabel, suggestYear, validateTerm, termErrorMessage, calendarIssues, termLogSummary, phaseOn, editEffect,
@@ -317,6 +318,53 @@ ok("أثر التعديل: فصل بعيد في المستقبل لا ملاحظ
   for (const bad of [{ starts_on: "" }, { grace_days: "" }, { grace_days: "31" }, { grace_days: "x" }, { ends_on: "2026-08-01" }]) {
     assert.deepEqual(editEffect(T1, D(bad), "2026-10-30"), { closes: null, notes: [] }, JSON.stringify(bad));
   }
+});
+
+ok("التبويب من الرابط: المعروف يُقبل وغيره يعود إلى الحسابات", () => {
+  assert.equal(parseTab("?tab=calendar"), "calendar");
+  assert.equal(parseTab("?x=1&tab=log"), "log");
+  assert.equal(parseTab("?tab=deletions"), "deletions");
+  assert.equal(parseTab("?tab=admin"), "accounts");
+  assert.equal(parseTab(""), "accounts");
+});
+ok("منذ: الآن ودقائق وساعة وساعات", () => {
+  assert.equal(agoLabel(20_000), "الآن");
+  assert.equal(agoLabel(-5), "الآن");
+  assert.equal(agoLabel(5 * 60_000), "منذ 5 د");
+  assert.equal(agoLabel(60 * 60_000), "منذ ساعة");
+  assert.equal(agoLabel(3 * 3600_000 + 100), "منذ 3 س");
+});
+ok("ترتيب الحسابات: الأحدث نشاطًا، ثم من لم ينقّط، والمشرف أخيرًا، ولا تُعدَّل القائمة الأصلية", () => {
+  const list = [
+    tch({ id: "a", email: "admin@x", is_admin: true, last_activity: "2026-10-30T00:00:00Z" }),
+    tch({ id: "b", email: "idle@x", last_activity: null }),
+    tch({ id: "c", email: "old@x", last_activity: "2026-09-01T00:00:00Z" }),
+    tch({ id: "d", email: "new@x", last_activity: "2026-10-29T00:00:00Z" }),
+    tch({ id: "e", email: "idle2@x", last_activity: null }),
+  ];
+  assert.deepEqual(sortTeachers(list).map((x) => x.id), ["d", "c", "b", "e", "a"]);
+  assert.equal(list[0].id, "a");
+});
+ok("أعداد الشرائح تُحسب على القائمة كاملة", () => {
+  const c = statusCounts([tch({}), tch({ status: "disabled" }), tch({ status: "disabled" }), tch({ status: "deletion_pending" })]);
+  assert.deepEqual(c, { all: 4, active: 1, disabled: 2, deletion_pending: 1 });
+});
+const LOGS = [
+  { at: "2026-10-30T08:00:00Z", actor_kind: "admin", action: "set_term", target_email: null, detail: null },
+  { at: "2026-10-29T08:00:00Z", actor_kind: "admin", action: "disable", target_email: "a@b", detail: null },
+  { at: "2026-10-28T02:00:00Z", actor_kind: "system", action: "purge", target_email: "c@d", detail: null },
+  { at: "2026-10-27T08:00:00Z", actor_kind: "teacher", action: "request_deletion", target_email: "e@f", detail: null },
+];
+ok("تصفية السجلّ: الرزنامة والحسابات والتشغيل الليلي والكل", () => {
+  assert.deepEqual(filterLog(LOGS, "calendar").map((r) => r.action), ["set_term"]);
+  assert.deepEqual(filterLog(LOGS, "accounts").map((r) => r.action), ["disable", "request_deletion"]);
+  assert.deepEqual(filterLog(LOGS, "system").map((r) => r.action), ["purge"]);
+  assert.equal(filterLog(LOGS, "all").length, 4);
+});
+ok("المزيد من السجلّ: دفعات من 60 ولا يتجاوز حدّ القاعدة", () => {
+  assert.equal(nextLogLimit(60), 120);
+  assert.equal(nextLogLimit(180), LOG_MAX);
+  assert.equal(nextLogLimit(LOG_MAX), LOG_MAX);
 });
 
 console.log(`${n} اختبارًا نجحت`);

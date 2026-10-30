@@ -187,6 +187,68 @@ export function attentionItems(
   return out;
 }
 
+export type AdminTab = "accounts" | "deletions" | "calendar" | "log";
+const TABS: readonly AdminTab[] = ["accounts", "deletions", "calendar", "log"];
+
+/** التبويب من الرابط (?tab=calendar). أي قيمة غير معروفة ⇒ الحسابات. */
+export function parseTab(search: string): AdminTab {
+  const v = new URLSearchParams(search).get("tab");
+  return TABS.find((t) => t === v) ?? "accounts";
+}
+
+/** «الآن» أو «منذ 5 د» أو «منذ ساعة» أو «منذ 3 س»، لما مضى من الوقت. */
+export function agoLabel(ms: number): string {
+  const mins = Math.floor(Math.max(0, ms) / 60000);
+  if (mins < 1) return "الآن";
+  if (mins < 60) return `منذ ${mins} د`;
+  const h = Math.floor(mins / 60);
+  return h === 1 ? "منذ ساعة" : `منذ ${h} س`;
+}
+
+/** الأحدث نشاطًا أولًا، ومن لم ينقّط بعد بعدهم، وحساب المشرف في الآخر (لا أفعال له). */
+export function sortTeachers(list: AdminTeacher[]): AdminTeacher[] {
+  const t = (x: AdminTeacher) => {
+    const v = x.last_activity ? new Date(x.last_activity).getTime() : NaN;
+    return Number.isNaN(v) ? -Infinity : v;
+  };
+  return [...list].sort((a, b) => {
+    if (a.is_admin !== b.is_admin) return a.is_admin ? 1 : -1;
+    const d = t(b) - t(a);
+    if (d !== 0 && !Number.isNaN(d)) return d;
+    return (a.email ?? "").localeCompare(b.email ?? "");
+  });
+}
+
+/** أعداد شرائح الحالة، على القائمة كاملة (لا على نتيجة البحث). */
+export function statusCounts(list: AdminTeacher[]): Record<StatusFilter, number> {
+  const c: Record<StatusFilter, number> = { all: list.length, active: 0, disabled: 0, deletion_pending: 0 };
+  for (const t of list) c[t.status] += 1;
+  return c;
+}
+
+export type LogGroup = "all" | "accounts" | "calendar" | "system";
+
+/** سجلّ العمليات بحسب النوع: الرزنامة، أو الحسابات، أو ما فعله التشغيل الليلي. */
+export function filterLog(rows: AdminLogRow[], group: LogGroup): AdminLogRow[] {
+  switch (group) {
+    case "calendar":
+      return rows.filter((r) => r.action === "set_term");
+    case "accounts":
+      return rows.filter((r) => r.action !== "set_term" && r.actor_kind !== "system");
+    case "system":
+      return rows.filter((r) => r.actor_kind === "system");
+    default:
+      return rows;
+  }
+}
+
+/** القاعدة تقصّ عند 200 صفًّا. المزيد بدفعات من 60 حتى هذا الحدّ. */
+export const LOG_PAGE = 60;
+export const LOG_MAX = 200;
+export function nextLogLimit(current: number): number {
+  return Math.min(current + LOG_PAGE, LOG_MAX);
+}
+
 export type AdminStats = {
   accounts: number;
   active: number;

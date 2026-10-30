@@ -25,6 +25,8 @@ function AdminLogin() {
   const [factorId, setFactorId] = useState("");
   const [qr, setQr] = useState("");
   const [secret, setSecret] = useState("");
+  const [uri, setUri] = useState("");
+  const [copied, setCopied] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
 
@@ -123,6 +125,18 @@ function AdminLogin() {
     setFactorId(data.id);
     setQr(data.totp.qr_code);
     setSecret(data.totp.secret);
+    setUri(data.totp.uri ?? "");
+  }
+
+  /** الهاتف لا يمسح رمزًا على شاشته نفسها: المفتاح يُنسخ ويُلصق في تطبيق المصادقة. */
+  async function copySecret() {
+    try {
+      await navigator.clipboard.writeText(secret);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2500);
+    } catch {
+      setMessage("تعذّر النسخ. حدّد المفتاح بإصبعك وانسخه يدويًّا.");
+    }
   }
 
   async function verify(event: React.FormEvent) {
@@ -139,6 +153,7 @@ function AdminLogin() {
     }
     setQr("");
     setSecret("");
+    setUri("");
     // القاعدة هي التي تقول إن التحقّق صار ساريًا، لا مجرّد نجاح الطلب.
     const me = await supabase.rpc("am_i_admin");
     setBusy(false);
@@ -237,8 +252,19 @@ function AdminLogin() {
               height={200}
               style={{ background: "#fff", padding: 8, borderRadius: 8, alignSelf: "center" }}
             />
+            <p className="lead">
+              على الهاتف نفسه؟ لا يمكن مسح رمز على الشاشة التي تحمل التطبيق. افتح تطبيق المصادقة بالزرّ، أو انسخ المفتاح والصقه فيه.
+            </p>
+            {uri && (
+              <a className="btn soft sm" href={uri}>
+                افتح في تطبيق المصادقة
+              </a>
+            )}
+            <button className="btn ghost sm" type="button" onClick={copySecret}>
+              {copied ? "نُسخ المفتاح" : "انسخ المفتاح"}
+            </button>
             <small>
-              أو أدخل هذا المفتاح يدويًّا: <bdi dir="ltr" style={{ userSelect: "all" }}>{secret}</bdi>
+              المفتاح: <bdi dir="ltr" style={{ userSelect: "all", wordBreak: "break-all" }}>{secret}</bdi>
             </small>
           </>
         )}

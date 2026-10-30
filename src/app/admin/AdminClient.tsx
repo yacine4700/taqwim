@@ -12,6 +12,7 @@ import {
   graceWord,
   groupByYear,
   nextYearLabel,
+  phaseOn,
   suggestYear,
   termErrorMessage,
   termLogSummary,
@@ -34,17 +35,27 @@ import {
   countWord,
   daysLeft,
   dueWord,
+  filterLog,
   filterTeachers,
+  agoLabel,
   leftLabel,
+  LOG_MAX,
+  LOG_PAGE,
+  nextLogLimit,
+  parseTab,
+  sortTeachers,
+  statusCounts,
   msLeft,
   parseAdminState,
   summarize,
   type AdminLogRow,
+  type AdminTab,
   type AdminTeacher,
+  type LogGroup,
   type StatusFilter,
 } from "@/lib/admin";
 
-type Tab = "accounts" | "deletions" | "calendar" | "log";
+type Tab = AdminTab;
 /** loading: أول تحميل · ready: اللوحة · reverify: التحقّق الثنائي منتهٍ · forbidden: ليس مشرفًا · error: تعذّر التحميل */
 type Phase = "loading" | "ready" | "reverify" | "forbidden" | "error";
 type Pending = { id: string; action: "disable" | "enable" | "cancel"; reason: string };
@@ -56,6 +67,22 @@ function day(iso: string | null): string {
     ? "—"
     : d.toLocaleDateString("ar-DZ", { day: "numeric", month: "short", year: "numeric" });
 }
+
+/** تاريخ ISO (yyyy-mm-dd) بالعربية مع اليوم، دون تأثّر بمنطقة الجهاز الزمنية. */
+function isoDay(iso: string): string {
+  const d = new Date(`${iso}T00:00:00Z`);
+  return Number.isNaN(d.getTime())
+    ? "—"
+    : d.toLocaleDateString("ar-DZ", { weekday: "long", day: "numeric", month: "long", year: "numeric", timeZone: "UTC" });
+}
+
+const PHASE_LABEL = { current: "جارٍ", grace: "في المهلة", upcoming: "لم يبدأ", closed: "مقفل" } as const;
+const LOG_GROUP_LABEL: Record<LogGroup, string> = {
+  all: "الكل",
+  accounts: "الحسابات",
+  calendar: "الرزنامة",
+  system: "التشغيل الليلي",
+};
 
 function dayTime(iso: string): string {
   const d = new Date(iso);
@@ -89,7 +116,13 @@ export default function AdminClient({
   const [log, setLog] = useState<AdminLogRow[]>([]);
   const [expiresAt, setExpiresAt] = useState<string | null>(initialExpiresAt);
   const [now, setNow] = useState(() => Date.now());
-  const [tab, setTab] = useState<Tab>("accounts");
+  const [tab, setTab] = useState<Tab>(() =>
+    typeof window === "undefined" ? "accounts" : parseTab(window.location.search),
+  );
+  const [loadedAt, setLoadedAt] = useState<number | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const [logLimit, setLogLimit] = useState(LOG_PAGE);
+  const [logGroup, setLogGroup] = useState<LogGroup>("all");
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState<StatusFilter>("all");
   const [pending, setPending] = useState<Pending | null>(null);
@@ -110,6 +143,12 @@ export default function AdminClient({
       alive.current = false;
     };
   }, []);
+
+  /** يحفظ التبويب في الرابط فلا يعود التحديث أو الرجوع إلى «الحسابات». */
+  function changeTab(next: Tab) {
+    setTab(next);
+    window.history.replaceState(null, "", next === "accounts" ? window.location.pathname : `?tab=${next}`);
+  }
 
   const toLogin = useCallback(() => {
     router.replace("/admin/login");
@@ -145,7 +184,7 @@ export default function AdminClient({
 
     const [list, recent, cal] = await Promise.all([
       supabase.rpc("admin_list_teachers"),
-      supabase.rpc("admin_log_recent", { max_rows: 60 }),
+      supabase.rpc("admin_log_recent", { max_rows: logLimit }),
       supabase
         .from("term_calendar")
         .select("school_year,term,starts_on,ends_on,grace_days")
@@ -171,8 +210,9 @@ export default function AdminClient({
       );
     }
     setMessage(recent.error ? "تعذّر تحميل سجلّ العمليات." : "");
+    setLoadedAt(Date.now());
     setPhase("ready");
-  }, [supabase, handleProblem]);
+  }, [supabase, handleProblem, logLimit]);
 
   useEffect(() => {
     void load();
@@ -187,6 +227,19 @@ export default function AdminClient({
   useEffect(() => {
     if (phase === "ready" && expiresAt && left <= 0) setPhase("reverify");
   }, [phase, expiresAt, left]);
+
+  // الإشعار عائم قرب الإبهام ويزول وحده، فلا يبقى أعلى صفحة طويلة خارج الشاشة.
+  useEffect(() => {
+    if (!done) return;
+    const id = setTimeout(() => setDone(""), 5000);
+    return () => clearTimeout(id);
+  }, [done]);
+
+  async function refresh() {
+    setRefreshing(true);
+    await load();
+    if (alive.current) setRefreshing(false);
+  }
 
   async function act() {
     if (!pending) return;
@@ -315,7 +368,12 @@ export default function AdminClient({
   }
 
   const stats = useMemo(() => summarize(teachers, now), [teachers, now]);
-  const shown = useMemo(() => filterTeachers(teachers, query, status), [teachers, query, status]);
+  const counts = useMemo(() => statusCounts(teachers), [teachers]);
+  const shown = useMemo(
+    () => filterTeachers(sortTeachers(teachers), query, status),
+    [teachers, query, status],
+  );
+  const shownLog = useMemo(() => filterLog(log, logGroup), [log, logGroup]);
   const deletions = useMemo(
     () => teachers.filter((t) => t.status === "deletion_pending").sort((a, b) => (a.purge_after ?? "").localeCompare(b.purge_after ?? "")),
     [teachers],
@@ -467,7 +525,7 @@ export default function AdminClient({
             {countWord(t.classes, "class")} · {countWord(t.students, "student")} · {countWord(t.records, "record")}
           </small>
           <small>
-            آخر نشاط {day(t.last_activity)} · آخر دخول {day(t.last_sign_in_at)}
+            {t.last_activity ? `آخر نشاط ${day(t.last_activity)}` : "لم ينقّط بعد"} · آخر دخول {day(t.last_sign_in_at)}
           </small>
           {t.status !== "active" && (
             <small className="perr">
@@ -492,9 +550,20 @@ export default function AdminClient({
         </div>
         <div className="adm-head-side">
           <small className={left < 30 * 60_000 ? "adm-warn" : ""}>تحقّق الرمز: {leftLabel(left)}</small>
-          <button className="clearb" onClick={signOut}>
-            خروج
-          </button>
+          <small>{loadedAt ? `حُدّثت ${agoLabel(now - loadedAt)}` : ""}</small>
+          <div className="adm-head-btns">
+            {left < 10 * 60_000 && (
+              <button className="clearb" onClick={() => setPhase("reverify")}>
+                جدّد الرمز
+              </button>
+            )}
+            <button className="clearb" onClick={refresh} disabled={refreshing}>
+              {refreshing ? "لحظة…" : "حدّث"}
+            </button>
+            <button className="clearb" onClick={signOut}>
+              خروج
+            </button>
+          </div>
         </div>
       </div>
 
@@ -505,17 +574,23 @@ export default function AdminClient({
 
       <section className="adm-stats" aria-label="إحصاءات">
         <div className="card stat"><b>{stats.accounts}</b><small>أساتذة</small></div>
-        <div className="card stat"><b>{stats.activeWeek}</b><small>نشطون هذا الأسبوع</small></div>
-        <div className="card stat"><b>{stats.activeMonth}</b><small>نشطون هذا الشهر</small></div>
-        <div className="card stat"><b>{stats.idle}</b><small>لم ينقّطوا قط</small></div>
+        <div className="card stat"><b>{stats.activeWeek}</b><small>نشطون (أسبوع)</small></div>
         <div className="card stat"><b>{stats.classes}</b><small>أقسام</small></div>
-        <div className="card stat"><b>{stats.students}</b><small>تلاميذ (عدد فقط)</small></div>
-        <div className="card stat"><b>{stats.disabled}</b><small>موقوفون</small></div>
-        <div className="card stat"><b>{stats.pending}</b><small>حذف مجدول</small></div>
+        <div className="card stat"><b>{stats.students}</b><small>تلاميذ</small></div>
       </section>
+      <details className="adm-more">
+        <summary>إحصاءات أخرى</summary>
+        <div className="adm-stats">
+          <div className="card stat"><b>{stats.activeMonth}</b><small>نشطون هذا الشهر</small></div>
+          <div className="card stat"><b>{stats.idle}</b><small>لم ينقّطوا قط</small></div>
+          <div className="card stat"><b>{stats.disabled}</b><small>موقوفون</small></div>
+          <div className="card stat"><b>{stats.pending}</b><small>حذف مجدول</small></div>
+        </div>
+        <small>الأعداد وحدها: لا أسماء تلاميذ ولا علامات.</small>
+      </details>
 
       {message && <div className="note bad" role="alert">{message}</div>}
-      {done && <div className="note" role="status">{done}</div>}
+      {done && <div className="note adm-toast" role="status">{done}</div>}
 
       {/* ما يحتاج انتباهًا: يُخفى منه ما يظهر أصلًا في التبويب المفتوح */}
       {attention.some((a) => a.tab !== tab) && (
@@ -528,7 +603,7 @@ export default function AdminClient({
                 key={a.key}
                 type="button"
                 className={`note ${a.level === "bad" ? "bad" : "warn"} adm-attn-item`}
-                onClick={() => setTab(a.tab)}
+                onClick={() => changeTab(a.tab)}
               >
                 <span>{a.text}</span>
                 <small>افتح</small>
@@ -538,16 +613,16 @@ export default function AdminClient({
       )}
 
       <div className="segmented" role="tablist" style={{ marginBlock: 12 }}>
-        <button role="tab" aria-pressed={tab === "accounts"} onClick={() => setTab("accounts")}>
-          الحسابات ({teachers.length})
+        <button role="tab" aria-pressed={tab === "accounts"} onClick={() => changeTab("accounts")}>
+          الحسابات
         </button>
-        <button role="tab" aria-pressed={tab === "deletions"} onClick={() => setTab("deletions")}>
-          طلبات الحذف ({deletions.length})
+        <button role="tab" aria-pressed={tab === "deletions"} aria-label={`طلبات الحذف (${deletions.length})`} onClick={() => changeTab("deletions")}>
+          الحذف{deletions.length > 0 && <span className="adm-badge">{deletions.length}</span>}
         </button>
-        <button role="tab" aria-pressed={tab === "calendar"} onClick={() => setTab("calendar")}>
-          الرزنامة
+        <button role="tab" aria-pressed={tab === "calendar"} onClick={() => changeTab("calendar")}>
+          الرزنامة{calendarMessages.length > 0 && <span className="adm-badge warn">{calendarMessages.length}</span>}
         </button>
-        <button role="tab" aria-pressed={tab === "log"} onClick={() => setTab("log")}>
+        <button role="tab" aria-pressed={tab === "log"} onClick={() => changeTab("log")}>
           السجلّ
         </button>
       </div>
@@ -564,12 +639,19 @@ export default function AdminClient({
           <div className="chips" style={{ marginBlock: 10 }}>
             {(["all", "active", "disabled", "deletion_pending"] as const).map((s) => (
               <button key={s} aria-pressed={status === s} onClick={() => setStatus(s)}>
-                {s === "all" ? "الكل" : STATUS_LABEL[s]}
+                {s === "all" ? "الكل" : STATUS_LABEL[s]} <span className="adm-count">{counts[s]}</span>
               </button>
             ))}
           </div>
           {shown.length === 0 ? (
-            <div className="note">لا حسابات تطابق البحث.</div>
+            <div className="note">
+              لا حسابات تطابق البحث.
+              {(query || status !== "all") && (
+                <button className="clearb" style={{ marginInlineStart: 8 }} onClick={() => { setQuery(""); setStatus("all"); }}>
+                  امسح البحث
+                </button>
+              )}
+            </div>
           ) : (
             <div className="plist">{shown.map(row)}</div>
           )}
@@ -600,6 +682,14 @@ export default function AdminClient({
             الفصل مفتوح للتنقيط من بدايته حتى نهايته + المهلة، فيُنقَّط الفصلان معًا في أيام المهلة. بعدها
             يصير الفصل للاطلاع فقط في تطبيق كل الأساتذة. كل تعديل يُسجَّل بقيمه السابقة.
           </div>
+          {left < 10 * 60_000 && (
+            <div className="note warn" style={{ marginBottom: 8 }}>
+              ينتهي التحقّق الثنائي بعد {leftLabel(left)}. جدّد الرمز قبل التعديل حتى لا تضيع تواريخ كتبتها.
+              <button className="clearb" style={{ marginInlineStart: 8 }} onClick={() => setPhase("reverify")}>
+                جدّد الرمز
+              </button>
+            </div>
+          )}
           {calendarMessages.map((m) => (
             <div key={m} className="note warn" style={{ marginBottom: 8 }}>{m}</div>
           ))}
@@ -681,11 +771,14 @@ export default function AdminClient({
                 return (
                   <div key={term} className="adm-term">
                     <div className="k">
-                      <b>الفصل {term}</b>
+                      <b>
+                        الفصل {term}
+                        {t && <span className={`adm-phase ${phaseOn(t, today)}`}>{PHASE_LABEL[phaseOn(t, today)]}</span>}
+                      </b>
                       {t ? (
                         <>
-                          <small><bdi dir="ltr">{t.starts_on} → {t.ends_on}</bdi></small>
-                          <small>{graceWord(t.grace_days)} · آخر يوم للتنقيط <bdi dir="ltr">{closesOn(t)}</bdi></small>
+                          <small>من {isoDay(t.starts_on)} إلى {isoDay(t.ends_on)}</small>
+                          <small>{graceWord(t.grace_days)} · آخر يوم للتنقيط {isoDay(closesOn(t))}</small>
                         </>
                       ) : (
                         <small className="perr">غير مُدخَل</small>
@@ -718,11 +811,18 @@ export default function AdminClient({
 
       {tab === "log" && (
         <>
-          {log.length === 0 ? (
-            <div className="note">لا عمليات مسجّلة بعد.</div>
+          <div className="chips" style={{ marginBottom: 10 }}>
+            {(Object.keys(LOG_GROUP_LABEL) as LogGroup[]).map((g) => (
+              <button key={g} aria-pressed={logGroup === g} onClick={() => setLogGroup(g)}>
+                {LOG_GROUP_LABEL[g]}
+              </button>
+            ))}
+          </div>
+          {shownLog.length === 0 ? (
+            <div className="note">{log.length === 0 ? "لا عمليات مسجّلة بعد." : "لا عمليات من هذا النوع في الأحدث."}</div>
           ) : (
             <div className="plist">
-              {log.map((l, i) => (
+              {shownLog.map((l, i) => (
                 <div key={i} className="prow">
                   <div className="k">
                     <b>{ACTION_LABEL[l.action] ?? l.action}</b>
@@ -738,6 +838,14 @@ export default function AdminClient({
               ))}
             </div>
           )}
+          {log.length >= logLimit && logLimit < LOG_MAX && (
+            <button className="btn soft sm" style={{ marginTop: 10 }} onClick={() => setLogLimit(nextLogLimit(logLimit))}>
+              اعرض أقدم
+            </button>
+          )}
+          <small className="adm-closes" style={{ display: "block", marginTop: 8 }}>
+            يُعرض آخر {log.length} من {LOG_MAX} عملية على الأكثر.
+          </small>
         </>
       )}
     </div>
@@ -782,7 +890,7 @@ function TermFields({
       </div>
       {effect?.closes && (
         <small className="adm-closes">
-          آخر يوم للتنقيط: <bdi dir="ltr">{effect.closes}</bdi>
+          آخر يوم للتنقيط: {isoDay(effect.closes)}
         </small>
       )}
       {effect?.notes.map((n) => (

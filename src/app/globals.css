@@ -637,8 +637,7 @@ a.btn, a.swap { text-decoration: none; }
 .adm-head-side { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; text-align: end; }
 .adm-warn { color: var(--sand); font-weight: 600; }
 .adm .lead { margin: 6px 0 14px; color: var(--muted); font-size: 13px; line-height: 1.8; }
-.adm-stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
-.adm-stats .stat { padding: 10px 12px; }
+.adm-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
 .adm-search { width: 100%; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 11px; }
 .adm-item { border-bottom: 1px solid var(--line); }
 .adm-item:last-child { border-bottom: 0; }
@@ -655,6 +654,19 @@ a.btn, a.swap { text-decoration: none; }
 .adm-attn-item { display: flex; justify-content: space-between; align-items: center; gap: 10px; width: 100%; text-align: start; border: 0; font: inherit; line-height: 1.7; cursor: pointer; }
 .adm-attn-item small { flex: none; font-weight: 700; text-decoration: underline; }
 .adm-closes { color: var(--muted); font-size: 12px; }
+.adm-head-btns { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.adm-stats .stat { padding: 8px 6px; text-align: center; }
+.adm-stats .stat small { font-size: 10px; }
+.adm-more { margin-top: 8px; font-size: 12px; color: var(--muted); }
+.adm-more summary { cursor: pointer; padding: 6px 0; }
+.adm-more .adm-stats { margin-block: 6px; }
+.adm-count { font-variant-numeric: tabular-nums; opacity: 0.7; margin-inline-start: 2px; }
+.adm-badge { display: inline-block; min-width: 18px; padding: 0 5px; margin-inline-start: 4px; border-radius: 999px; background: var(--danger); color: #fff; font-size: 11px; line-height: 18px; }
+.adm-badge.warn { background: var(--sand); }
+.adm-phase { display: inline-block; margin-inline-start: 8px; padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; background: var(--surface-2); color: var(--muted); }
+.adm-phase.current { background: var(--primary-soft); color: var(--primary); }
+.adm-phase.grace { background: var(--sand-soft); color: var(--sand); }
+.adm-toast { position: fixed; inset-inline: 12px; bottom: 16px; z-index: 20; max-width: 460px; margin-inline: auto; box-shadow: var(--shadow); }
 /* الرزنامة: بطاقة لكل سنة، وصفّ لكل فصل */
 .adm-year { padding: 12px; margin-bottom: 10px; }
 .adm-year h3 { margin: 0 0 6px; font-size: 15px; }
@@ -665,9 +677,6 @@ a.btn, a.swap { text-decoration: none; }
 .adm-dates label:last-child { grid-column: 1 / -1; max-width: 140px; }
 .adm-dates label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; font-weight: 600; }
 .adm-dates input { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 9px 8px; font-weight: 400; min-width: 0; }
-@media (min-width: 560px) {
-  .adm-stats { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-}
 
 /* القراءة داخل القسم: زرّ المتطوّع بحجم إصبع، ومحاولات الفصل بجواره */
 .readbar .chint { flex: 1 1 100%; }
