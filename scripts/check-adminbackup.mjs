@@ -13,7 +13,8 @@ const ok = (label, fn) => { fn(); n += 1; console.log("ok ", label); };
 const T1 = { school_year: "2026/2027", term: 1, starts_on: "2026-09-01", ends_on: "2026-12-17", grace_days: 10 };
 const status = (o) => ({
   schedule: "weekly", mode: "auto", until: null, reason: null, override_expired: false,
-  exam_term: null, exam_school_year: null, exam_window_ends: null, ...o,
+  exam_term: null, exam_school_year: null, exam_window_ends: null,
+  next_weekly: null, next_exam_from: null, next_exam_term: null, ...o,
 });
 
 ok("ردّ القاعدة الصحيح يُقرأ", () => {
@@ -25,20 +26,30 @@ ok("شكل غير متوقّع ⇒ null", () => {
   for (const bad of [null, undefined, "x", 3, {}, { schedule: "monthly", mode: "auto" }, { schedule: "weekly", mode: "stop" }])
     assert.equal(parseBackupStatus(bad), null, JSON.stringify(bad));
 });
+ok("ردّ قديم بلا حقول الموعد القادم يُقرأ بلا استثناء", () => {
+  const s = parseBackupStatus({ schedule: "weekly", mode: "auto" });
+  assert.equal(s.next_weekly, null);
+  assert.match(scheduleLabel(s).detail, /كل ليلة جمعة/);
+});
 ok("حقول ناقصة أو بنوع خاطئ تصير null لا استثناء", () => {
   const s = parseBackupStatus({ schedule: "weekly", mode: "auto", exam_term: "1", until: 5 });
   assert.equal(s.exam_term, null);
   assert.equal(s.until, null);
 });
 ok("وصف الحالات الأربع", () => {
-  assert.equal(scheduleLabel(status({})).title, "أسبوعي");
+  const w = scheduleLabel(status({ next_weekly: "2026-11-06", next_exam_from: "2026-12-03", next_exam_term: 1 }));
+  assert.equal(w.title, "أسبوعي (ليس يوميًّا الآن)");
+  assert.match(w.detail, /النسخة القادمة: ليلة الخميس إلى الجمعة 2026-11-06/);
+  assert.match(w.detail, /يبدأ النسخ اليومي في 2026-12-03 \(الفصل 1\)/);
+  assert.match(scheduleLabel(status({})).detail, /لا فترة اختبارات قادمة/);
   const p = scheduleLabel(status({ schedule: "paused", mode: "paused", until: "2026-11-10", reason: "عطلة" }));
-  assert.match(p.title, /موقوف حتى 2026-11-10/);
+  assert.match(p.title, /موقوف حتى 2026-11-10 \(لا نسخ\)/);
   assert.equal(p.tone, "warn");
   assert.match(p.detail, /عطلة/);
   assert.match(scheduleLabel(status({ schedule: "daily_override", mode: "daily", until: "2026-11-10" })).title, /يومي \(يدوي\) حتى 2026-11-10/);
   const e = scheduleLabel(status({ schedule: "daily_exams", exam_term: 1, exam_school_year: "2026/2027", exam_window_ends: "2026-12-27" }));
-  assert.match(e.detail, /الفصل 1 من 2026\/2027 حتى 2026-12-27/);
+  assert.match(e.title, /يومي الآن/);
+  assert.match(e.detail, /ينسخ كل ليلة حتى 2026-12-27 \(الفصل 1 من 2026\/2027\)/);
 });
 
 const TODAY = "2026-10-30";

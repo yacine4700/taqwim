@@ -9,6 +9,8 @@ DOWN="$ROOT/supabase/rollback/20261030090000_term_calendar_and_guard.down.sql"
 MIG2="$ROOT/supabase/migrations/20261030120000_admin_term_calendar.sql"
 MIG3="$ROOT/supabase/migrations/20261030140000_backup_schedule.sql"
 DOWN3="$ROOT/supabase/rollback/20261030140000_backup_schedule.down.sql"
+MIG4="$ROOT/supabase/migrations/20261030150000_backup_status_next.sql"
+DOWN4="$ROOT/supabase/rollback/20261030150000_backup_status_next.down.sql"
 T="$ROOT/supabase/tests"
 BIN="${PG_BIN:-$(ls -d /usr/lib/postgresql/*/bin | sort -V | tail -1)}"
 DIR="$(mktemp -d)"; chmod 755 "$DIR"; chown postgres "$DIR"
@@ -29,13 +31,21 @@ as postgres --single-transaction -f "$PRE"
 as postgres --single-transaction -f "$MIG"
 as postgres --single-transaction -f "$MIG2"
 as postgres --single-transaction -f "$MIG3"
+as postgres --single-transaction -f "$MIG4"
 as supabase_admin -f "$T/backup_schedule.test.sql"
+
+echo "== التراجع عن ترحيل الموعد القادم وإعادته"
+as postgres --single-transaction -f "$DOWN4"
+k=$(as supabase_admin -At -c "select prosrc like '%next_weekly%' from pg_proc where proname = 'admin_backup_status'")
+[ "$k" = "f" ] && echo "ok  عادت الدالة إلى تعريفها السابق" || { echo "FAIL: لم تعد"; exit 1; }
+as postgres --single-transaction -f "$MIG4" && echo "ok  وأُعيد تطبيقه"
 
 echo "== التراجع لا يمسّ علامة، ولا يترك شيئًا"
 before=$(as supabase_admin -At -c "select tests.fp('aaaaaaaa-0000-4000-8000-00000000000a') || tests.fp('bbbbbbbb-0000-4000-8000-00000000000b')")
+as postgres --single-transaction -f "$DOWN4"
 as postgres --single-transaction -f "$DOWN3"
 after=$(as supabase_admin -At -c "select tests.fp('aaaaaaaa-0000-4000-8000-00000000000a') || tests.fp('bbbbbbbb-0000-4000-8000-00000000000b')")
 [ "$before" = "$after" ] && echo "ok  بيانات الأساتذة كما هي بعد التراجع" || { echo "FAIL: تغيّرت البيانات"; exit 1; }
 left=$(as supabase_admin -At -c "select (select count(*) from pg_proc where proname in ('backup_decision','admin_set_backup','admin_backup_status','admin_set_exams_from')) + (select count(*) from information_schema.columns where table_name = 'term_calendar' and column_name = 'exams_from') + (select count(*) from pg_class where relname = 'backup_control')")
 [ "$left" = "0" ] && echo "ok  لا دالة ولا جدول ولا عمود باقٍ" || { echo "FAIL: بقي $left"; exit 1; }
-as postgres --single-transaction -f "$MIG3" && echo "ok  الترحيل يُطبَّق من جديد بعد التراجع"
+as postgres --single-transaction -f "$MIG3" && as postgres --single-transaction -f "$MIG4" && echo "ok  الترحيلان يُطبَّقان من جديد بعد التراجع"

@@ -18,6 +18,10 @@ export type BackupStatus = {
   exam_term: number | null;
   exam_school_year: string | null;
   exam_window_ends: string | null;
+  /** أقرب جمعة بعد اليوم، وأقرب بداية اختبارات بعد اليوم (قد تكون null قبل ترحيل 20261030150000). */
+  next_weekly: string | null;
+  next_exam_from: string | null;
+  next_exam_term: number | null;
 };
 
 /** أقصى مدة لتجاوز يدوي، كما في القاعدة. */
@@ -52,6 +56,9 @@ export function parseBackupStatus(data: unknown): BackupStatus | null {
     exam_term: typeof d.exam_term === "number" ? d.exam_term : null,
     exam_school_year: str(d.exam_school_year),
     exam_window_ends: str(d.exam_window_ends),
+    next_weekly: str(d.next_weekly),
+    next_exam_from: str(d.next_exam_from),
+    next_exam_term: typeof d.next_exam_term === "number" ? d.next_exam_term : null,
   };
 }
 
@@ -60,7 +67,7 @@ export function scheduleLabel(s: BackupStatus): { title: string; detail: string;
   switch (s.schedule) {
     case "paused":
       return {
-        title: `موقوف حتى ${s.until ?? "؟"}`,
+        title: `موقوف حتى ${s.until ?? "؟"} (لا نسخ)`,
         detail: `${s.reason ? `السبب: ${s.reason}. ` : ""}يعود النسخ وحده بعد هذا التاريخ.`,
         tone: "warn",
       };
@@ -72,14 +79,22 @@ export function scheduleLabel(s: BackupStatus): { title: string; detail: string;
       };
     case "daily_exams":
       return {
-        title: "يومي (فترة الاختبارات)",
-        detail: `الفصل ${s.exam_term ?? "؟"} من ${s.exam_school_year ?? "؟"}${
-          s.exam_window_ends ? ` حتى ${s.exam_window_ends}` : ""
-        }.`,
+        title: "يومي الآن (فترة الاختبارات)",
+        detail: `ينسخ كل ليلة${s.exam_window_ends ? ` حتى ${s.exam_window_ends}` : ""} (الفصل ${s.exam_term ?? "؟"} من ${
+          s.exam_school_year ?? "؟"
+        }).`,
         tone: "ok",
       };
-    default:
-      return { title: "أسبوعي", detail: "ليلة الخميس إلى الجمعة، ويومي إن كُتب أكثر من 50 تنقيطًا منذ آخر نسخة.", tone: "ok" };
+    default: {
+      const parts = [
+        s.next_weekly ? `النسخة القادمة: ليلة الخميس إلى الجمعة ${s.next_weekly}.` : "النسخ كل ليلة جمعة.",
+        s.next_exam_from
+          ? `يبدأ النسخ اليومي في ${s.next_exam_from}${s.next_exam_term ? ` (الفصل ${s.next_exam_term})` : ""}.`
+          : "لا فترة اختبارات قادمة في الرزنامة.",
+        "وتُضاف نسخة في أي ليلة إن كُتب أكثر من 50 تنقيطًا منذ آخر نسخة.",
+      ];
+      return { title: "أسبوعي (ليس يوميًّا الآن)", detail: parts.join(" "), tone: "ok" };
+    }
   }
 }
 

@@ -243,6 +243,22 @@ select tests.ok('لكن نقل النهاية قبل exams_from مرفوض (2351
 reset role;
 
 -- ============================================================
+-- الموعد القادم في حالة المشرف (ترحيل 20261030150000)
+-- ============================================================
+select tests.claims(:M, :sM, 'aal2');
+set role authenticated;
+select public.admin_backup_status() as st \gset
+reset role;
+select tests.ok('next_weekly جمعة بعد اليوم وخلال 7 أيام', (
+  select extract(isodow from (:'st'::jsonb ->> 'next_weekly')::date) = 5
+     and (:'st'::jsonb ->> 'next_weekly')::date > (now() at time zone 'Africa/Algiers')::date
+     and (:'st'::jsonb ->> 'next_weekly')::date <= (now() at time zone 'Africa/Algiers')::date + 7));
+select tests.ok('الدالة لا تزال محصورة بالمشرف بعد الاستبدال',
+  has_function_privilege('authenticated', 'public.admin_backup_status()', 'execute')
+  and not has_function_privilege('anon', 'public.admin_backup_status()', 'execute')
+  and not has_function_privilege('service_role', 'public.admin_backup_status()', 'execute'));
+
+-- ============================================================
 -- النتيجة
 -- ============================================================
 \pset format aligned
