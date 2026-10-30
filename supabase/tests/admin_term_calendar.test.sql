@@ -1,5 +1,5 @@
--- اختبارات ترحيل 20261030120000 (تعديل روزنامة الفصول من لوحة المشرف).
--- يُشغَّل بدور supabase_admin بعد ترحيلات المشرف والروزنامة وهذا الترحيل، وبعد seed.sql.
+-- اختبارات ترحيل 20261030120000 (تعديل رزنامة الفصول من لوحة المشرف).
+-- يُشغَّل بدور supabase_admin بعد ترحيلات المشرف والرزنامة وهذا الترحيل، وبعد seed.sql.
 \set ON_ERROR_STOP 1
 \set A '''aaaaaaaa-0000-4000-8000-00000000000a'''
 \set M '''eeeeeeee-0000-4000-8000-00000000000e'''
@@ -9,7 +9,7 @@
 truncate tests.results;
 insert into private.admins (user_id, note) values (:M, 'test') on conflict do nothing;
 
--- الروزنامة الأساسية كما في الإنتاج
+-- الرزنامة الأساسية كما في الإنتاج
 delete from public.term_calendar;
 insert into public.term_calendar (school_year, term, starts_on, ends_on) values
   ('2026/2027', 1, '2026-09-01', '2026-12-17'),
@@ -26,7 +26,7 @@ exception when others then return sqlstate || ' ' || sqlerrm; end $$;
 -- ============================================================
 select tests.claims(:A, :sA, 'aal2');
 set role authenticated;
-select tests.ok('أستاذ (ولو بجلسة aal2) لا يعدّل الروزنامة: forbidden',
+select tests.ok('أستاذ (ولو بجلسة aal2) لا يعدّل الرزنامة: forbidden',
   tests.err($$select public.admin_set_term('2026/2027', 1, '2026-09-01', '2026-12-15', 10)$$) = '42501 forbidden');
 select tests.fails('الأستاذ لا يكتب في الجدول مباشرة', $$update public.term_calendar set grace_days = 30$$, '42501');
 reset role;
@@ -120,7 +120,7 @@ select tests.ok('ستة فصول في الجدول', (select count(*) from publi
 select tests.ok('السنة الجديدة تُقرأ', (select count(*) from public.term_calendar where school_year = '2027/2028') = 3);
 select tests.ok('وثلاثة أسطر سجلّ لها', (select count(*) from private.audit_log where action = 'set_term') >= 3);
 -- مع السنة الجديدة: بعد 18 جويلية 2027 وقبل 1 سبتمبر 2027 لا فصل مفتوح، وبعد 17 أوت لا يُفتح كل شيء
-select tests.ok('18 أوت 2027: ما يزال مقفلًا لأن الروزنامة تغطّيه',
+select tests.ok('18 أوت 2027: ما يزال مقفلًا لأن الرزنامة تغطّيه',
   not private.term_open(1, '2027-08-18') and not private.term_open(2, '2027-08-18') and not private.term_open(3, '2027-08-18'));
 select tests.ok('1 سبتمبر 2027: ف1 الجديد مفتوح', private.term_open(1, '2027-09-01') and not private.term_open(2, '2027-09-01'));
 

@@ -1,6 +1,6 @@
 /* يطبع لكل يوم من 2026-07-01 إلى 2027-12-31 الفصول المفتوحة بحسب src/lib/terms.ts،
    بالصيغة نفسها التي يطبعها استعلام private.term_open، ليقارنهما scripts/check-term-guard.sh.
-   الروزنامة تُقرأ من القاعدة (stdin: سطور school_year|term|starts_on|ends_on|grace_days). */
+   الرزنامة تُقرأ من القاعدة (stdin: سطور school_year|term|starts_on|ends_on|grace_days). */
 import { termView, addDays } from "../src/lib/terms.ts";
 import { readFileSync } from "node:fs";
 

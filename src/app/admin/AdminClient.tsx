@@ -92,7 +92,7 @@ export default function AdminClient({
   const [message, setMessage] = useState("");
   const [done, setDone] = useState("");
   const [code, setCode] = useState("");
-  /* الروزنامة: الصفوف، وما يُحرَّر الآن (فصل واحد أو سنة جديدة كاملة) */
+  /* الرزنامة: الصفوف، وما يُحرَّر الآن (فصل واحد أو سنة جديدة كاملة) */
   const [terms, setTerms] = useState<AdminTermRow[]>([]);
   const [editing, setEditing] = useState<{ school_year: string; term: number; draft: TermDraft } | null>(null);
   const [newYear, setNewYear] = useState<{ label: string; drafts: TermDraft[] } | null>(null);
@@ -155,7 +155,7 @@ export default function AdminClient({
     setTeachers((list.data ?? []) as AdminTeacher[]);
     // السجلّ ثانوي: فشله لا يُسقط القائمة، لكن يُقال.
     setLog(recent.error ? [] : ((recent.data ?? []) as AdminLogRow[]));
-    // الروزنامة ثانوية كالسجلّ: فشلها لا يُسقط القائمة (الجدول قد لا يكون رُحِّل بعد).
+    // الرزنامة ثانوية كالسجلّ: فشلها لا يُسقط القائمة (الجدول قد لا يكون رُحِّل بعد).
     if (!cal.error) {
       setTerms(
         ((cal.data ?? []) as AdminTermRow[]).map((r) => ({
@@ -268,7 +268,7 @@ export default function AdminClient({
     setBusy(false);
     if (saved === 3) {
       setNewYear(null);
-      setDone(`أُضيفت روزنامة ${newYear.label}.`);
+      setDone(`أُضيفت رزنامة ${newYear.label}.`);
     } else if (saved > 0) {
       setTermError((e) => `حُفظ ${saved} من 3 فصول فقط. ${e}`);
     }
@@ -513,7 +513,7 @@ export default function AdminClient({
           طلبات الحذف ({deletions.length})
         </button>
         <button role="tab" aria-pressed={tab === "calendar"} onClick={() => setTab("calendar")}>
-          الروزنامة
+          الرزنامة
         </button>
         <button role="tab" aria-pressed={tab === "log"} onClick={() => setTab("log")}>
           السجلّ
@@ -577,7 +577,7 @@ export default function AdminClient({
           {newYear ? (
             <div className="card adm-year">
               <h3>سنة جديدة {newYear.label}</h3>
-              <p className="lead">التواريخ مقترحة من السنة السابقة بإزاحة سنة. عدّلها كما في روزنامة الوزارة.</p>
+              <p className="lead">التواريخ مقترحة من السنة السابقة بإزاحة سنة. عدّلها كما في رزنامة الوزارة.</p>
               {newYear.drafts.map((d, i) => (
                 <TermFields
                   key={i}
@@ -615,7 +615,7 @@ export default function AdminClient({
           )}
 
           {terms.length === 0 && !newYear && (
-            <div className="note">لا فصول في الروزنامة، أو لم يُرحَّل الجدول بعد.</div>
+            <div className="note">لا فصول في الرزنامة، أو لم يُرحَّل الجدول بعد.</div>
           )}
 
           {groupByYear(terms).map((y) => (

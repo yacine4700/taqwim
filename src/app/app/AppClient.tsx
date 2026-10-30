@@ -87,9 +87,9 @@ export default function AppClient({
 
   const [tab, setTab] = useState<Tab>("classes");
   const [term, setTerm] = useState(1);
-  /* روزنامة الفصول من الخادم (أو نسخة الجهاز). فارغة = لا شيء يُقفل، كما في القاعدة. */
+  /* رزنامة الفصول من الخادم (أو نسخة الجهاز). فارغة = لا شيء يُقفل، كما في القاعدة. */
   const [calendar, setCalendar] = useState<TermRow[]>([]);
-  /** وصلت الروزنامة من نسخة الجهاز أو الخادم، فيُفتح الفصل الجاري مرة واحدة. */
+  /** وصلت الرزنامة من نسخة الجهاز أو الخادم، فيُفتح الفصل الجاري مرة واحدة. */
   const [calendarKnown, setCalendarKnown] = useState(false);
   /** اليوم بتوقيت الجزائر؛ يتجدد إذا بقي التطبيق مفتوحًا عبر منتصف الليل. */
   const [todayIso, setTodayIso] = useState(() => algiersToday());
@@ -292,7 +292,7 @@ export default function AppClient({
       supabase.from("students").select("id,group_id"),
     ]);
     const ready = !gr.error && !ss.error && !tm.error && !cg.error && !sg.error;
-    /* الروزنامة كالأفواج: غيابها (جدول لم يُرحَّل بعد، أو انقطاع) لا يحجب العلامات ولا يُقفل شيئًا. */
+    /* الرزنامة كالأفواج: غيابها (جدول لم يُرحَّل بعد، أو انقطاع) لا يحجب العلامات ولا يُقفل شيئًا. */
     const cal = await supabase
       .from("term_calendar")
       .select("school_year,term,starts_on,ends_on,grace_days")
@@ -352,7 +352,7 @@ export default function AppClient({
     setBaseSessions(snapshot.sessions ?? []);
     setBaseTpMarks(snapshot.tpMarks ?? []);
     setTpReady(snapshot.tpReady ?? false);
-    // قراءة فاشلة تُبقي الروزنامة المحفوظة على الجهاز بدل أن تمحوها.
+    // قراءة فاشلة تُبقي الرزنامة المحفوظة على الجهاز بدل أن تمحوها.
     if (calendarRows) {
       setCalendar(calendarRows);
       setCalendarKnown(true);

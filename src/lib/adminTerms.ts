@@ -1,7 +1,7 @@
 /**
- * منطق تبويب «الروزنامة» في لوحة المشرف بلا واجهة، ويُختبر بالأرقام (scripts/check-admin.mjs).
+ * منطق تبويب «الرزنامة» في لوحة المشرف بلا واجهة، ويُختبر بالأرقام (scripts/check-admin.mjs).
  * الحَكَم هو القاعدة (public.admin_set_term)؛ هنا فحص مسبق بالقواعد نفسها ليرى المشرف الخطأ
- * قبل الإرسال، وتحذيرات من روزنامة ناقصة أو فيها فجوات.
+ * قبل الإرسال، وتحذيرات من رزنامة ناقصة أو فيها فجوات.
  *
  * ملف قائم بذاته (لا يستورد من terms.ts) ليُختبر دون محمِّل مسارات.
  */
@@ -120,16 +120,16 @@ export function validateTerm(school_year: string, term: number, draft: TermDraft
 /** خطأ القاعدة بعبارة المشرف، أو null إن لم يكن من أخطاء هذه الشاشة. */
 export function termErrorMessage(error: { code?: string | null; message?: string | null } | null | undefined): string | null {
   if (!error) return null;
-  if (error.code === "23P01") return "يتداخل هذا الفصل مع فصل آخر في الروزنامة. عدّل التواريخ.";
+  if (error.code === "23P01") return "يتداخل هذا الفصل مع فصل آخر في الرزنامة. عدّل التواريخ.";
   if (error.code === "22023") return "رفضت القاعدة القيم المكتوبة. راجع التواريخ والمهلة.";
   return null;
 }
 
 /**
- * ما يستحق انتباه المشرف في الروزنامة. نصوص قصيرة، والقاعدة هي التي تمنع التداخل.
+ * ما يستحق انتباه المشرف في الرزنامة. نصوص قصيرة، والقاعدة هي التي تمنع التداخل.
  * - فصل غائب من سنة.
  * - فجوة أيام بين فصلين: لا يُفتح فيها إلا ما بقي في مهلته (ومع مهلة 0 لا شيء).
- * - اليوم خارج ما تغطيه الروزنامة (فلا يُقفل شيء)، أو الصيف بلا روزنامة للسنة القادمة.
+ * - اليوم خارج ما تغطيه الرزنامة (فلا يُقفل شيء)، أو الصيف بلا رزنامة للسنة القادمة.
  */
 export function calendarIssues(rows: readonly AdminTermRow[], today: string): string[] {
   const out: string[] = [];
@@ -148,19 +148,19 @@ export function calendarIssues(rows: readonly AdminTermRow[], today: string): st
     }
   }
   if (rows.length === 0) {
-    out.push("لا روزنامة: لا شيء يُقفل في التطبيق.");
+    out.push("لا رزنامة: لا شيء يُقفل في التطبيق.");
     return out;
   }
   const lo = Math.min(...rows.map((r) => ms(r.starts_on)));
   const hi = Math.max(...rows.map((r) => ms(r.ends_on) + r.grace_days * DAY)) + 30 * DAY;
   const t = ms(today);
   if (t < lo || t > hi) {
-    out.push("الروزنامة لا تغطي تاريخ اليوم: لا شيء يُقفل في التطبيق. أضف السنة الجارية.");
+    out.push("الرزنامة لا تغطي تاريخ اليوم: لا شيء يُقفل في التطبيق. أضف السنة الجارية.");
   } else {
     const month = Number(today.split("-")[1]);
     const lastEnd = Math.max(...rows.map((r) => ms(r.ends_on)));
     if (month >= 6 && month <= 8 && t > lastEnd) {
-      out.push("لم تُضَف روزنامة السنة القادمة بعد. إن لم تُضَف قبل سبتمبر فلن يُقفل شيء.");
+      out.push("لم تُضَف رزنامة السنة القادمة بعد. إن لم تُضَف قبل سبتمبر فلن يُقفل شيء.");
     }
   }
   return out;
@@ -175,7 +175,7 @@ export type TermLogDetail = {
   previous?: { starts_on: string; ends_on: string; grace_days: number } | null;
 };
 
-/** سطر السجلّ لتعديل الروزنامة: ما صار وما كان. */
+/** سطر السجلّ لتعديل الرزنامة: ما صار وما كان. */
 export function termLogSummary(d: TermLogDetail | null | undefined): string {
   if (!d || d.term === undefined || !d.starts_on || !d.ends_on) return "";
   const now = `من ${d.starts_on} إلى ${d.ends_on} (${graceWord(d.grace_days ?? GRACE_DEFAULT)})`;

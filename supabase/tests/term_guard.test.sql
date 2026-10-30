@@ -1,11 +1,11 @@
--- اختبارات ترحيل 20261030090000 (روزنامة الفصول ومنع التنقيط في فصل مقفل).
--- يُشغَّل بدور supabase_admin بعد ترحيل المشرف ثم هذا الترحيل. كل سيناريو يستبدل الروزنامة
+-- اختبارات ترحيل 20261030090000 (رزنامة الفصول ومنع التنقيط في فصل مقفل).
+-- يُشغَّل بدور supabase_admin بعد ترحيل المشرف ثم هذا الترحيل. كل سيناريو يستبدل الرزنامة
 -- بأخرى تُحسب بالنسبة لليوم الحقيقي بتوقيت الجزائر، فلا يتعلّق الاختبار بتاريخ تشغيله.
 \set ON_ERROR_STOP 1
 \set A '''aaaaaaaa-0000-4000-8000-00000000000a'''
 \set B '''bbbbbbbb-0000-4000-8000-00000000000b'''
 
--- يستبدل الروزنامة: كل فصل (بداية، نهاية) بعدد الأيام من اليوم (سالب = ماضٍ).
+-- يستبدل الرزنامة: كل فصل (بداية، نهاية) بعدد الأيام من اليوم (سالب = ماضٍ).
 create function tests.cal(s1 int, e1 int, s2 int, e2 int, s3 int, e3 int, grace int default 10)
 returns void language plpgsql as $$
 declare d date := (now() at time zone 'Africa/Algiers')::date;
@@ -164,19 +164,19 @@ reset role;
 select tests.clean();
 
 -- ============================================================
--- 5) روزنامة لا تغطي اليوم: لا شيء يُقفل
+-- 5) رزنامة لا تغطي اليوم: لا شيء يُقفل
 -- ============================================================
 select tests.cal(-400, -300, -299, -200, -199, -60);   -- آخر فصل انتهى قبل 60 يومًا > 10 + 30
 select tests.claims(:A);
 set role authenticated;
-select tests.expect('نسيان روزنامة السنة الجديدة: ف1 مفتوح', 1, 'open');
-select tests.expect('نسيان روزنامة السنة الجديدة: ف3 مفتوح', 3, 'open');
+select tests.expect('نسيان رزنامة السنة الجديدة: ف1 مفتوح', 1, 'open');
+select tests.expect('نسيان رزنامة السنة الجديدة: ف3 مفتوح', 3, 'open');
 reset role;
 select tests.clean();
-select tests.cal(10, 100, 101, 200, 201, 300);          -- روزنامة كلها في المستقبل
+select tests.cal(10, 100, 101, 200, 201, 300);          -- رزنامة كلها في المستقبل
 select tests.claims(:A);
 set role authenticated;
-select tests.expect('قبل بداية الروزنامة: كل الفصول مفتوحة', 1, 'open');
+select tests.expect('قبل بداية الرزنامة: كل الفصول مفتوحة', 1, 'open');
 reset role;
 select tests.clean();
 select tests.claims(:A);
@@ -256,19 +256,19 @@ rollback;
 select tests.ok('استعادة علامة فصل مقفل بالنسخة (replica) تمرّ ولو كان JWT أستاذ في الجلسة', :restored = 1);
 
 -- ============================================================
--- 9) الروزنامة نفسها: قراءة للأساتذة، ولا كتابة، ولا تداخل، ولا دوال مكشوفة
+-- 9) الرزنامة نفسها: قراءة للأساتذة، ولا كتابة، ولا تداخل، ولا دوال مكشوفة
 -- ============================================================
 select tests.cal(-120, -40, -39, 40, 41, 120);
 select tests.claims(:A);
 set role authenticated;
-select tests.ok('الأستاذ يقرأ الروزنامة', (select count(*) from public.term_calendar) = 3);
+select tests.ok('الأستاذ يقرأ الرزنامة', (select count(*) from public.term_calendar) = 3);
 select tests.fails('الأستاذ لا يضيف فصلًا', $$insert into public.term_calendar values ('2030/2031', 1, '2030-09-01', '2030-12-01', 10)$$, '42501');
-select tests.fails('الأستاذ لا يعدّل الروزنامة', $$update public.term_calendar set grace_days = 30$$, '42501');
-select tests.fails('الأستاذ لا يحذف من الروزنامة', $$delete from public.term_calendar$$, '42501');
+select tests.fails('الأستاذ لا يعدّل الرزنامة', $$update public.term_calendar set grace_days = 30$$, '42501');
+select tests.fails('الأستاذ لا يحذف من الرزنامة', $$delete from public.term_calendar$$, '42501');
 select tests.fails('الأستاذ لا يستدعي term_open', $$select private.term_open(1)$$, '42501');
 reset role;
 set role anon;
-select tests.fails('anon لا يقرأ الروزنامة', $$select * from public.term_calendar$$, '42501');
+select tests.fails('anon لا يقرأ الرزنامة', $$select * from public.term_calendar$$, '42501');
 reset role;
 select tests.fails('فصلان متداخلان مرفوضان', $$insert into public.term_calendar values ('2027/2028', 1, current_date, current_date + 5, 10)$$, '23P01');
 select tests.fails('نهاية قبل البداية مرفوضة', $$insert into public.term_calendar values ('2040/2041', 1, '2040-12-01', '2040-09-01', 10)$$, '23514');

@@ -181,7 +181,7 @@ export const ACTION_LABEL: Record<string, string> = {
   cancel_deletion: "إلغاء حذف",
   request_deletion: "طلب حذف",
   purge: "حذف نهائي",
-  set_term: "تعديل الروزنامة",
+  set_term: "تعديل الرزنامة",
 };
 
 export const ACTOR_LABEL: Record<AdminLogRow["actor_kind"], string> = {

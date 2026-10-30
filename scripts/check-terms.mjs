@@ -1,4 +1,4 @@
-/* اختبار الفصول (src/lib/terms.ts): الروزنامة والمهلة والقفل، ثم الحساب بالشهر احتياطًا.
+/* اختبار الفصول (src/lib/terms.ts): الرزنامة والمهلة والقفل، ثم الحساب بالشهر احتياطًا.
    يجب أن يتطابق مع private.term_open في supabase/migrations/20261030090000.
    يحتاج Node 22.6 فأحدث مع --experimental-strip-types. */
 import {
@@ -12,7 +12,7 @@ function t(name, got, want) {
   else { fail++; console.log(`  FAIL ${name}\n       got  ${g}\n       want ${w}`); }
 }
 
-/* روزنامة 2026/2027 كما في الترحيل */
+/* رزنامة 2026/2027 كما في الترحيل */
 const CAL = [
   { school_year: "2026/2027", term: 1, starts_on: "2026-09-01", ends_on: "2026-12-17", grace_days: 10 },
   { school_year: "2026/2027", term: 2, starts_on: "2026-12-18", ends_on: "2027-03-18", grace_days: 10 },
@@ -23,7 +23,7 @@ const openSet = (d) => {
   return [1, 2, 3].filter((x) => v.terms[x].open);
 };
 
-console.log("— الفصل الجاري والمفتوح بالروزنامة");
+console.log("— الفصل الجاري والمفتوح بالرزنامة");
 t("30 أكتوبر 2026: ف1 وحده", openSet("2026-10-30"), [1]);
 t("30 أكتوبر 2026: يُفتح على ف1", termView(CAL, "2026-10-30").landing, 1);
 t("17 ديسمبر (آخر يوم في ف1): ف1 وحده", openSet("2026-12-17"), [1]);
@@ -41,10 +41,10 @@ t("19 جويلية: لا فصل مفتوح (العطلة)", openSet("2027-07-19"
 t("19 جويلية: يُفتح على ف3 للاطلاع", termView(CAL, "2027-07-19").landing, 3);
 t("أوت: عطلة، لا شيء مفتوح", openSet("2027-08-10"), []);
 t("17 أوت 2027 (آخر يوم محكوم): مقفل", openSet("2027-08-17"), []);
-t("18 أوت 2027: الروزنامة لا تغطي اليوم فيُفتح كل شيء", openSet("2027-08-18"), [1, 2, 3]);
-t("قبل بداية الروزنامة (أوت 2026): كل شيء مفتوح", openSet("2026-08-20"), [1, 2, 3]);
-t("بلا روزنامة: كل شيء مفتوح", termView([], "2026-10-30").terms[1].open, true);
-t("بلا روزنامة: enforced=false", termView([], "2026-10-30").enforced, false);
+t("18 أوت 2027: الرزنامة لا تغطي اليوم فيُفتح كل شيء", openSet("2027-08-18"), [1, 2, 3]);
+t("قبل بداية الرزنامة (أوت 2026): كل شيء مفتوح", openSet("2026-08-20"), [1, 2, 3]);
+t("بلا رزنامة: كل شيء مفتوح", termView([], "2026-10-30").terms[1].open, true);
+t("بلا رزنامة: enforced=false", termView([], "2026-10-30").enforced, false);
 
 console.log("— المراحل والمهلة");
 t("وسط ف1: current", termView(CAL, "2026-10-30").terms[1].phase, "current");
@@ -74,7 +74,7 @@ t("بقي يوم: بعد يوم واحد", termNotice(1, termView(CAL, "2026-12-
 t("آخر يوم", termNotice(1, termView(CAL, "2026-12-27"))?.text, "انتهى الفصل الأول. اليوم آخر يوم لتنقيطه، ثم يصير للاطلاع فقط.");
 t("فصل مقفل: closed", termNotice(1, termView(CAL, "2027-01-15"))?.tone, "closed");
 t("فصل لم يبدأ: closed", termNotice(3, termView(CAL, "2027-01-15"))?.tone, "closed");
-t("بلا روزنامة: لا تنبيه", termNotice(1, termView([], "2026-10-30")), null);
+t("بلا رزنامة: لا تنبيه", termNotice(1, termView([], "2026-10-30")), null);
 
 console.log("— رسالة الخادم");
 t("term_closed:2", closedTermOf("term_closed:2"), 2);
@@ -88,7 +88,7 @@ t("addDays عبر الشهر", addDays("2026-12-27", 5), "2027-01-01");
 t("addDays عبر فيفري", addDays("2027-02-27", 2), "2027-03-01");
 t("daysBetween", daysBetween("2026-12-20", "2026-12-27"), 7);
 
-console.log("— الحساب بالشهر احتياطًا (بلا روزنامة)");
+console.log("— الحساب بالشهر احتياطًا (بلا رزنامة)");
 const at = (m, d) => new Date(2026, m - 1, d);
 t("1 سبتمبر", currentTerm(at(9, 1)), 1);
 t("31 ديسمبر", currentTerm(at(12, 31)), 1);
@@ -98,8 +98,8 @@ t("1 أفريل", currentTerm(at(4, 1)), 3);
 t("15 جوان", currentTerm(at(6, 15)), 3);
 t("16 جوان", currentTerm(at(6, 16)), null);
 t("أوت", currentTerm(at(8, 31)), null);
-t("بلا روزنامة يُفتح على الفصل بالشهر", termView([], "2027-02-10").landing, 2);
-t("بلا روزنامة في العطلة يُفتح على ف3", termView([], "2027-07-20").landing, 3);
+t("بلا رزنامة يُفتح على الفصل بالشهر", termView([], "2027-02-10").landing, 2);
+t("بلا رزنامة في العطلة يُفتح على ف3", termView([], "2027-07-20").landing, 3);
 
 console.log(`\n${pass} ok, ${fail} failed`);
 process.exit(fail ? 1 : 0);

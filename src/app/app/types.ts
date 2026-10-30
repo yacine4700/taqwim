@@ -74,7 +74,7 @@ export type Snapshot = {
   sessions?: TpSession[];
   tpMarks?: TpMark[];
   tpReady?: boolean;
-  /** روزنامة الفصول: غائبة من نسخة أقدم من هذا الإصدار، فلا يُقفل شيء حتى تصل. */
+  /** رزنامة الفصول: غائبة من نسخة أقدم من هذا الإصدار، فلا يُقفل شيء حتى تصل. */
   calendar?: TermRow[];
   savedAt: number;
 };

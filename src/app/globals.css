@@ -649,7 +649,7 @@ a.btn, a.swap { text-decoration: none; }
 .adm-confirm label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; font-weight: 600; }
 .adm-confirm input { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 10px; font-weight: 400; }
 .adm-confirm-row { display: flex; gap: 8px; }
-/* الروزنامة: بطاقة لكل سنة، وصفّ لكل فصل */
+/* الرزنامة: بطاقة لكل سنة، وصفّ لكل فصل */
 .adm-year { padding: 12px; margin-bottom: 10px; }
 .adm-year h3 { margin: 0 0 6px; font-size: 15px; }
 .adm-term { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px solid var(--line); }

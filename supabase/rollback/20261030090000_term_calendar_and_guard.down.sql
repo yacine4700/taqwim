@@ -1,5 +1,5 @@
 -- التراجع عن 20261030090000_term_calendar_and_guard.
--- لا يمسّ أي علامة: يُزال المحفّز والدالتان وجدول الروزنامة فقط، فيعود التنقيط مفتوحًا في كل فصل.
+-- لا يمسّ أي علامة: يُزال المحفّز والدالتان وجدول الرزنامة فقط، فيعود التنقيط مفتوحًا في كل فصل.
 
 drop trigger if exists trg_guard_term_write on public.records;
 drop trigger if exists trg_guard_term_write on public.readings;

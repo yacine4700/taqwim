@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# اختبار ترحيل الروزنامة والمحفّز على قاعدة محلية مؤقتة ببنية الإنتاج.
+# اختبار ترحيل الرزنامة والمحفّز على قاعدة محلية مؤقتة ببنية الإنتاج.
 # لا يتصل بأي قاعدة خارجية. يحتاج Postgres محليًّا (initdb/pg_ctl) وحساب نظام postgres.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -37,7 +37,7 @@ else echo "FAIL: النسختان تختلفان"; diff "$DIR/ts.txt" "$DIR/sql.
 
 as supabase_admin -f "$T/term_guard.test.sql"
 
-echo "== تعديل الروزنامة من المشرف (ترحيل 20261030120000)"
+echo "== تعديل الرزنامة من المشرف (ترحيل 20261030120000)"
 as postgres --single-transaction -f "$MIG2"
 as supabase_admin -f "$T/admin_term_calendar.test.sql"
 as postgres --single-transaction -f "$DOWN2" && echo "ok  التراجع عن دالة المشرف نظيف"

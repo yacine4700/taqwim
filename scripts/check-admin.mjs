@@ -97,7 +97,7 @@ ok("البحث والمرشّح", () => {
   assert.deepEqual(filterTeachers(list, "c@", "active").map((x) => x.id), []);
 });
 
-/* ---------- تبويب الروزنامة ---------- */
+/* ---------- تبويب الرزنامة ---------- */
 const row = (school_year, term, starts_on, ends_on, grace_days = 10) => ({ school_year, term, starts_on, ends_on, grace_days });
 const CAL = [
   row("2026/2027", 1, "2026-09-01", "2026-12-17"),
@@ -166,7 +166,7 @@ ok("رسائل خطأ القاعدة", () => {
   assert.equal(termErrorMessage({ code: "42501" }), null);
   assert.equal(termErrorMessage(null), null);
 });
-ok("تحذيرات: روزنامة سليمة في وسط الفصل الأول بلا تحذير", () =>
+ok("تحذيرات: رزنامة سليمة في وسط الفصل الأول بلا تحذير", () =>
   assert.deepEqual(calendarIssues(CAL, "2026-10-30"), []));
 ok("تحذير: فصل غائب", () => {
   const i = calendarIssues(CAL.slice(0, 2), "2026-10-30");
@@ -181,13 +181,13 @@ ok("تحذير: فجوة يوم واحد بصيغة المفرد", () => {
   const i = calendarIssues([CAL[0], row("2026/2027", 2, "2026-12-19", "2027-03-18"), CAL[2]], "2026-10-30");
   assert.match(i[0], /1 يوم بين/);
 });
-ok("تحذير: بلا روزنامة، أو اليوم خارجها", () => {
+ok("تحذير: بلا رزنامة، أو اليوم خارجها", () => {
   assert.match(calendarIssues([], "2026-10-30")[0], /لا شيء يُقفل/);
   assert.match(calendarIssues(CAL, "2027-09-10")[0], /لا تغطي تاريخ اليوم/);
   assert.equal(calendarIssues(CAL, "2027-08-17").some((m) => /لا تغطي/.test(m)), false);
 });
-ok("تحذير الصيف: لم تُضَف روزنامة السنة القادمة", () => {
-  assert.match(calendarIssues(CAL, "2027-07-20")[0], /لم تُضَف روزنامة السنة القادمة/);
+ok("تحذير الصيف: لم تُضَف رزنامة السنة القادمة", () => {
+  assert.match(calendarIssues(CAL, "2027-07-20")[0], /لم تُضَف رزنامة السنة القادمة/);
   assert.deepEqual(calendarIssues(CAL, "2027-05-20"), []);
   const withNext = [...CAL, row("2027/2028", 1, "2027-09-01", "2027-12-16"), row("2027/2028", 2, "2027-12-17", "2028-03-16"), row("2027/2028", 3, "2028-03-17", "2028-07-06")];
   assert.deepEqual(calendarIssues(withNext, "2027-07-20"), []);
