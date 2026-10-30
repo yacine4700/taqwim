@@ -91,6 +91,65 @@ export function closesOn(row: Pick<AdminTermRow, "ends_on" | "grace_days">): str
   return iso(ms(row.ends_on) + row.grace_days * DAY);
 }
 
+type TermSpan = Pick<AdminTermRow, "starts_on" | "ends_on" | "grace_days">;
+
+/** حال الفصل يوم معيّن، بقاعدة القفل نفسها: مفتوح من بدايته حتى نهايته + مهلته. */
+export function phaseOn(row: TermSpan, today: string): "current" | "grace" | "upcoming" | "closed" {
+  if (today < row.starts_on) return "upcoming";
+  if (today <= row.ends_on) return "current";
+  return today <= closesOn(row) ? "grace" : "closed";
+}
+
+export type EditNote = { level: "warn" | "info"; text: string };
+export type EditEffect = {
+  /** آخر يوم للتنقيط بعد التعديل، أو null إن لم تكتمل القيم. */
+  closes: string | null;
+  notes: EditNote[];
+};
+
+/**
+ * ما يعنيه التعديل لأساتذة التطبيق اليوم، قبل الحفظ. لا يمنع شيئًا (التحقق في validateTerm
+ * والقاعدة هي الحَكَم)، بل يقول للمشرف إن كان سيقفل فصلًا مفتوحًا أو يفتح مقفلًا.
+ * prev هو ما في الجدول الآن، أو null لفصل غير مُدخَل. تعديل فصل في سنة بعيدة لا يُنتج تنبيهًا.
+ */
+export function editEffect(prev: TermSpan | null, draft: TermDraft, today: string): EditEffect {
+  const g = draft.grace_days.trim();
+  if (!isIso(draft.starts_on) || !isIso(draft.ends_on) || !/^\d+$/.test(g) || Number(g) > GRACE_MAX) {
+    return { closes: null, notes: [] };
+  }
+  if (ms(draft.ends_on) < ms(draft.starts_on)) return { closes: null, notes: [] };
+  const next: TermSpan = { starts_on: draft.starts_on, ends_on: draft.ends_on, grace_days: Number(g) };
+  const closes = closesOn(next);
+  const before = prev ? phaseOn(prev, today) : null;
+  const after = phaseOn(next, today);
+  const wasOpen = before === "current" || before === "grace";
+  const isOpen = after === "current" || after === "grace";
+  const notes: EditNote[] = [];
+
+  if (wasOpen && !isOpen) {
+    notes.push({
+      level: "warn",
+      text:
+        after === "upcoming"
+          ? "هذا الفصل مفتوح الآن للتنقيط، وبعد التعديل لا يبدأ إلا في تاريخ لاحق: يُقفل اليوم عند كل الأساتذة (للاطلاع والطبع فقط)."
+          : "هذا الفصل مفتوح الآن للتنقيط، وبعد التعديل يكون قد انتهى بمهلته: يُقفل اليوم عند كل الأساتذة (للاطلاع والطبع فقط).",
+    });
+  } else if (!wasOpen && isOpen) {
+    notes.push({ level: "info", text: "بعد التعديل يصير هذا الفصل مفتوحًا للتنقيط اليوم عند كل الأساتذة." });
+  } else if (before === "current" && after === "grace") {
+    notes.push({
+      level: "info",
+      text: `بعد التعديل ينتهي هذا الفصل ويدخل مهلته، ويبقى مفتوحًا حتى ${closes}.`,
+    });
+  } else if (wasOpen && isOpen && prev && closesOn(prev) !== closes) {
+    notes.push({
+      level: closes < closesOn(prev) ? "warn" : "info",
+      text: `آخر يوم للتنقيط يتغيّر من ${closesOn(prev)} إلى ${closes}.`,
+    });
+  }
+  return { closes, notes };
+}
+
 export type TermCheck = { ok: true; grace: number } | { ok: false; error: string };
 
 /** القواعد نفسها التي تفرضها public.admin_set_term. */

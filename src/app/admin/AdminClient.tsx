@@ -8,6 +8,7 @@ import {
   GRACE_DEFAULT,
   calendarIssues,
   closesOn,
+  editEffect,
   graceWord,
   groupByYear,
   nextYearLabel,
@@ -16,6 +17,7 @@ import {
   termLogSummary,
   validateTerm,
   type AdminTermRow,
+  type EditEffect,
   type TermDraft,
 } from "@/lib/adminTerms";
 import {
@@ -24,11 +26,14 @@ import {
   REASON_MAX,
   STATUS_LABEL,
   adminProblemMessage,
+  attentionItems,
   classifyAdminError,
   cleanCode,
   cleanReason,
   codeReady,
+  countWord,
   daysLeft,
+  dueWord,
   filterTeachers,
   leftLabel,
   msLeft,
@@ -316,6 +321,13 @@ export default function AdminClient({
     [teachers],
   );
 
+  const today = algiersToday();
+  const calendarMessages = useMemo(() => calendarIssues(terms, today), [terms, today]);
+  const attention = useMemo(
+    () => attentionItems(teachers, calendarMessages, now),
+    [teachers, calendarMessages, now],
+  );
+
   if (phase === "loading") {
     return (
       <div className="auth gut">
@@ -452,7 +464,7 @@ export default function AdminClient({
             {t.is_admin ? " · مشرف" : ""}
           </small>
           <small>
-            {t.classes} أقسام · {t.students} تلاميذ · {t.records} سجلات
+            {countWord(t.classes, "class")} · {countWord(t.students, "student")} · {countWord(t.records, "record")}
           </small>
           <small>
             آخر نشاط {day(t.last_activity)} · آخر دخول {day(t.last_sign_in_at)}
@@ -461,7 +473,7 @@ export default function AdminClient({
             <small className="perr">
               {t.status === "disabled"
                 ? "موقوف"
-                : `يُحذف يوم ${day(t.purge_after)} (بعد ${daysLeft(t.purge_after, now)} يومًا)`}
+                : `يُحذف يوم ${day(t.purge_after)} (${dueWord(daysLeft(t.purge_after, now))})`}
             </small>
           )}
         </div>
@@ -504,6 +516,26 @@ export default function AdminClient({
 
       {message && <div className="note bad" role="alert">{message}</div>}
       {done && <div className="note" role="status">{done}</div>}
+
+      {/* ما يحتاج انتباهًا: يُخفى منه ما يظهر أصلًا في التبويب المفتوح */}
+      {attention.some((a) => a.tab !== tab) && (
+        <section className="adm-attn" aria-label="يحتاج انتباهك">
+          <b>يحتاج انتباهك</b>
+          {attention
+            .filter((a) => a.tab !== tab)
+            .map((a) => (
+              <button
+                key={a.key}
+                type="button"
+                className={`note ${a.level === "bad" ? "bad" : "warn"} adm-attn-item`}
+                onClick={() => setTab(a.tab)}
+              >
+                <span>{a.text}</span>
+                <small>افتح</small>
+              </button>
+            ))}
+        </section>
+      )}
 
       <div className="segmented" role="tablist" style={{ marginBlock: 12 }}>
         <button role="tab" aria-pressed={tab === "accounts"} onClick={() => setTab("accounts")}>
@@ -568,7 +600,7 @@ export default function AdminClient({
             الفصل مفتوح للتنقيط من بدايته حتى نهايته + المهلة، فيُنقَّط الفصلان معًا في أيام المهلة. بعدها
             يصير الفصل للاطلاع فقط في تطبيق كل الأساتذة. كل تعديل يُسجَّل بقيمه السابقة.
           </div>
-          {calendarIssues(terms, algiersToday()).map((m) => (
+          {calendarMessages.map((m) => (
             <div key={m} className="note warn" style={{ marginBottom: 8 }}>{m}</div>
           ))}
 
@@ -587,6 +619,7 @@ export default function AdminClient({
                     setNewYear({ ...newYear, drafts: newYear.drafts.map((x, j) => (j === i ? next : x)) })
                   }
                   withReason={false}
+                  effect={editEffect(null, d, today)}
                 />
               ))}
               <div className="adm-confirm-row">
@@ -604,12 +637,12 @@ export default function AdminClient({
                 className="btn soft sm"
                 style={{ marginBottom: 10 }}
                 onClick={() => {
-                  const label = nextYearLabel(terms, algiersToday());
+                  const label = nextYearLabel(terms, today);
                   setTermError("");
                   setNewYear({ label, drafts: suggestYear(terms, label) });
                 }}
               >
-                + أضف السنة {nextYearLabel(terms, algiersToday())}
+                + أضف السنة {nextYearLabel(terms, today)}
               </button>
             )
           )}
@@ -632,6 +665,7 @@ export default function AdminClient({
                         draft={editing.draft}
                         onChange={(draft) => setEditing({ ...editing, draft })}
                         withReason
+                        effect={editEffect(t, editing.draft, today)}
                       />
                       <div className="adm-confirm-row">
                         <button className="btn sm" disabled={busy} onClick={submitEditing}>
@@ -712,12 +746,14 @@ export default function AdminClient({
 
 /** حقول فصل واحد: بداية ونهاية ومهلة، والسبب اختياري عند التعديل. */
 function TermFields({
-  title, draft, onChange, withReason,
+  title, draft, onChange, withReason, effect,
 }: {
   title: string;
   draft: TermDraft;
   onChange: (next: TermDraft) => void;
   withReason: boolean;
+  /** ما يعنيه التعديل للأساتذة اليوم، يُحسب قبل الحفظ. */
+  effect?: EditEffect;
 }) {
   return (
     <div className="adm-confirm" style={{ padding: "6px 0 10px" }}>
@@ -744,6 +780,16 @@ function TermFields({
           />
         </label>
       </div>
+      {effect?.closes && (
+        <small className="adm-closes">
+          آخر يوم للتنقيط: <bdi dir="ltr">{effect.closes}</bdi>
+        </small>
+      )}
+      {effect?.notes.map((n) => (
+        <div key={n.text} className={n.level === "warn" ? "note warn" : "note"} role={n.level === "warn" ? "alert" : "status"}>
+          {n.text}
+        </div>
+      ))}
       {withReason && (
         <label>
           السبب (اختياري، يُحفظ في السجلّ)

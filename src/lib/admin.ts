@@ -122,6 +122,71 @@ export function daysLeft(purgeAfter: string | null, now: number): number {
   return Math.ceil(msLeft(purgeAfter, now) / DAY);
 }
 
+/** اسم معدود بصيغ العربية: واحد، ومثنّى، وجمع (3-10)، وتمييز مفرد (11 فأكثر). */
+const NOUNS = {
+  class: { one: "قسم واحد", two: "قسمان", few: "أقسام", many: "قسمًا", none: "لا أقسام" },
+  student: { one: "تلميذ واحد", two: "تلميذان", few: "تلاميذ", many: "تلميذًا", none: "لا تلاميذ" },
+  record: { one: "سجلّ واحد", two: "سجلّان", few: "سجلّات", many: "سجلًّا", none: "لا سجلّات" },
+} as const;
+
+export type CountNoun = keyof typeof NOUNS;
+
+/** «قسم واحد» · «قسمان» · «5 أقسام» · «12 قسمًا» · «لا أقسام». */
+export function countWord(n: number, noun: CountNoun): string {
+  const w = NOUNS[noun];
+  const k = Number.isFinite(n) ? Math.max(0, Math.trunc(n)) : 0;
+  if (k === 0) return w.none;
+  if (k === 1) return w.one;
+  if (k === 2) return w.two;
+  return k <= 10 ? `${k} ${w.few}` : `${k} ${w.many}`;
+}
+
+/** «بعد يومين» أو «غدًا» أو «اليوم»، لموعد يُحسب بالأيام المتبقية. */
+export function dueWord(days: number): string {
+  if (days <= 0) return "اليوم في التشغيل الليلي";
+  if (days === 1) return "غدًا";
+  if (days === 2) return "بعد يومين";
+  return days <= 10 ? `بعد ${days} أيام` : `بعد ${days} يومًا`;
+}
+
+export type AttentionItem = {
+  key: string;
+  /** التبويب الذي يُفتح لمعالجة البند. */
+  tab: "accounts" | "deletions" | "calendar" | "log";
+  level: "bad" | "warn";
+  text: string;
+};
+
+/**
+ * ما يحتاج المشرف أن يراه دون أن يفتح تبويبًا: تنبيهات الرزنامة، وحسابات ستُحذف قريبًا.
+ * أعداد وتواريخ فقط، لا شيء من محتوى البيانات. «قريبًا» = في يومين أو أقل: وقت يكفي لإلغاء الطلب.
+ */
+export function attentionItems(
+  list: AdminTeacher[],
+  calendarMessages: readonly string[],
+  now: number,
+): AttentionItem[] {
+  const out: AttentionItem[] = [];
+  const pending = list
+    .filter((t) => !t.is_admin && t.status === "deletion_pending")
+    .sort((a, b) => (a.purge_after ?? "").localeCompare(b.purge_after ?? ""));
+  if (pending.length > 0) {
+    const d = daysLeft(pending[0].purge_after, now);
+    const who = pending[0].full_name || pending[0].email || "حساب";
+    out.push({
+      key: "deletions",
+      tab: "deletions",
+      level: d <= 2 ? "bad" : "warn",
+      text:
+        pending.length === 1
+          ? `حذف نهائي لحساب ${who}: ${dueWord(d)}`
+          : `${pending.length} طلبات حذف معلّقة، أقربها ${dueWord(d)} (${who})`,
+    });
+  }
+  calendarMessages.forEach((m, i) => out.push({ key: `calendar-${i}`, tab: "calendar", level: "warn", text: m }));
+  return out;
+}
+
 export type AdminStats = {
   accounts: number;
   active: number;

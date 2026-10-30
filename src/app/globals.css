@@ -649,6 +649,12 @@ a.btn, a.swap { text-decoration: none; }
 .adm-confirm label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; font-weight: 600; }
 .adm-confirm input { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 10px; font-weight: 400; }
 .adm-confirm-row { display: flex; gap: 8px; }
+/* شريط «يحتاج انتباهك»: كل بند زرّ يفتح تبويبه */
+.adm-attn { display: flex; flex-direction: column; gap: 6px; margin-block: 12px 4px; }
+.adm-attn > b { font-size: 13px; }
+.adm-attn-item { display: flex; justify-content: space-between; align-items: center; gap: 10px; width: 100%; text-align: start; border: 0; font: inherit; line-height: 1.7; cursor: pointer; }
+.adm-attn-item small { flex: none; font-weight: 700; text-decoration: underline; }
+.adm-closes { color: var(--muted); font-size: 12px; }
 /* الرزنامة: بطاقة لكل سنة، وصفّ لكل فصل */
 .adm-year { padding: 12px; margin-bottom: 10px; }
 .adm-year h3 { margin: 0 0 6px; font-size: 15px; }

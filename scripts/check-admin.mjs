@@ -4,9 +4,10 @@ import assert from "node:assert/strict";
 import {
   classifyAdminError, parseAdminState, cleanCode, codeReady, cleanReason, REASON_MAX,
   msLeft, leftLabel, daysLeft, summarize, filterTeachers, adminProblemMessage,
+  countWord, dueWord, attentionItems,
 } from "../src/lib/admin.ts";
 import {
-  groupByYear, closesOn, graceWord, nextYearLabel, suggestYear, validateTerm, termErrorMessage, calendarIssues, termLogSummary,
+  groupByYear, closesOn, graceWord, nextYearLabel, suggestYear, validateTerm, termErrorMessage, calendarIssues, termLogSummary, phaseOn, editEffect,
 } from "../src/lib/adminTerms.ts";
 
 let n = 0;
@@ -203,6 +204,119 @@ ok("سطر السجلّ: فصل جديد وتعديل بالقيم السابق�
   );
   assert.equal(termLogSummary({ reason: "x" }), "");
   assert.equal(termLogSummary(null), "");
+});
+
+ok("العدد بالعربية: صفر وواحد ومثنّى وجمع وتمييز", () => {
+  assert.equal(countWord(0, "class"), "لا أقسام");
+  assert.equal(countWord(1, "class"), "قسم واحد");
+  assert.equal(countWord(2, "class"), "قسمان");
+  assert.equal(countWord(3, "class"), "3 أقسام");
+  assert.equal(countWord(10, "class"), "10 أقسام");
+  assert.equal(countWord(11, "class"), "11 قسمًا");
+  assert.equal(countWord(137, "student"), "137 تلميذًا");
+  assert.equal(countWord(1, "student"), "تلميذ واحد");
+  assert.equal(countWord(2, "record"), "سجلّان");
+  assert.equal(countWord(412, "record"), "412 سجلًّا");
+  assert.equal(countWord(5, "record"), "5 سجلّات");
+});
+ok("العدد: قيم غير صالحة تُعامل صفرًا", () => {
+  assert.equal(countWord(NaN, "class"), "لا أقسام");
+  assert.equal(countWord(-4, "student"), "لا تلاميذ");
+  assert.equal(countWord(2.9, "class"), "قسمان");
+});
+ok("موعد بالأيام: اليوم وغدًا وبعد يومين وأيام ويومًا", () => {
+  assert.equal(dueWord(0), "اليوم في التشغيل الليلي");
+  assert.equal(dueWord(1), "غدًا");
+  assert.equal(dueWord(2), "بعد يومين");
+  assert.equal(dueWord(7), "بعد 7 أيام");
+  assert.equal(dueWord(11), "بعد 11 يومًا");
+});
+
+const NOW2 = Date.parse("2026-10-30T09:00:00Z");
+const tch = (o) => ({
+  id: "x", email: "a@b.c", full_name: null, created_at: null, last_sign_in_at: null, status: "active",
+  banned_until: null, purge_after: null, is_admin: false, classes: 0, students: 0, records: 0, last_activity: null, ...o,
+});
+ok("شريط الانتباه: لا شيء إن لم يكن ما يستحق", () =>
+  assert.deepEqual(attentionItems([tch({}), tch({ status: "disabled" })], [], NOW2), []));
+ok("شريط الانتباه: حذف بعد يوم ⇒ بند أحمر يفتح تبويب الحذف", () => {
+  const a = attentionItems([tch({ full_name: "أحمد", status: "deletion_pending", purge_after: "2026-10-31T01:00:00Z" })], [], NOW2);
+  assert.equal(a.length, 1);
+  assert.equal(a[0].tab, "deletions");
+  assert.equal(a[0].level, "bad");
+  assert.match(a[0].text, /أحمد: غدًا/);
+});
+ok("شريط الانتباه: حذف بعيد ⇒ تحذير لا أحمر، والأقرب يُذكر أولًا", () => {
+  const a = attentionItems([
+    tch({ id: "1", email: "far@x.y", status: "deletion_pending", purge_after: "2026-11-05T00:00:00Z" }),
+    tch({ id: "2", email: "near@x.y", status: "deletion_pending", purge_after: "2026-11-03T12:00:00Z" }),
+  ], [], NOW2);
+  assert.equal(a[0].level, "warn");
+  assert.match(a[0].text, /^2 طلبات حذف معلّقة، أقربها بعد 5 أيام \(near@x\.y\)$/);
+});
+ok("شريط الانتباه: حساب المشرف لا يُعدّ، وتنبيهات الرزنامة تفتح تبويبها", () => {
+  const a = attentionItems([tch({ is_admin: true, status: "deletion_pending", purge_after: "2026-10-31T00:00:00Z" })], ["تنبيه أ", "تنبيه ب"], NOW2);
+  assert.deepEqual(a.map((x) => [x.tab, x.text]), [["calendar", "تنبيه أ"], ["calendar", "تنبيه ب"]]);
+  assert.equal(new Set(a.map((x) => x.key)).size, 2);
+});
+
+ok("حال الفصل: قبل البداية وفيه ومهلته وبعدها (حدود الأيام)", () => {
+  const r = { starts_on: "2026-09-01", ends_on: "2026-12-17", grace_days: 10 };
+  assert.equal(phaseOn(r, "2026-08-31"), "upcoming");
+  assert.equal(phaseOn(r, "2026-09-01"), "current");
+  assert.equal(phaseOn(r, "2026-12-17"), "current");
+  assert.equal(phaseOn(r, "2026-12-18"), "grace");
+  assert.equal(phaseOn(r, "2026-12-27"), "grace");
+  assert.equal(phaseOn(r, "2026-12-28"), "closed");
+  assert.equal(phaseOn({ ...r, grace_days: 0 }, "2026-12-18"), "closed");
+});
+const T1 = { starts_on: "2026-09-01", ends_on: "2026-12-17", grace_days: 10 };
+const D = (o = {}) => ({ starts_on: "2026-09-01", ends_on: "2026-12-17", grace_days: "10", reason: "", ...o });
+ok("أثر التعديل: بلا تغيير ⇒ آخر يوم فقط ولا ملاحظات", () => {
+  const e = editEffect(T1, D(), "2026-10-30");
+  assert.equal(e.closes, "2026-12-27");
+  assert.deepEqual(e.notes, []);
+});
+ok("أثر التعديل: تقديم النهاية قبل اليوم يقفل فصلًا مفتوحًا (تحذير)", () => {
+  const e = editEffect(T1, D({ ends_on: "2026-10-01", grace_days: "5" }), "2026-10-30");
+  assert.equal(e.closes, "2026-10-06");
+  assert.equal(e.notes.length, 1);
+  assert.equal(e.notes[0].level, "warn");
+  assert.match(e.notes[0].text, /يُقفل اليوم/);
+});
+ok("أثر التعديل: تأخير البداية إلى المستقبل يقفل فصلًا مفتوحًا", () => {
+  const e = editEffect(T1, D({ starts_on: "2026-11-15" }), "2026-10-30");
+  assert.equal(e.notes[0].level, "warn");
+  assert.match(e.notes[0].text, /لا يبدأ إلا في تاريخ لاحق/);
+});
+ok("أثر التعديل: فصل مقفل يُفتح (معلومة)", () => {
+  const e = editEffect({ starts_on: "2026-09-01", ends_on: "2026-10-01", grace_days: 0 }, D({ ends_on: "2026-11-30" }), "2026-10-30");
+  assert.equal(e.notes[0].level, "info");
+  assert.match(e.notes[0].text, /يصير هذا الفصل مفتوحًا/);
+});
+ok("أثر التعديل: فصل غير مُدخَل يُضاف وهو يغطي اليوم ⇒ يُفتح", () => {
+  const e = editEffect(null, D(), "2026-10-30");
+  assert.equal(e.notes[0].level, "info");
+});
+ok("أثر التعديل: جاري يدخل مهلته (معلومة بآخر يوم)", () => {
+  const e = editEffect(T1, D({ ends_on: "2026-10-25" }), "2026-10-30");
+  assert.equal(e.notes.length, 1);
+  assert.equal(e.notes[0].level, "info");
+  assert.match(e.notes[0].text, /2026-11-04/);
+});
+ok("أثر التعديل: تقصير المهلة في فصل في مهلته تحذير، وتطويلها معلومة", () => {
+  const inGrace = { starts_on: "2026-09-01", ends_on: "2026-10-25", grace_days: 10 };
+  const shorter = editEffect(inGrace, D({ ends_on: "2026-10-25", grace_days: "7" }), "2026-10-30");
+  assert.equal(shorter.notes[0].level, "warn");
+  assert.match(shorter.notes[0].text, /من 2026-11-04 إلى 2026-11-01/);
+  const longer = editEffect(inGrace, D({ ends_on: "2026-10-25", grace_days: "15" }), "2026-10-30");
+  assert.equal(longer.notes[0].level, "info");
+});
+ok("أثر التعديل: فصل بعيد في المستقبل لا ملاحظات، وقيم ناقصة أو خاطئة لا معاينة", () => {
+  assert.deepEqual(editEffect(null, D({ starts_on: "2027-09-01", ends_on: "2027-12-16" }), "2026-10-30").notes, []);
+  for (const bad of [{ starts_on: "" }, { grace_days: "" }, { grace_days: "31" }, { grace_days: "x" }, { ends_on: "2026-08-01" }]) {
+    assert.deepEqual(editEffect(T1, D(bad), "2026-10-30"), { closes: null, notes: [] }, JSON.stringify(bad));
+  }
 });
 
 console.log(`${n} اختبارًا نجحت`);
