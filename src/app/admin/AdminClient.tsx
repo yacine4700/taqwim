@@ -546,6 +546,7 @@ export default function AdminClient({
 
   return (
     <div className="gut adm">
+      <aside className="adm-side">
       <div className="adm-head">
         <div>
           <h1>الإشراف</h1>
@@ -569,7 +570,26 @@ export default function AdminClient({
           </div>
         </div>
       </div>
+      <nav className="segmented adm-nav" role="tablist" aria-orientation="vertical" aria-label="أقسام الإشراف">
+        <button role="tab" aria-pressed={tab === "accounts"} onClick={() => changeTab("accounts")}>
+          الحسابات<span className="adm-count">{teachers.length}</span>
+        </button>
+        <button role="tab" aria-pressed={tab === "deletions"} aria-label={`طلبات الحذف (${deletions.length})`} onClick={() => changeTab("deletions")}>
+          الحذف{deletions.length > 0 && <span className="adm-badge">{deletions.length}</span>}
+        </button>
+        <button role="tab" aria-pressed={tab === "calendar"} onClick={() => changeTab("calendar")}>
+          الرزنامة{calendarMessages.length > 0 && <span className="adm-badge warn">{calendarMessages.length}</span>}
+        </button>
+        <button role="tab" aria-pressed={tab === "backup"} onClick={() => changeTab("backup")}>
+          النسخ
+        </button>
+        <button role="tab" aria-pressed={tab === "log"} onClick={() => changeTab("log")}>
+          السجلّ
+        </button>
+      </nav>
+      </aside>
 
+      <div className="adm-main">
       <p className="lead">
         الحسابات وحالتها وأعداد بياناتها. لا تظهر هنا أسماء التلاميذ ولا العلامات، وكل عملية تغيّر
         شيئًا تُسجَّل.
@@ -615,24 +635,8 @@ export default function AdminClient({
         </section>
       )}
 
-      <div className="segmented" role="tablist" style={{ marginBlock: 12 }}>
-        <button role="tab" aria-pressed={tab === "accounts"} onClick={() => changeTab("accounts")}>
-          الحسابات
-        </button>
-        <button role="tab" aria-pressed={tab === "deletions"} aria-label={`طلبات الحذف (${deletions.length})`} onClick={() => changeTab("deletions")}>
-          الحذف{deletions.length > 0 && <span className="adm-badge">{deletions.length}</span>}
-        </button>
-        <button role="tab" aria-pressed={tab === "calendar"} onClick={() => changeTab("calendar")}>
-          الرزنامة{calendarMessages.length > 0 && <span className="adm-badge warn">{calendarMessages.length}</span>}
-        </button>
-        <button role="tab" aria-pressed={tab === "backup"} onClick={() => changeTab("backup")}>
-          النسخ
-        </button>
-        <button role="tab" aria-pressed={tab === "log"} onClick={() => changeTab("log")}>
-          السجلّ
-        </button>
-      </div>
 
+      <div className="adm-content">
       {tab === "accounts" && (
         <>
           <input
@@ -868,6 +872,8 @@ export default function AdminClient({
           </small>
         </>
       )}
+      </div>
+      </div>
     </div>
   );
 }

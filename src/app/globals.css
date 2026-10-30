@@ -704,6 +704,27 @@ a.btn, a.swap { text-decoration: none; }
 .adm-dates label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; font-weight: 600; }
 .adm-dates input { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 9px 8px; font-weight: 400; min-width: 0; }
 
+/* القائمة الجانبية: على الهاتف الترتيب كما كان (الرأس، الملخّص، التبويبات، المحتوى) بلا غلاف؛ وعلى الحاسوب عمود جانبي ثابت */
+.adm { display: flex; flex-direction: column; }
+.adm-side, .adm-main { display: contents; }
+.adm-nav { order: 1; margin-block: 12px; }
+.adm-content { order: 2; }
+.adm-nav .adm-count { display: none; }
+@media (min-width: 1000px) {
+  .adm { max-width: 1320px; display: grid; grid-template-columns: 240px minmax(0, 1fr); gap: 28px; align-items: start; }
+  .adm-side { display: flex; flex-direction: column; gap: 14px; position: sticky; top: 16px; padding: 16px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); }
+  .adm-main { display: block; min-width: 0; }
+  .adm-side .adm-head { flex-direction: column; align-items: stretch; gap: 10px; margin: 0; padding-bottom: 12px; border-bottom: 1px solid var(--line); }
+  .adm-side .adm-head-side { align-items: flex-start; text-align: start; }
+  .adm-side .adm-head-btns { justify-content: flex-start; }
+  .adm-nav { order: 0; flex-direction: column; margin: 0; padding: 0; gap: 4px; background: none; }
+  .adm-nav button { display: flex; align-items: center; justify-content: space-between; text-align: start; padding: 11px 12px; font-size: 14px; border-radius: var(--radius-sm); }
+  .adm-nav button:hover { background: var(--surface-2); }
+  .adm-nav button[aria-pressed="true"] { background: var(--primary-soft); color: var(--primary); box-shadow: none; }
+  .adm-content { order: 0; margin-top: 14px; }
+  .adm-nav .adm-count { display: inline; }
+}
+
 /* تبويب النسخ: بطاقات بلا شبكة الرزنامة. عمود على الهاتف، وعمودان على الحاسوب (الحالة والتحكم | فترات الاختبارات) */
 .adm-bk { display: grid; gap: 12px; align-items: start; }
 .adm-bk-col { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
