@@ -143,10 +143,12 @@ export default function BackupPanel({
       )}
       {error && <div className="note bad" role="alert" style={{ marginBottom: 8 }}>{error}</div>}
 
+      <div className="adm-bk">
+      <div className="adm-bk-col">
       {status && label && (
-        <div className="card adm-year" style={{ marginBottom: 10 }}>
+        <div className="card adm-bk-card">
           <h3>الحالة الآن</h3>
-          <div className={`note ${label.tone === "warn" ? "warn" : ""}`}>
+          <div className={`note adm-bk-state ${label.tone === "warn" ? "warn" : ""}`}>
             <b>{label.title}</b>
             <br />
             <small>{label.detail}</small>
@@ -165,7 +167,7 @@ export default function BackupPanel({
       )}
 
       {form ? (
-        <div className="card adm-year" style={{ marginBottom: 10 }}>
+        <div className="card adm-bk-card">
           <h3>{form.mode === "paused" ? "أوقف النسخ مؤقتًا" : "نسخ يومي مؤقت"}</h3>
           <div className="adm-confirm" style={{ padding: "6px 0 10px" }}>
             <div className="adm-dates">
@@ -207,7 +209,7 @@ export default function BackupPanel({
         </div>
       ) : (
         !overridden && (
-          <div className="adm-confirm-row" style={{ marginBottom: 10 }}>
+          <div className="adm-confirm-row">
             <button
               className="btn soft sm"
               onClick={() => { setError(""); setForm({ mode: "daily", until: "", reason: "" }); }}
@@ -224,8 +226,10 @@ export default function BackupPanel({
         )
       )}
 
-      <h3 style={{ marginBlock: "14px 6px" }}>فترات الاختبارات (نسخ يومي)</h3>
-      <small className="adm-closes" style={{ display: "block", marginBottom: 8 }}>
+      </div>
+      <div className="adm-bk-col">
+      <h3 className="adm-bk-title">فترات الاختبارات (نسخ يومي)</h3>
+      <small className="adm-closes">
         من بداية الاختبارات إلى نهاية الفصل + المهلة. الافتراضي 14 يومًا قبل نهاية الفصل.
       </small>
       {terms.length === 0 && <div className="note">لا فصول في الرزنامة.</div>}
@@ -234,7 +238,7 @@ export default function BackupPanel({
         const w = examWindow(t);
         const editing = exams?.key === key;
         return (
-          <div key={key} className="card adm-year" style={{ marginBottom: 8 }}>
+          <div key={key} className="card adm-bk-card">
             <b>
               {t.school_year} · الفصل {t.term}
             </b>
@@ -283,6 +287,8 @@ export default function BackupPanel({
           </div>
         );
       })}
+      </div>
+      </div>
     </>
   );
 }

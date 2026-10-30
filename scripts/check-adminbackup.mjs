@@ -2,14 +2,19 @@
    القاعدة هي الحَكَم (supabase/tests/backup_schedule.test.sql)؛ هنا القواعد المسبقة نفسها وعرض الحالة. */
 import assert from "node:assert/strict";
 import {
-  parseBackupStatus, scheduleLabel, validateBackup, validateExamsFrom, examWindow,
-  backupErrorMessage, backupLogSummary, addDays, OVERRIDE_MAX_DAYS,
+  parseBackupStatus, scheduleLabel as rawLabel, validateBackup as rawValidate, validateExamsFrom as rawExams, examWindow,
+  backupErrorMessage, backupLogSummary as rawSummary, addDays, OVERRIDE_MAX_DAYS, ltr,
 } from "../src/lib/adminBackup.ts";
 import { parseTab, filterLog, ACTION_LABEL } from "../src/lib/admin.ts";
 
 let n = 0;
 const ok = (label, fn) => { fn(); n += 1; console.log("ok ", label); };
 
+const clean = (x) => (typeof x === "string" ? x.replace(/[\u2066\u2069]/g, "") : x);
+const scheduleLabel = (s) => { const r = rawLabel(s); return { ...r, title: clean(r.title), detail: clean(r.detail) }; };
+const validateBackup = (...a) => { const r = rawValidate(...a); return r.ok ? r : { ...r, error: clean(r.error) }; };
+const validateExamsFrom = (...a) => { const r = rawExams(...a); return r.ok ? r : { ...r, error: clean(r.error) }; };
+const backupLogSummary = (...a) => clean(rawSummary(...a));
 const T1 = { school_year: "2026/2027", term: 1, starts_on: "2026-09-01", ends_on: "2026-12-17", grace_days: 10 };
 const status = (o) => ({
   schedule: "weekly", mode: "auto", until: null, reason: null, override_expired: false,
@@ -73,6 +78,12 @@ ok("السبب إلزامي ولو فراغات", () => {
 ok("تاريخ غير صحيح أو فارغ مرفوض", () => {
   for (const u of ["", "2026-13-01", "2026-02-30", "غدا", "2026/11/05"])
     assert.equal(validateBackup("paused", u, "x", TODAY).ok, false, u);
+});
+ok("التواريخ في النصوص معزولة اتجاهيًّا (لا تنعكس في العنوان العربي)", () => {
+  assert.equal(ltr("2026-11-12"), "\u20662026-11-12\u2069");
+  assert.ok(rawLabel(status({ schedule: "paused", mode: "paused", until: "2026-11-12", reason: "x" })).title.includes(ltr("2026-11-12")));
+  assert.ok(rawLabel(status({ next_weekly: "2026-11-06" })).detail.includes(ltr("2026-11-06")));
+  assert.ok(rawSummary("set_backup", { mode: "paused", until: "2026-11-10" }).includes(ltr("2026-11-10")));
 });
 ok("عبور نهاية السنة في addDays", () => assert.equal(addDays("2026-12-31", 1), "2027-01-01"));
 

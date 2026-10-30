@@ -704,6 +704,21 @@ a.btn, a.swap { text-decoration: none; }
 .adm-dates label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; font-weight: 600; }
 .adm-dates input { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 9px 8px; font-weight: 400; min-width: 0; }
 
+/* تبويب النسخ: بطاقات بلا شبكة الرزنامة. عمود على الهاتف، وعمودان على الحاسوب (الحالة والتحكم | فترات الاختبارات) */
+.adm-bk { display: grid; gap: 12px; align-items: start; }
+.adm-bk-col { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.adm-bk-card { padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+.adm-bk-card h3 { margin: 0; font-size: 15px; }
+.adm-bk-card .adm-confirm { padding: 0; }
+.adm-bk-card .adm-dates label:last-child { grid-column: auto; max-width: none; }
+.adm-bk-state b { font-size: 16px; }
+.adm-bk-state small { font-size: 13px; line-height: 1.9; }
+.adm-bk-title { margin: 6px 0 0; font-size: 15px; }
+.adm-bk-card .clearb { align-self: flex-start; }
+@media (min-width: 1000px) {
+  .adm-bk { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 20px; }
+}
+
 /* القراءة داخل القسم: زرّ المتطوّع بحجم إصبع، ومحاولات الفصل بجواره */
 .readbar .chint { flex: 1 1 100%; }
 .srow.colmode .sreads { min-width: 26px; text-align: center; font-size: 12px; }

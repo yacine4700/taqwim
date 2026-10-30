@@ -38,6 +38,9 @@ const iso = (t: number) => new Date(t).toISOString().slice(0, 10);
 const isIso = (s: string) => /^\d{4}-\d{2}-\d{2}$/.test(s) && iso(ms(s)) === s;
 export const addDays = (s: string, n: number) => iso(ms(s) + n * DAY);
 
+/** يعزل التاريخ من اتجاه الجملة العربية، وإلا يُعرض 2026-11-12 معكوسًا (12-11-2026) في العنوان. */
+export const ltr = (d: string) => `\u2066${d}\u2069`;
+
 const SCHEDULES: readonly BackupSchedule[] = ["weekly", "daily_exams", "daily_override", "paused"];
 const MODES: readonly BackupMode[] = ["auto", "daily", "paused"];
 
@@ -67,29 +70,29 @@ export function scheduleLabel(s: BackupStatus): { title: string; detail: string;
   switch (s.schedule) {
     case "paused":
       return {
-        title: `موقوف حتى ${s.until ?? "؟"} (لا نسخ)`,
+        title: `موقوف حتى ${ltr(s.until ?? "؟")} (لا نسخ)`,
         detail: `${s.reason ? `السبب: ${s.reason}. ` : ""}يعود النسخ وحده بعد هذا التاريخ.`,
         tone: "warn",
       };
     case "daily_override":
       return {
-        title: `يومي (يدوي) حتى ${s.until ?? "؟"}`,
+        title: `يومي (يدوي) حتى ${ltr(s.until ?? "؟")}`,
         detail: `${s.reason ? `السبب: ${s.reason}. ` : ""}ثم يعود إلى الجدولة العادية.`,
         tone: "ok",
       };
     case "daily_exams":
       return {
         title: "يومي الآن (فترة الاختبارات)",
-        detail: `ينسخ كل ليلة${s.exam_window_ends ? ` حتى ${s.exam_window_ends}` : ""} (الفصل ${s.exam_term ?? "؟"} من ${
+        detail: `ينسخ كل ليلة${s.exam_window_ends ? ` حتى ${ltr(s.exam_window_ends)}` : ""} (الفصل ${s.exam_term ?? "؟"} من ${
           s.exam_school_year ?? "؟"
         }).`,
         tone: "ok",
       };
     default: {
       const parts = [
-        s.next_weekly ? `النسخة القادمة: ليلة الخميس إلى الجمعة ${s.next_weekly}.` : "النسخ كل ليلة جمعة.",
+        s.next_weekly ? `النسخة القادمة: ليلة الخميس إلى الجمعة ${ltr(s.next_weekly)}.` : "النسخ كل ليلة جمعة.",
         s.next_exam_from
-          ? `يبدأ النسخ اليومي في ${s.next_exam_from}${s.next_exam_term ? ` (الفصل ${s.next_exam_term})` : ""}.`
+          ? `يبدأ النسخ اليومي في ${ltr(s.next_exam_from)}${s.next_exam_term ? ` (الفصل ${s.next_exam_term})` : ""}.`
           : "لا فترة اختبارات قادمة في الرزنامة.",
         "وتُضاف نسخة في أي ليلة إن كُتب أكثر من 50 تنقيطًا منذ آخر نسخة.",
       ];
@@ -106,7 +109,7 @@ export function validateBackup(mode: BackupMode, until: string, reason: string, 
   if (!isIso(until)) return { ok: false, error: "اكتب تاريخ الانتهاء" };
   if (ms(until) < ms(today) + DAY) return { ok: false, error: "تاريخ الانتهاء من الغد فصاعدًا" };
   if (ms(until) > ms(today) + OVERRIDE_MAX_DAYS * DAY) {
-    return { ok: false, error: `أقصى مدة ${OVERRIDE_MAX_DAYS} يومًا (حتى ${addDays(today, OVERRIDE_MAX_DAYS)})` };
+    return { ok: false, error: `أقصى مدة ${OVERRIDE_MAX_DAYS} يومًا (حتى ${ltr(addDays(today, OVERRIDE_MAX_DAYS))})` };
   }
   if (reason.trim().length === 0) return { ok: false, error: "اكتب السبب" };
   return { ok: true };
@@ -135,7 +138,7 @@ export function validateExamsFrom(r: ExamRow, value: string): BackupCheck {
   if (value.trim() === "") return { ok: true };
   if (!isIso(value)) return { ok: false, error: "اكتب تاريخًا صحيحًا" };
   if (ms(value) < ms(r.starts_on) || ms(value) > ms(r.ends_on)) {
-    return { ok: false, error: `يجب أن يكون بين ${r.starts_on} و${r.ends_on}` };
+    return { ok: false, error: `يجب أن يكون بين ${ltr(r.starts_on)} و${ltr(r.ends_on)}` };
   }
   return { ok: true };
 }
@@ -163,16 +166,16 @@ const MODE_WORD: Record<BackupMode, string> = { auto: "عادي (أسبوعي)",
 export function backupLogSummary(action: string, d: BackupLogDetail | null | undefined): string {
   if (!d) return "";
   if (action === "set_backup" && d.mode) {
-    const now = d.mode === "auto" ? MODE_WORD.auto : `${MODE_WORD[d.mode]} حتى ${d.until ?? "؟"}`;
+    const now = d.mode === "auto" ? MODE_WORD.auto : `${MODE_WORD[d.mode]} حتى ${ltr(d.until ?? "؟")}`;
     const prev = d.previous && typeof d.previous === "object" && d.previous.mode ? d.previous : null;
     return prev
-      ? `${now}. كان: ${prev.mode === "auto" ? MODE_WORD.auto : `${MODE_WORD[prev.mode!]} حتى ${prev.until ?? "؟"}`}`
+      ? `${now}. كان: ${prev.mode === "auto" ? MODE_WORD.auto : `${MODE_WORD[prev.mode!]} حتى ${ltr(prev.until ?? "؟")}`}`
       : now;
   }
   if (action === "set_exams" && d.term !== undefined) {
     const prev = typeof d.previous === "string" ? d.previous : null;
-    return `${d.school_year ?? ""} · الفصل ${d.term}: بداية الاختبارات ${d.exams_from ?? "الافتراضي"}${
-      prev ? `. كانت: ${prev}` : ""
+    return `${d.school_year ?? ""} · الفصل ${d.term}: بداية الاختبارات ${d.exams_from ? ltr(d.exams_from) : "الافتراضي"}${
+      prev ? `. كانت: ${ltr(prev)}` : ""
     }`;
   }
   return "";
