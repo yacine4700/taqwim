@@ -114,6 +114,50 @@ export function ConfirmCriterionSheet({
 
 
 /**
+ * الخروج العادي: الطابور فارغ، وكل علامة وصلت الخادم. كان يخرج بنقرة واحدة بلا سؤال،
+ * وهو يمسح نسخة العمل دون شبكة من الجهاز فيحتاج الدخول التالي إلى الشبكة، فيُقال هذا
+ * قبل أن يقع لا بعده. (الخروج وفي الطابور ما لم يُرسل له ورقته التالية.)
+ */
+export function ConfirmLogoutSheet({
+  email, onCancel, onConfirm,
+}: {
+  email: string;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  return (
+    <>
+      <div className="scrim" onClick={busy ? undefined : onCancel} />
+      <div className="sheet" role="dialog" aria-modal="true">
+        <div className="shead">
+          <h3>تسجيل الخروج؟</h3>
+        </div>
+        <p className="lead">
+          ستخرج من حسابك <span dir="ltr">{email}</span> على هذا الجهاز. علاماتك كلها محفوظة
+          في حسابك ولا تضيع، لكن نسخة العمل دون شبكة تُمسح من هذا الجهاز، فتحتاج
+          إلى الاتصال بالشبكة عند الدخول مرة أخرى.
+        </p>
+        <div className="srow2">
+          <button className="btn ghost" disabled={busy} onClick={onCancel}>تراجع</button>
+          <div className="hspace" />
+          <button
+            className="btn danger"
+            disabled={busy}
+            onClick={() => {
+              setBusy(true);
+              onConfirm();
+            }}
+          >
+            {busy ? "جارٍ الخروج…" : "نعم، اخرج"}
+          </button>
+        </div>
+      </div>
+    </>
+  );
+}
+
+/**
  * الخروج وفي الطابور ما لم يصل الخادم.
  *
  * الخروج يمسح طابور الجهاز (قد يكون الجهاز مشتركًا بين أستاذين)، فلا يُتاح

@@ -23,6 +23,8 @@ export default function AccountPage() {
   const [due, setDue] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+  /* خطوة أخيرة بعد ملء النموذج: ورقة تؤكّد الطلب قبل أن يُرسل، لا زرّ يُنفّذ بنقرة */
+  const [confirming, setConfirming] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -42,8 +44,14 @@ export default function AccountPage() {
     };
   }, [router]);
 
-  async function remove(event: React.FormEvent) {
+  function ask(event: React.FormEvent) {
     event.preventDefault();
+    if (!email || unsent || !confirmMatches(typed, email) || !password) return;
+    setMessage("");
+    setConfirming(true);
+  }
+
+  async function remove() {
     if (!email || unsent || !confirmMatches(typed, email) || !password) return;
     setBusy(true);
     setMessage("");
@@ -53,15 +61,18 @@ export default function AccountPage() {
     setPassword("");
     if (signIn.error) {
       setMessage(deletionErrorMessage(signIn.error));
+      setConfirming(false);
       setBusy(false);
       return;
     }
     const { data, error } = await supabase.rpc("request_account_deletion");
     if (error) {
       setMessage(deletionErrorMessage(error));
+      setConfirming(false);
       setBusy(false);
       return;
     }
+    setConfirming(false);
     setDue(typeof data === "string" ? data : null);
     setBusy(false);
   }
@@ -95,7 +106,7 @@ export default function AccountPage() {
 
   return (
     <div className="auth gut">
-      <form className="authbox" onSubmit={remove}>
+      <form className="authbox" onSubmit={ask}>
         <div>
           <a className="swap" href="/app" style={{ display: "inline-block", marginBottom: 10 }}>
             ← رجوع إلى التطبيق
@@ -147,8 +158,33 @@ export default function AccountPage() {
           type="submit"
           disabled={busy || !!unsent || !confirmMatches(typed, email) || !password}
         >
-          {busy ? "لحظة…" : `احذف حسابي بعد ${DELETION_GRACE_DAYS} أيام`}
+          {`احذف حسابي بعد ${DELETION_GRACE_DAYS} أيام`}
         </button>
+
+        {confirming && (
+          <>
+            <div className="scrim" onClick={busy ? undefined : () => setConfirming(false)} />
+            <div className="sheet" role="dialog" aria-modal="true">
+              <div className="shead">
+                <h3>هل أنت متأكد من حذف حسابك؟</h3>
+              </div>
+              <p className="lead">
+                ستطلب حذف الحساب <span dir="ltr">{email}</span> وكل أقسامك وتلاميذك وعلاماتك.
+                يبدأ الآن عدّ {DELETION_GRACE_DAYS} أيام، لا تُقبل خلالها علامات جديدة، وتستطيع
+                خلالها إلغاء الطلب. وبعدها يُحذف كل شيء نهائيًا ولا يمكن استرجاعه.
+              </p>
+              <div className="srow2">
+                <button type="button" className="btn ghost" disabled={busy} onClick={() => setConfirming(false)}>
+                  تراجع
+                </button>
+                <div className="hspace" />
+                <button type="button" className="btn danger" disabled={busy} onClick={() => void remove()}>
+                  {busy ? "لحظة…" : "نعم، احذف حسابي"}
+                </button>
+              </div>
+            </div>
+          </>
+        )}
       </form>
     </div>
   );

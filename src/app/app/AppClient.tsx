@@ -68,7 +68,7 @@ import { StatsView } from "./StatsView";
 import { DocsView } from "./DocsView";
 import { SettingsView } from "./SettingsView";
 import { AddStudentsSheet, NewSchoolSheet, SchoolFixSheet } from "./RosterSheets";
-import { ConfirmCriterionChangeSheet, ConfirmCriterionSheet, ConfirmSheet, ConfirmSignOutSheet, ConfirmStudentSheet } from "./ConfirmSheets";
+import { ConfirmCriterionChangeSheet, ConfirmCriterionSheet, ConfirmLogoutSheet, ConfirmSheet, ConfirmSignOutSheet, ConfirmStudentSheet } from "./ConfirmSheets";
 import { PendingSheet, SyncBadge, since } from "./sync";
 import { StudentSheet } from "./StudentSheet";
 import { ImportSheet } from "./ImportSheet";
@@ -144,6 +144,8 @@ export default function AppClient({
   const [confirmStudent, setConfirmStudent] = useState<Student | null>(null);
   const [showPending, setShowPending] = useState(false);
   const [confirmSignOut, setConfirmSignOut] = useState(false);
+  /* الخروج العادي (لا شيء في الطابور) يسبقه سؤال أيضًا */
+  const [confirmLogout, setConfirmLogout] = useState(false);
   const [backupOpen, setBackupOpen] = useState(false);
   /** بصمات العمليات المعلّقة التي ضمّها آخر ملف «نسختي» نُزِّل: بوّابة الخروج. */
   const [exportedOps, setExportedOps] = useState<ReadonlySet<string>>(() => new Set());
@@ -1269,6 +1271,7 @@ export default function AppClient({
    */
   const manySchools = groupBySchool(classes, schools).length > 1;
   const layerStack: Array<[boolean, () => void]> = [
+    [confirmLogout, () => setConfirmLogout(false)],
     [confirmSignOut, () => setConfirmSignOut(false)],
     [backupOpen, () => setBackupOpen(false)],
     [showPending, () => setShowPending(false)],
@@ -1509,7 +1512,7 @@ export default function AppClient({
               onAddSchool={addSchool}
               onRenameSchool={renameSchool}
               onDeleteSchool={deleteSchool}
-              onSignOut={() => (waiting.total ? setConfirmSignOut(true) : void signOut())}
+              onSignOut={() => (waiting.total ? setConfirmSignOut(true) : setConfirmLogout(true))}
               onBackup={() => setBackupOpen(true)}
               persistence={persistence}
               onPersist={() => void ensurePersistence().then(setPersistence)}
@@ -1698,6 +1701,16 @@ export default function AppClient({
           onImported={() => void load()}
           onReplay={(ops) => ops.forEach((op) => outbox.push(op))}
           onClose={() => setBackupOpen(false)}
+        />
+      )}
+
+      {confirmLogout && (
+        <ConfirmLogoutSheet
+          email={email}
+          onCancel={() => setConfirmLogout(false)}
+          // تبقى الورقة مفتوحة («جارٍ الخروج…») حتى ينتهي الخروج؛ وإن ظهر في الطابور ما لم يُرسل
+          // أثناء ذلك ردّ signOut إلى ورقته الخاصة وأُغلقت هذه.
+          onConfirm={() => void signOut().finally(() => setConfirmLogout(false))}
         />
       )}
 
