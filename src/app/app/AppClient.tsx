@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { ensurePersistence, kvDel, kvGet, kvSet, type Persistence } from "@/lib/localdb";
 import { backupFileName, buildBackup, normalizeData, type Backup } from "@/lib/backup";
@@ -82,7 +81,6 @@ export default function AppClient({
   email: string;
   teacherId: string;
 }) {
-  const router = useRouter();
   const supabase = useMemo(() => createClient(), []);
 
   const [tab, setTab] = useState<Tab>("classes");
@@ -1246,20 +1244,36 @@ export default function AppClient({
     return ok;
   }
 
-  async function signOut() {
+  /**
+   * يُرجع true إن خرج (والصفحة تُغادَر)، وfalse إن لم يخرج: الطابور فيه ما لم يُحفظ فتُفتح ورقته،
+   * أو تعذّر الخروج.
+   *
+   * الانتقال بتحميل كامل لا بـ router.push: كل طبقة تُغلق (ورقة الخروج منها) تُرجع سجلّ
+   * المتصفّح خطوة في useBackLayers، فكان إغلاقها بعد الدفع إلى /login يتراجع عنه وتبقى
+   * الشاشة كما هي حتى التحديث. والتحميل الكامل يمحو ذاكرة الصفحة من أقسام الأستاذ أيضًا.
+   * ولهذا لا تُغلق ورقة هنا في طريق النجاح.
+   */
+  async function signOut(): Promise<boolean> {
     // الخروج يمسح الطابور: لا يتمّ وفيه ما لم يُحفظ في الخادم ولا في ملف
     if (!canSignOut(outbox.queue, exportedOps)) {
       setConfirmSignOut(true);
-      return;
+      return false;
     }
-    setConfirmSignOut(false);
-    await kvDel(`snapshot:${teacherId}`);
-    await kvDel(`queue:${teacherId}`);
-    outbox.reset();
-    navigator.serviceWorker?.controller?.postMessage({ type: "clear-cache" });
-    await supabase.auth.signOut();
-    router.push("/login");
-    router.refresh();
+    try {
+      await kvDel(`snapshot:${teacherId}`);
+      await kvDel(`queue:${teacherId}`);
+      outbox.reset();
+      navigator.serviceWorker?.controller?.postMessage({ type: "clear-cache" });
+      const { error } = await supabase.auth.signOut();
+      // بلا شبكة يفشل نداء الخادم فتبقى الجلسة في الكوكيز، فيردّ الوسيط /login إلى /app.
+      // الخروج المحلي يمسحها دائمًا.
+      if (error) await supabase.auth.signOut({ scope: "local" });
+    } catch {
+      say("تعذّر الخروج. أعد المحاولة");
+      return false;
+    }
+    window.location.replace("/login");
+    return true;
   }
 
   /* ---------- زرّ الرجوع ---------- */
@@ -1708,9 +1722,13 @@ export default function AppClient({
         <ConfirmLogoutSheet
           email={email}
           onCancel={() => setConfirmLogout(false)}
-          // تبقى الورقة مفتوحة («جارٍ الخروج…») حتى ينتهي الخروج؛ وإن ظهر في الطابور ما لم يُرسل
-          // أثناء ذلك ردّ signOut إلى ورقته الخاصة وأُغلقت هذه.
-          onConfirm={() => void signOut().finally(() => setConfirmLogout(false))}
+          // تبقى الورقة مفتوحة («جارٍ الخروج…») والصفحة تُغادَر بتحميل كامل. وإن لم يخرج
+          // (ظهر في الطابور ما لم يُرسل، أو تعذّر) أُغلقت لتظهر الورقة الأخرى أو الرسالة.
+          onConfirm={() =>
+            void signOut().then((left) => {
+              if (!left) setConfirmLogout(false);
+            })
+          }
         />
       )}
 
