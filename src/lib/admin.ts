@@ -151,6 +151,8 @@ export function dueWord(days: number): string {
 
 export type AttentionItem = {
   key: string;
+  /** بصمة ثابتة لما يعنيه البند (لا لصياغته): «تم الاطلاع» تُحفظ بها، ويعود البند إن تغيّر ما يعنيه. */
+  id: string;
   /** التبويب الذي يُفتح لمعالجة البند. */
   tab: "accounts" | "deletions" | "calendar" | "log";
   level: "bad" | "warn";
@@ -173,18 +175,44 @@ export function attentionItems(
   if (pending.length > 0) {
     const d = daysLeft(pending[0].purge_after, now);
     const who = pending[0].full_name || pending[0].email || "حساب";
+    const level = d <= 2 ? "bad" : "warn";
     out.push({
       key: "deletions",
+      // الحسابات والمستوى: طلب جديد، أو اقتراب الموعد إلى يومين، يعيد التنبيه حتى لو سبق الاطلاع.
+      id: `del:${pending.map((t) => t.id).join(",")}:${level}`,
       tab: "deletions",
-      level: d <= 2 ? "bad" : "warn",
+      level,
       text:
         pending.length === 1
           ? `حذف نهائي لحساب ${who}: ${dueWord(d)}`
           : `${pending.length} طلبات حذف معلّقة، أقربها ${dueWord(d)} (${who})`,
     });
   }
-  calendarMessages.forEach((m, i) => out.push({ key: `calendar-${i}`, tab: "calendar", level: "warn", text: m }));
+  calendarMessages.forEach((m, i) =>
+    out.push({ key: `calendar-${i}`, id: `cal:${m}`, tab: "calendar", level: "warn", text: m }),
+  );
   return out;
+}
+
+/** مفتاح التخزين المحلي لما اطّلع عليه المشرف، وأقصى عدد يُحفظ. */
+export const SEEN_KEY = "taqwim-admin-seen";
+export const SEEN_MAX = 50;
+
+/** ما حُفظ، مقروءًا بحذر: أي شكل غير مصفوفة نصوص يُعامل كأنه لا شيء. */
+export function parseSeen(raw: string | null): string[] {
+  if (!raw) return [];
+  try {
+    const v: unknown = JSON.parse(raw);
+    return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string").slice(-SEEN_MAX) : [];
+  } catch {
+    return [];
+  }
+}
+
+/** يضيف بصمات إلى ما اطُّلع عليه بلا تكرار، ويُبقي الأحدث إن زاد على الحدّ. */
+export function addSeen(prev: readonly string[], ids: readonly string[]): string[] {
+  const merged = [...prev.filter((x) => !ids.includes(x)), ...ids];
+  return merged.slice(-SEEN_MAX);
 }
 
 export type AdminTab = "accounts" | "deletions" | "calendar" | "backup" | "log";

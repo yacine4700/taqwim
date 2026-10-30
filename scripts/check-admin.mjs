@@ -6,6 +6,7 @@ import {
   msLeft, leftLabel, daysLeft, summarize, filterTeachers, adminProblemMessage,
   countWord, dueWord, attentionItems,
   parseTab, agoLabel, sortTeachers, statusCounts, filterLog, nextLogLimit, LOG_MAX,
+  parseSeen, addSeen, SEEN_MAX,
 } from "../src/lib/admin.ts";
 import {
   groupByYear, closesOn, graceWord, nextYearLabel, suggestYear, validateTerm, termErrorMessage, calendarIssues, termLogSummary, phaseOn, editEffect,
@@ -365,6 +366,32 @@ ok("المزيد من السجلّ: دفعات من 60 ولا يتجاوز حد�
   assert.equal(nextLogLimit(60), 120);
   assert.equal(nextLogLimit(180), LOG_MAX);
   assert.equal(nextLogLimit(LOG_MAX), LOG_MAX);
+});
+
+ok("بصمة الإشعار: ثابتة ما دام المعنى واحدًا، وتتغيّر بطلب جديد أو باقتراب الموعد", () => {
+  const mk = (purge, extra = []) => attentionItems(
+    [tch({ id: "u1", status: "deletion_pending", purge_after: purge }), ...extra], [], NOW2)[0];
+  const far = mk("2026-11-10T00:00:00Z");
+  assert.equal(far.id, "del:u1:warn");
+  assert.equal(mk("2026-11-12T00:00:00Z").id, far.id);
+  assert.equal(mk("2026-10-31T01:00:00Z").id, "del:u1:bad");
+  const two = mk("2026-11-10T00:00:00Z", [tch({ id: "u2", status: "deletion_pending", purge_after: "2026-11-11T00:00:00Z" })]);
+  assert.equal(two.id, "del:u1,u2:warn");
+  assert.equal(attentionItems([], ["تنبيه أ"], NOW2)[0].id, "cal:تنبيه أ");
+});
+ok("ما اطُّلع عليه: قراءة حذرة", () => {
+  assert.deepEqual(parseSeen(null), []);
+  assert.deepEqual(parseSeen("not json"), []);
+  assert.deepEqual(parseSeen('{"a":1}'), []);
+  assert.deepEqual(parseSeen('["a",2,"b",null]'), ["a", "b"]);
+});
+ok("ما اطُّلع عليه: إضافة بلا تكرار وبحدّ أقصى", () => {
+  assert.deepEqual(addSeen(["a"], ["b", "a"]), ["b", "a"]);
+  assert.deepEqual(addSeen([], []), []);
+  const many = Array.from({ length: SEEN_MAX + 5 }, (_, i) => `k${i}`);
+  const out = addSeen([], many);
+  assert.equal(out.length, SEEN_MAX);
+  assert.equal(out[out.length - 1], `k${SEEN_MAX + 4}`);
 });
 
 console.log(`${n} اختبارًا نجحت`);

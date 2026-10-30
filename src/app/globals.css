@@ -649,11 +649,21 @@ a.btn, a.swap { text-decoration: none; }
 .adm-confirm input { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 10px; font-weight: 400; }
 .adm-confirm-row { display: flex; gap: 8px; }
 /* شريط «يحتاج انتباهك»: كل بند زرّ يفتح تبويبه */
-.adm-attn { display: flex; flex-direction: column; gap: 6px; margin-block: 12px 4px; }
-.adm-attn > b { font-size: 13px; }
-.adm-attn-item { display: flex; justify-content: space-between; align-items: center; gap: 10px; width: 100%; text-align: start; border: 0; font: inherit; line-height: 1.7; cursor: pointer; }
-.adm-attn-item small { flex: none; font-weight: 700; text-decoration: underline; }
 .adm-closes { color: var(--muted); font-size: 12px; }
+/* أيقونة الإشعارات: شارة حمراء بعدد ما لم يُطَّلع عليه، وتزول بـ«تم الاطلاع» */
+.adm-titlebar { display: flex; align-items: center; gap: 10px; }
+.adm-notif { position: relative; }
+.adm-bell { position: relative; width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; background: var(--surface-2); color: var(--ink); }
+.adm-bell svg { width: 20px; height: 20px; }
+.adm-bell-badge { position: absolute; top: -3px; inset-inline-end: -3px; min-width: 18px; height: 18px; padding: 0 4px; border-radius: 999px; background: var(--danger); color: #fff; font-size: 11px; font-weight: 700; line-height: 18px; text-align: center; }
+.adm-notif-scrim { position: fixed; inset: 0; z-index: 29; background: transparent; border: 0; cursor: default; }
+.adm-notif-panel { position: fixed; z-index: 30; top: 64px; inset-inline: 12px; max-height: 70vh; overflow: auto; display: flex; flex-direction: column; gap: 8px; padding: 10px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); }
+.adm-notif-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.adm-notif-item { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border-radius: var(--radius-sm); font-size: 13px; line-height: 1.7; background: var(--surface-2); color: var(--muted); }
+.adm-notif-item.bad { background: var(--danger-soft); color: var(--danger); }
+.adm-notif-item.warn { background: var(--sand-soft); color: var(--sand); }
+.adm-notif-acts { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.adm-notif-empty { margin: 0; padding: 6px 4px; font-size: 13px; color: var(--muted); }
 .adm-head-btns { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
 .adm-stats .stat { padding: 8px 6px; text-align: center; }
 .adm-stats .stat small { font-size: 10px; }
@@ -712,8 +722,9 @@ a.btn, a.swap { text-decoration: none; }
 .adm-nav .adm-count { display: none; }
 @media (min-width: 1000px) {
   .adm { max-width: 1320px; display: grid; grid-template-columns: 240px minmax(0, 1fr); gap: 28px; align-items: start; }
-  .adm-side { display: flex; flex-direction: column; gap: 14px; position: sticky; top: 16px; padding: 16px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); }
+  .adm-side { z-index: 10; display: flex; flex-direction: column; gap: 14px; position: sticky; top: 16px; padding: 16px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); }
   .adm-main { display: block; min-width: 0; }
+  .adm-notif-panel { position: absolute; top: calc(100% + 8px); inset-inline: auto; inset-inline-start: 0; width: 360px; }
   .adm-side .adm-head { flex-direction: column; align-items: stretch; gap: 10px; margin: 0; padding-bottom: 12px; border-bottom: 1px solid var(--line); }
   .adm-side .adm-head-side { align-items: flex-start; text-align: start; }
   .adm-side .adm-head-btns { justify-content: flex-start; }

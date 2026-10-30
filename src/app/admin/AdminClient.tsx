@@ -29,7 +29,10 @@ import {
   REASON_MAX,
   STATUS_LABEL,
   adminProblemMessage,
+  SEEN_KEY,
+  addSeen,
   attentionItems,
+  parseSeen,
   classifyAdminError,
   cleanCode,
   cleanReason,
@@ -122,6 +125,9 @@ export default function AdminClient({
   const [tab, setTab] = useState<Tab>(() =>
     typeof window === "undefined" ? "accounts" : parseTab(window.location.search),
   );
+  /** بصمات الإشعارات التي اطّلع عليها المشرف في هذا المتصفّح، وهل اللوحة مفتوحة. */
+  const [seen, setSeen] = useState<string[]>([]);
+  const [notifOpen, setNotifOpen] = useState(false);
   const [loadedAt, setLoadedAt] = useState<number | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [logLimit, setLogLimit] = useState(LOG_PAGE);
@@ -230,6 +236,31 @@ export default function AdminClient({
   useEffect(() => {
     if (phase === "ready" && expiresAt && left <= 0) setPhase("reverify");
   }, [phase, expiresAt, left]);
+
+  useEffect(() => {
+    try {
+      setSeen(parseSeen(window.localStorage.getItem(SEEN_KEY)));
+    } catch {
+      /* التخزين غير متاح: يبقى كل شيء غير مطّلَع عليه */
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!notifOpen) return;
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setNotifOpen(false);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [notifOpen]);
+
+  function markSeen(ids: string[]) {
+    const next = addSeen(seen, ids);
+    setSeen(next);
+    try {
+      window.localStorage.setItem(SEEN_KEY, JSON.stringify(next));
+    } catch {
+      /* لا يُحفظ بين الزيارات، ويبقى في هذه الصفحة */
+    }
+  }
 
   // الإشعار عائم قرب الإبهام ويزول وحده، فلا يبقى أعلى صفحة طويلة خارج الشاشة.
   useEffect(() => {
@@ -388,6 +419,7 @@ export default function AdminClient({
     () => attentionItems(teachers, calendarMessages, now),
     [teachers, calendarMessages, now],
   );
+  const unseen = useMemo(() => attention.filter((a) => !seen.includes(a.id)), [attention, seen]);
 
   if (phase === "loading") {
     return (
@@ -549,7 +581,67 @@ export default function AdminClient({
       <aside className="adm-side">
       <div className="adm-head">
         <div>
-          <h1>الإشراف</h1>
+          <div className="adm-titlebar">
+            <h1>الإشراف</h1>
+            <div className="adm-notif">
+              <button
+                type="button"
+                className="adm-bell"
+                aria-label={unseen.length > 0 ? `الإشعارات: ${unseen.length} جديد` : "الإشعارات"}
+                aria-haspopup="dialog"
+                aria-expanded={notifOpen}
+                onClick={() => setNotifOpen((o) => !o)}
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" />
+                  <path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" />
+                </svg>
+                {unseen.length > 0 && <span className="adm-bell-badge">{unseen.length}</span>}
+              </button>
+              {notifOpen && (
+                <>
+                  <button type="button" className="adm-notif-scrim" aria-label="أغلق الإشعارات" onClick={() => setNotifOpen(false)} />
+                  <section className="adm-notif-panel" role="dialog" aria-label="الإشعارات">
+                    <div className="adm-notif-head">
+                      <b>الإشعارات</b>
+                      {unseen.length > 1 && (
+                        <button className="clearb" onClick={() => markSeen(attention.map((a) => a.id))}>
+                          تم الاطلاع على الكل
+                        </button>
+                      )}
+                    </div>
+                    {attention.length === 0 && <p className="adm-notif-empty">لا شيء يحتاج انتباهك.</p>}
+                    {attention.map((a) => {
+                      const isSeen = seen.includes(a.id);
+                      return (
+                        <div key={a.id} className={`adm-notif-item ${isSeen ? "seen" : a.level}`}>
+                          <span>{a.text}</span>
+                          <div className="adm-notif-acts">
+                            <button
+                              className="clearb"
+                              onClick={() => {
+                                changeTab(a.tab);
+                                setNotifOpen(false);
+                              }}
+                            >
+                              افتح
+                            </button>
+                            {isSeen ? (
+                              <small>✓ تم الاطلاع</small>
+                            ) : (
+                              <button className="clearb" onClick={() => markSeen([a.id])}>
+                                تم الاطلاع
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </section>
+                </>
+              )}
+            </div>
+          </div>
           <small dir="ltr">{email}</small>
         </div>
         <div className="adm-head-side">
@@ -614,26 +706,6 @@ export default function AdminClient({
 
       {message && <div className="note bad" role="alert">{message}</div>}
       {done && <div className="note adm-toast" role="status">{done}</div>}
-
-      {/* ما يحتاج انتباهًا: يُخفى منه ما يظهر أصلًا في التبويب المفتوح */}
-      {attention.some((a) => a.tab !== tab) && (
-        <section className="adm-attn" aria-label="يحتاج انتباهك">
-          <b>يحتاج انتباهك</b>
-          {attention
-            .filter((a) => a.tab !== tab)
-            .map((a) => (
-              <button
-                key={a.key}
-                type="button"
-                className={`note ${a.level === "bad" ? "bad" : "warn"} adm-attn-item`}
-                onClick={() => changeTab(a.tab)}
-              >
-                <span>{a.text}</span>
-                <small>افتح</small>
-              </button>
-            ))}
-        </section>
-      )}
 
 
       <div className="adm-content">
