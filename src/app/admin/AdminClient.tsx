@@ -4,6 +4,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { algiersToday } from "@/lib/terms";
+import BackupPanel from "./BackupPanel";
+import { backupLogSummary } from "@/lib/adminBackup";
 import {
   GRACE_DEFAULT,
   calendarIssues,
@@ -81,6 +83,7 @@ const LOG_GROUP_LABEL: Record<LogGroup, string> = {
   all: "الكل",
   accounts: "الحسابات",
   calendar: "الرزنامة",
+  backup: "النسخ",
   system: "التشغيل الليلي",
 };
 
@@ -187,7 +190,7 @@ export default function AdminClient({
       supabase.rpc("admin_log_recent", { max_rows: logLimit }),
       supabase
         .from("term_calendar")
-        .select("school_year,term,starts_on,ends_on,grace_days")
+        .select("school_year,term,starts_on,ends_on,grace_days,exams_from")
         .order("starts_on"),
     ]);
     if (!alive.current) return;
@@ -622,6 +625,9 @@ export default function AdminClient({
         <button role="tab" aria-pressed={tab === "calendar"} onClick={() => changeTab("calendar")}>
           الرزنامة{calendarMessages.length > 0 && <span className="adm-badge warn">{calendarMessages.length}</span>}
         </button>
+        <button role="tab" aria-pressed={tab === "backup"} onClick={() => changeTab("backup")}>
+          النسخ
+        </button>
         <button role="tab" aria-pressed={tab === "log"} onClick={() => changeTab("log")}>
           السجلّ
         </button>
@@ -809,6 +815,17 @@ export default function AdminClient({
         </>
       )}
 
+      {tab === "backup" && (
+        <BackupPanel
+          supabase={supabase}
+          terms={terms}
+          today={today}
+          onProblem={handleProblem}
+          onSaved={setDone}
+          onTermsChanged={load}
+        />
+      )}
+
       {tab === "log" && (
         <>
           <div className="chips" style={{ marginBottom: 10 }}>
@@ -832,6 +849,9 @@ export default function AdminClient({
                       {l.target_email && <bdi dir="ltr">{l.target_email}</bdi>}
                     </small>
                     {l.action === "set_term" && <small>{termLogSummary(l.detail)}</small>}
+                    {(l.action === "set_backup" || l.action === "set_exams") && (
+                      <small>{backupLogSummary(l.action, l.detail)}</small>
+                    )}
                     {l.detail?.reason && <small>السبب: {l.detail.reason}</small>}
                   </div>
                 </div>

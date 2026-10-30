@@ -12,6 +12,7 @@ export type AdminTermRow = {
   starts_on: string;
   ends_on: string;
   grace_days: number;
+  exams_from?: string | null;
 };
 
 /** ما يكتبه المشرف في الحقول: نصوص كما هي. */

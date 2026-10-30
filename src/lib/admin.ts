@@ -27,7 +27,7 @@ export type AdminLogRow = {
   actor_kind: "admin" | "teacher" | "system";
   action: string;
   target_email: string | null;
-  detail: ({ reason?: string } & import("./adminTerms").TermLogDetail) | null;
+  detail: ({ reason?: string } & import("./adminTerms").TermLogDetail & import("./adminBackup").BackupLogDetail) | null;
 };
 
 /** أقصى طول للسبب. القاعدة تقصّ عند هذا الحدّ نفسه. */
@@ -187,8 +187,8 @@ export function attentionItems(
   return out;
 }
 
-export type AdminTab = "accounts" | "deletions" | "calendar" | "log";
-const TABS: readonly AdminTab[] = ["accounts", "deletions", "calendar", "log"];
+export type AdminTab = "accounts" | "deletions" | "calendar" | "backup" | "log";
+const TABS: readonly AdminTab[] = ["accounts", "deletions", "calendar", "backup", "log"];
 
 /** التبويب من الرابط (?tab=calendar). أي قيمة غير معروفة ⇒ الحسابات. */
 export function parseTab(search: string): AdminTab {
@@ -226,15 +226,20 @@ export function statusCounts(list: AdminTeacher[]): Record<StatusFilter, number>
   return c;
 }
 
-export type LogGroup = "all" | "accounts" | "calendar" | "system";
+/** أفعال الإعدادات (لا الحسابات): الرزنامة والنسخ الاحتياطي. */
+const SETTINGS_ACTIONS = new Set(["set_term", "set_exams", "set_backup"]);
+
+export type LogGroup = "all" | "accounts" | "calendar" | "backup" | "system";
 
 /** سجلّ العمليات بحسب النوع: الرزنامة، أو الحسابات، أو ما فعله التشغيل الليلي. */
 export function filterLog(rows: AdminLogRow[], group: LogGroup): AdminLogRow[] {
   switch (group) {
     case "calendar":
-      return rows.filter((r) => r.action === "set_term");
+      return rows.filter((r) => r.action === "set_term" || r.action === "set_exams");
+    case "backup":
+      return rows.filter((r) => r.action === "set_backup");
     case "accounts":
-      return rows.filter((r) => r.action !== "set_term" && r.actor_kind !== "system");
+      return rows.filter((r) => !SETTINGS_ACTIONS.has(r.action) && r.actor_kind !== "system");
     case "system":
       return rows.filter((r) => r.actor_kind === "system");
     default:
@@ -309,6 +314,8 @@ export const ACTION_LABEL: Record<string, string> = {
   request_deletion: "طلب حذف",
   purge: "حذف نهائي",
   set_term: "تعديل الرزنامة",
+  set_exams: "تعديل بداية الاختبارات",
+  set_backup: "تعديل النسخ الاحتياطي",
 };
 
 export const ACTOR_LABEL: Record<AdminLogRow["actor_kind"], string> = {
