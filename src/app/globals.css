@@ -330,6 +330,7 @@ nav.tabs svg { width: 21px; height: 21px; }
 .authbox label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; font-weight: 600; }
 .authbox input { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 11px; }
 .authbox .swap { font-size: 13px; color: var(--primary); font-weight: 600; text-align: center; }
+.authbox .swap:disabled { color: var(--muted); cursor: default; }
 
 /* البحث عن تلميذ: في قسم من 36 اسمًا، التمرير بحثًا عن اسم يطيل الحصة */
 .search {

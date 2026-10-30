@@ -13,6 +13,9 @@ import { BANNED_MESSAGE, isBannedError } from "@/lib/account";
 /** بريد التواصل لصاحب الحساب الموقوف (متغيّر بيئة، كما في صفحة الخصوصية). */
 const CONTACT = process.env.NEXT_PUBLIC_CONTACT_EMAIL;
 
+/** الانتظار بين رسالتين إلى البريد نفسه: الخادم يرفض ما دون الدقيقة، فنمنعه قبل أن يُرفض. */
+const RESEND_AFTER = 60;
+
 export default function LoginPage() {
   const router = useRouter();
   const [mode, setMode] = useState<"in" | "up" | "forgot">("in");
@@ -23,8 +26,44 @@ export default function LoginPage() {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [bad, setBad] = useState(false);
-  /* البريد الذي أُرسلت إليه رسالة التأكيد بعد إنشاء الحساب: يُظهر شاشة كاملة لا تنبيهًا */
-  const [sentTo, setSentTo] = useState<string | null>(null);
+  /* بعد إرسال رسالة (تأكيد الحساب، أو رابط الاستعادة) تُعرض شاشة كاملة لا تنبيه صغير */
+  const [sent, setSent] = useState<{ kind: "signup" | "recovery"; email: string } | null>(null);
+  /* ثوانٍ تبقت قبل أن يُسمح بإعادة الإرسال (الخادم نفسه يمنع أقل من دقيقة) */
+  const [wait, setWait] = useState(0);
+  const [resending, setResending] = useState(false);
+  const [resendNote, setResendNote] = useState<{ text: string; bad: boolean } | null>(null);
+
+  useEffect(() => {
+    if (wait <= 0) return;
+    const timer = setTimeout(() => setWait((w) => w - 1), 1000);
+    return () => clearTimeout(timer);
+  }, [wait]);
+
+  function showSent(kind: "signup" | "recovery", to: string) {
+    setSent({ kind, email: to });
+    setWait(RESEND_AFTER);
+    setResendNote(null);
+  }
+
+  async function resend() {
+    if (!sent || wait > 0 || resending) return;
+    setResending(true);
+    setResendNote(null);
+    const supabase = createClient();
+    const { error } =
+      sent.kind === "signup"
+        ? await supabase.auth.resend({ type: "signup", email: sent.email })
+        : await supabase.auth.resetPasswordForEmail(sent.email, {
+            redirectTo: `${window.location.origin}/auth/callback?next=/reset`,
+          });
+    setResendNote(
+      error
+        ? { text: translate(error.message), bad: true }
+        : { text: "أعدنا إرسال الرسالة. راجع بريدك.", bad: false },
+    );
+    setWait(RESEND_AFTER);
+    setResending(false);
+  }
 
   /* ما يصل من الصفحات الأخرى: رابط استعادة فاسد، أو طلب رابط جديد */
   useEffect(() => {
@@ -54,7 +93,7 @@ export default function LoginPage() {
         setMessage(translate(error.message));
       } else {
         // جواب واحد سواء أكان البريد مسجّلًا أم لا، فلا يُستعمل النموذج للتخمين
-        setMessage("إن كان هذا البريد مسجّلًا فقد أرسلنا إليه رابط الاستعادة. افتحه من الجهاز نفسه.");
+        showSent("recovery", email);
       }
       setBusy(false);
       return;
@@ -84,7 +123,7 @@ export default function LoginPage() {
         // لا جلسة: التأكيد مفعّل. الشاشة نفسها تُعرض سواء أكان البريد جديدًا أم مسجّلًا من قبل
         // (الخادم يُجيب الجوابين بلا فرق)، فلا يُستعمل النموذج لتخمين من له حساب.
         setPassword("");
-        setSentTo(email);
+        showSent("signup", email);
       }
     } else {
       const { error } = await supabase.auth.signInWithPassword({ email, password });
@@ -101,7 +140,15 @@ export default function LoginPage() {
     setBusy(false);
   }
 
-  if (sentTo) {
+  if (sent) {
+    const isSignup = sent.kind === "signup";
+    // يعود إلى شاشة الدخول والبريد في خانته، وكلمة السر فارغة
+    const backToSignIn = () => {
+      setSent(null);
+      setMode("in");
+      setMessage("");
+      setBad(false);
+    };
     return (
       <div className="auth gut">
         <div className="authbox" role="status">
@@ -123,41 +170,53 @@ export default function LoginPage() {
             <h1>
               تحقّق من <span style={{ color: "var(--primary)" }}>بريدك الإلكتروني</span>
             </h1>
-            <p className="lead">أنشأنا حسابك، وأرسلنا رسالة تأكيد إلى:</p>
+            <p className="lead">
+              {isSignup
+                ? "أنشأنا حسابك، وأرسلنا رسالة تأكيد إلى:"
+                : "إن كان هذا البريد مسجّلًا فقد أرسلنا إليه رابط استعادة كلمة السر:"}
+            </p>
           </div>
           <div
             className="note"
             dir="ltr"
             style={{ fontSize: 15, fontWeight: 600, color: "var(--ink)", textAlign: "center", wordBreak: "break-all" }}
           >
-            {sentTo}
+            {sent.email}
           </div>
-          <p className="lead">افتح الرسالة واضغط على رابط التأكيد لتفعيل حسابك، ثم سجّل الدخول.</p>
+          <p className="lead">
+            {isSignup
+              ? "افتح الرسالة واضغط على رابط التأكيد لتفعيل حسابك، ثم سجّل الدخول."
+              : "افتح الرسالة واضغط على الرابط لتعيين كلمة سر جديدة. افتحه من المتصفح والجهاز نفسهما اللذين طلبتَه منهما. علاماتك محفوظة ولا تتأثر."}
+          </p>
           <p className="about">
             لم تصلك الرسالة؟ راجع مجلد الرسائل غير المرغوب فيها (Spam)، فقد تتأخر بضع دقائق.
           </p>
+          {resendNote && <div className={resendNote.bad ? "note bad" : "note"}>{resendNote.text}</div>}
+          <button className="btn" type="button" onClick={backToSignIn}>
+            {isSignup ? "تسجيل الدخول" : "العودة إلى تسجيل الدخول"}
+          </button>
           <button
-            className="btn"
             type="button"
-            onClick={() => {
-              setSentTo(null);
-              setMode("in");
-              setMessage("");
-              setBad(false);
-            }}
+            className="swap"
+            onClick={() => void resend()}
+            disabled={wait > 0 || resending}
           >
-            تسجيل الدخول
+            {resending
+              ? "لحظة…"
+              : wait > 0
+                ? `أعد إرسال الرسالة بعد ${wait} ثانية`
+                : "أعد إرسال الرسالة"}
           </button>
           <button
             type="button"
             className="swap"
             onClick={() => {
-              setSentTo(null);
+              setSent(null);
               setMessage("");
               setBad(false);
             }}
           >
-            بريد خاطئ؟ العودة إلى إنشاء الحساب
+            {isSignup ? "بريد خاطئ؟ العودة إلى إنشاء الحساب" : "بريد خاطئ؟ اكتبه من جديد"}
           </button>
         </div>
       </div>
