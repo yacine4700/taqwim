@@ -45,6 +45,10 @@ import {
   LOG_PAGE,
   nextLogLimit,
   parseTab,
+  canConfirmPurge,
+  purgeErrorMessage,
+  purgeLogSummary,
+  PURGE_REASON_MIN,
   sortTeachers,
   statusCounts,
   msLeft,
@@ -60,7 +64,7 @@ import {
 type Tab = AdminTab;
 /** loading: أول تحميل · ready: اللوحة · reverify: التحقّق الثنائي منتهٍ · forbidden: ليس مشرفًا · error: تعذّر التحميل */
 type Phase = "loading" | "ready" | "reverify" | "forbidden" | "error";
-type Pending = { id: string; action: "disable" | "enable" | "cancel"; reason: string };
+type Pending = { id: string; action: "disable" | "enable" | "cancel" | "purge"; reason: string; typed?: string };
 
 function day(iso: string | null): string {
   if (!iso) return "—";
@@ -98,11 +102,13 @@ const CONFIRM_TEXT: Record<Pending["action"], string> = {
   disable: "يُمنع الأستاذ من الدخول وتُحذف جلساته. بياناته لا تُمسّ ويمكن إعادة التفعيل.",
   enable: "يعود الأستاذ إلى الدخول، وتبقى بياناته كما كانت.",
   cancel: "يُلغى طلب الحذف ويعود الحساب نشطًا.",
+  purge: "",
 };
 const CONFIRM_BUTTON: Record<Pending["action"], string> = {
   disable: "أوقف الحساب",
   enable: "أعد التفعيل",
   cancel: "ألغِ الحذف",
+  purge: "احذف نهائيًّا الآن",
 };
 
 export default function AdminClient({
@@ -269,6 +275,55 @@ export default function AdminClient({
     setDone(
       pending.action === "disable" ? "أُوقف الحساب." : pending.action === "enable" ? "أُعيد تفعيل الحساب." : "أُلغي طلب الحذف.",
     );
+    await load();
+  }
+
+  /**
+   * الحذف الفوري: يتحقّق أولًا من رمز TOTP جديد (تفرض القاعدة أن يكون خلال دقيقتين)، ثم يستدعي الدالة
+   * ببريد الحساب المكتوب وسبب. لا يُنفَّذ شيء إن فشل الرمز. القاعدة تعيد فحص كل الشروط.
+   */
+  async function purgeNow(t: AdminTeacher) {
+    if (!pending || pending.action !== "purge") return;
+    if (!canConfirmPurge(t.email, pending.typed ?? "", pending.reason, code)) return;
+    setBusy(true);
+    setMessage("");
+    setDone("");
+    const factors = await supabase.auth.mfa.listFactors();
+    const factor = factors.data?.totp.find((f) => f.status === "verified");
+    if (!factor) {
+      setBusy(false);
+      toLogin();
+      return;
+    }
+    const verified = await supabase.auth.mfa.challengeAndVerify({ factorId: factor.id, code });
+    setCode("");
+    if (verified.error) {
+      setBusy(false);
+      if (classifyAdminError(verified.error) === "session") {
+        toLogin();
+        return;
+      }
+      setMessage("الرمز غير صحيح أو انتهى وقته. أدخل الرمز الظاهر الآن في التطبيق.");
+      return;
+    }
+    const { data, error } = await supabase.rpc("admin_delete_account_now", {
+      target: t.id,
+      confirm_email: pending.typed ?? "",
+      reason: pending.reason.trim(),
+    });
+    setBusy(false);
+    if (error) {
+      const own = purgeErrorMessage(error);
+      if (own) setMessage(own);
+      else {
+        setPending(null);
+        handleProblem(error);
+      }
+      return;
+    }
+    const res = (data ?? {}) as { students?: number; classes?: number };
+    setPending(null);
+    setDone(`حُذف الحساب نهائيًّا${res.students !== undefined ? ` (${res.students} تلميذًا، ${res.classes ?? 0} أقسام)` : ""}.`);
     await load();
   }
 
@@ -470,27 +525,101 @@ export default function AdminClient({
   const rowActions = (t: AdminTeacher) => {
     if (t.is_admin) return null;
     if (pending?.id === t.id) return null;
+    const purgeBtn = (
+      <button
+        className="clearb danger"
+        onClick={() => {
+          setCode("");
+          setMessage("");
+          setPending({ id: t.id, action: "purge", reason: "", typed: "" });
+        }}
+      >
+        حذف فوري
+      </button>
+    );
     if (t.status === "disabled")
       return (
-        <button className="clearb" onClick={() => setPending({ id: t.id, action: "enable", reason: "" })}>
-          أعد التفعيل
-        </button>
+        <>
+          <button className="clearb" onClick={() => setPending({ id: t.id, action: "enable", reason: "" })}>
+            أعد التفعيل
+          </button>
+          {purgeBtn}
+        </>
       );
     if (t.status === "deletion_pending")
       return (
-        <button className="clearb" onClick={() => setPending({ id: t.id, action: "cancel", reason: "" })}>
-          ألغِ الحذف
-        </button>
+        <>
+          <button className="clearb" onClick={() => setPending({ id: t.id, action: "cancel", reason: "" })}>
+            ألغِ الحذف
+          </button>
+          {purgeBtn}
+        </>
       );
     return (
-      <button className="clearb danger" onClick={() => setPending({ id: t.id, action: "disable", reason: "" })}>
-        أوقف
-      </button>
+      <>
+        <button className="clearb danger" onClick={() => setPending({ id: t.id, action: "disable", reason: "" })}>
+          أوقف
+        </button>
+        {purgeBtn}
+      </>
+    );
+  };
+
+  const purgePanel = (t: AdminTeacher, p: Pending) => {
+    const ready = canConfirmPurge(t.email, p.typed ?? "", p.reason, code);
+    return (
+      <div className="adm-confirm adm-purge">
+        <div className="note bad" role="alert">
+          <b>حذف فوري لا رجعة فيه.</b> يُمحى الحساب بكل أقسامه وتلاميذه وعلاماته الآن، دون مهلة السبعة أيام
+          ({countWord(t.classes, "class")} · {countWord(t.students, "student")} · {countWord(t.records, "record")}).
+          تبقى بياناته في النسخ الاحتياطية حتى تُحذف نسخها (آخر 30 يومًا، وأول نسخة من كل شهر لسنة).
+        </div>
+        <label>
+          اكتب بريد الحساب للتأكيد: <bdi dir="ltr">{t.email}</bdi>
+          <input
+            dir="ltr"
+            autoComplete="off"
+            autoCapitalize="off"
+            spellCheck={false}
+            value={p.typed ?? ""}
+            onChange={(e) => setPending({ ...p, typed: e.target.value })}
+            placeholder={t.email ?? ""}
+          />
+        </label>
+        <label>
+          السبب (إلزامي، يُحفظ في السجلّ)
+          <input
+            value={p.reason}
+            onChange={(e) => setPending({ ...p, reason: e.target.value.slice(0, REASON_MAX) })}
+            maxLength={REASON_MAX}
+            placeholder={`${PURGE_REASON_MIN} أحرف على الأقل. مثال: طلب الأستاذ كتابيًّا`}
+          />
+        </label>
+        <label>
+          رمز التحقّق الثنائي الحالي (6 أرقام من تطبيق المصادقة)
+          <input
+            dir="ltr"
+            inputMode="numeric"
+            autoComplete="one-time-code"
+            value={code}
+            onChange={(e) => setCode(cleanCode(e.target.value))}
+            placeholder="000000"
+          />
+        </label>
+        <div className="adm-confirm-row">
+          <button className="btn danger sm" disabled={busy || !ready} onClick={() => purgeNow(t)}>
+            {busy ? "لحظة…" : CONFIRM_BUTTON.purge}
+          </button>
+          <button className="btn ghost sm" disabled={busy} onClick={() => { setPending(null); setCode(""); }}>
+            تراجع
+          </button>
+        </div>
+      </div>
     );
   };
 
   const confirmPanel = (t: AdminTeacher) =>
-    pending?.id === t.id ? (
+    pending?.id === t.id && pending.action === "purge" ? purgePanel(t, pending) : pending?.id === t.id ? (
       <div className="adm-confirm">
         <p>
           {CONFIRM_TEXT[pending.action]} <bdi dir="ltr">{t.email}</bdi>
@@ -853,6 +982,7 @@ export default function AdminClient({
                       {l.target_email && <bdi dir="ltr">{l.target_email}</bdi>}
                     </small>
                     {l.action === "set_term" && <small>{termLogSummary(l.detail)}</small>}
+                    {l.action === "admin_purge" && <small>{purgeLogSummary(l.detail)}</small>}
                     {(l.action === "set_backup" || l.action === "set_exams") && (
                       <small>{backupLogSummary(l.action, l.detail)}</small>
                     )}

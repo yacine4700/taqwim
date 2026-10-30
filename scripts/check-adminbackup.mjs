@@ -5,7 +5,7 @@ import {
   parseBackupStatus, scheduleLabel as rawLabel, validateBackup as rawValidate, validateExamsFrom as rawExams, examWindow,
   backupErrorMessage, backupLogSummary as rawSummary, addDays, OVERRIDE_MAX_DAYS, ltr,
 } from "../src/lib/adminBackup.ts";
-import { parseTab, filterLog, ACTION_LABEL } from "../src/lib/admin.ts";
+import { parseTab, filterLog, ACTION_LABEL, canConfirmPurge, purgeErrorMessage, purgeLogSummary, PURGE_REASON_MIN } from "../src/lib/admin.ts";
 
 let n = 0;
 const ok = (label, fn) => { fn(); n += 1; console.log("ok ", label); };
@@ -142,6 +142,48 @@ ok("تسميات الأفعال والتبويب في الرابط", () => {
   assert.ok(ACTION_LABEL.set_backup && ACTION_LABEL.set_exams);
   assert.equal(parseTab("?tab=backup"), "backup");
   assert.equal(parseTab("?tab=nope"), "accounts");
+});
+
+
+// ---- الحذف الفوري (src/lib/admin.ts)
+ok("شروط تفعيل الزرّ: بريد يطابق + سبب + رمز 6 أرقام", () => {
+  assert.equal(PURGE_REASON_MIN, 3);
+  assert.equal(canConfirmPurge("a@school.dz", "a@school.dz", "طلبه", "123456"), true);
+  assert.equal(canConfirmPurge("A@School.dz", "  a@school.DZ ", "طلبه", "123456"), true);
+  assert.equal(canConfirmPurge("a@school.dz", "a@school", "طلبه", "123456"), false);
+  assert.equal(canConfirmPurge("a@school.dz", "", "طلبه", "123456"), false);
+  assert.equal(canConfirmPurge("a@school.dz", "a@school.dz", "ab", "123456"), false);
+  assert.equal(canConfirmPurge("a@school.dz", "a@school.dz", "   ", "123456"), false);
+  assert.equal(canConfirmPurge("a@school.dz", "a@school.dz", "طلبه", "12345"), false);
+  assert.equal(canConfirmPurge("a@school.dz", "a@school.dz", "طلبه", ""), false);
+});
+ok("حساب بلا بريد لا يُحذف فوريًّا من الواجهة", () => {
+  assert.equal(canConfirmPurge(null, "", "طلبه", "123456"), false);
+  assert.equal(canConfirmPurge(null, "null", "طلبه", "123456"), false);
+});
+ok("أخطاء القاعدة للحذف الفوري", () => {
+  assert.match(purgeErrorMessage({ code: "42501", message: "mfa_fresh_required" }), /ليس حديثًا/);
+  assert.match(purgeErrorMessage({ code: "22023", message: "confirm_mismatch" }), /لا يطابق/);
+  assert.match(purgeErrorMessage({ code: "P0001", message: "rate_limited" }), /ثلاثة حسابات/);
+  assert.match(purgeErrorMessage({ code: "22023", message: "reason required" }), /السبب/);
+  assert.match(purgeErrorMessage({ code: "42501", message: "cannot delete an admin account" }), /مشرف/);
+  assert.match(purgeErrorMessage({ code: "P0002", message: "no such account" }), /غير موجود/);
+  assert.equal(purgeErrorMessage({ code: "42501", message: "mfa_required" }), null);
+  assert.equal(purgeErrorMessage({ code: "42501", message: "forbidden" }), null);
+  assert.equal(purgeErrorMessage(null), null);
+});
+ok("سطر السجلّ للحذف الفوري: بريد مقنَّع وأعداد", () => {
+  assert.equal(purgeLogSummary({ email_masked: "b***@school.dz", classes: 2, students: 37, records: 120 }),
+    "الحساب b***@school.dz · كان فيه 2 أقسام، 37 تلميذًا، 120 سجل علامات");
+  assert.equal(purgeLogSummary(null), "");
+  assert.equal(purgeLogSummary({}), "");
+});
+ok("الحذف الفوري يظهر في «الحسابات» لا «الرزنامة» ولا «النسخ»", () => {
+  const rows = [{ action: "admin_purge", actor_kind: "admin" }, { action: "disable", actor_kind: "admin" }];
+  assert.deepEqual(filterLog(rows, "accounts").map((r) => r.action), ["admin_purge", "disable"]);
+  assert.equal(filterLog(rows, "calendar").length, 0);
+  assert.equal(filterLog(rows, "backup").length, 0);
+  assert.ok(ACTION_LABEL.admin_purge);
 });
 
 console.log(`${n} اختبارًا نجحت`);

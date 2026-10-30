@@ -27,7 +27,7 @@ export type AdminLogRow = {
   actor_kind: "admin" | "teacher" | "system";
   action: string;
   target_email: string | null;
-  detail: ({ reason?: string } & import("./adminTerms").TermLogDetail & import("./adminBackup").BackupLogDetail) | null;
+  detail: ({ reason?: string; email_masked?: string; students?: number; classes?: number; records?: number } & import("./adminTerms").TermLogDetail & import("./adminBackup").BackupLogDetail) | null;
 };
 
 /** أقصى طول للسبب. القاعدة تقصّ عند هذا الحدّ نفسه. */
@@ -316,6 +316,7 @@ export const ACTION_LABEL: Record<string, string> = {
   set_term: "تعديل الرزنامة",
   set_exams: "تعديل بداية الاختبارات",
   set_backup: "تعديل النسخ الاحتياطي",
+  admin_purge: "حذف فوري لحساب",
 };
 
 export const ACTOR_LABEL: Record<AdminLogRow["actor_kind"], string> = {
@@ -329,3 +330,42 @@ export const STATUS_LABEL: Record<AdminStatus, string> = {
   disabled: "موقوف",
   deletion_pending: "حذف مجدول",
 };
+
+/** أقل طول للسبب في الحذف الفوري (كما في القاعدة). */
+export const PURGE_REASON_MIN = 3;
+
+/**
+ * هل اكتملت شروط الحذف الفوري في الواجهة؟ القاعدة تفرضها كلها من جديد، فهذا لتعطيل الزرّ فقط:
+ * البريد المكتوب يطابق بريد الحساب (دون حساسية للحروف وفراغات الأطراف)، والسبب مكتوب، ورمز من 6 أرقام.
+ */
+export function canConfirmPurge(accountEmail: string | null, typedEmail: string, reason: string, code: string): boolean {
+  if (!accountEmail) return false;
+  return (
+    typedEmail.trim().toLowerCase() === accountEmail.trim().toLowerCase() &&
+    reason.trim().length >= PURGE_REASON_MIN &&
+    codeReady(code)
+  );
+}
+
+/** خطأ الحذف الفوري بعبارة المشرف، أو null إن لم يكن من أخطائه (فيُعالَج كبقية أخطاء اللوحة). */
+export function purgeErrorMessage(error: { code?: string | null; message?: string | null } | null | undefined): string | null {
+  const m = error?.message ?? "";
+  if (m.includes("mfa_fresh_required")) return "الرمز ليس حديثًا. أدخل الرمز الظاهر الآن في تطبيق المصادقة (يتغيّر كل 30 ثانية).";
+  if (m.includes("confirm_mismatch")) return "البريد المكتوب لا يطابق بريد الحساب.";
+  if (m.includes("rate_limited")) return "بلغتَ الحدّ: ثلاثة حسابات كحدّ أقصى في 24 ساعة.";
+  if (m.includes("reason required")) return `اكتب السبب (${PURGE_REASON_MIN} أحرف على الأقل).`;
+  if (m.includes("cannot delete an admin")) return "لا يُحذف حساب مشرف.";
+  if (m.includes("no such account")) return "الحساب غير موجود، ربما حُذف قبل قليل.";
+  return null;
+}
+
+/** سطر السجلّ للحذف الفوري: ما كان في الحساب وبريده المقنَّع. */
+export function purgeLogSummary(d: AdminLogRow["detail"]): string {
+  if (!d) return "";
+  const counts = [
+    d.classes !== undefined ? `${d.classes} أقسام` : "",
+    d.students !== undefined ? `${d.students} تلميذًا` : "",
+    d.records !== undefined ? `${d.records} سجل علامات` : "",
+  ].filter(Boolean).join("، ");
+  return [d.email_masked ? `الحساب ${d.email_masked}` : "", counts ? `كان فيه ${counts}` : ""].filter(Boolean).join(" · ");
+}
