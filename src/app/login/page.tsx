@@ -23,6 +23,8 @@ export default function LoginPage() {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [bad, setBad] = useState(false);
+  /* البريد الذي أُرسلت إليه رسالة التأكيد بعد إنشاء الحساب: يُظهر شاشة كاملة لا تنبيهًا */
+  const [sentTo, setSentTo] = useState<string | null>(null);
 
   /* ما يصل من الصفحات الأخرى: رابط استعادة فاسد، أو طلب رابط جديد */
   useEffect(() => {
@@ -79,7 +81,10 @@ export default function LoginPage() {
         router.refresh();
         return;
       } else {
-        setMessage("أُنشئ الحساب. افتح بريدك وأكّد العنوان ثم سجّل الدخول.");
+        // لا جلسة: التأكيد مفعّل. الشاشة نفسها تُعرض سواء أكان البريد جديدًا أم مسجّلًا من قبل
+        // (الخادم يُجيب الجوابين بلا فرق)، فلا يُستعمل النموذج لتخمين من له حساب.
+        setPassword("");
+        setSentTo(email);
       }
     } else {
       const { error } = await supabase.auth.signInWithPassword({ email, password });
@@ -94,6 +99,69 @@ export default function LoginPage() {
       }
     }
     setBusy(false);
+  }
+
+  if (sentTo) {
+    return (
+      <div className="auth gut">
+        <div className="authbox" role="status">
+          <svg
+            width="56"
+            height="56"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="var(--primary)"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <rect x="3" y="5" width="18" height="14" rx="2" />
+            <path d="m3.5 6.5 8.5 6.5 8.5-6.5" />
+          </svg>
+          <div>
+            <h1>
+              تحقّق من <span style={{ color: "var(--primary)" }}>بريدك الإلكتروني</span>
+            </h1>
+            <p className="lead">أنشأنا حسابك، وأرسلنا رسالة تأكيد إلى:</p>
+          </div>
+          <div
+            className="note"
+            dir="ltr"
+            style={{ fontSize: 15, fontWeight: 600, color: "var(--ink)", textAlign: "center", wordBreak: "break-all" }}
+          >
+            {sentTo}
+          </div>
+          <p className="lead">افتح الرسالة واضغط على رابط التأكيد لتفعيل حسابك، ثم سجّل الدخول.</p>
+          <p className="about">
+            لم تصلك الرسالة؟ راجع مجلد الرسائل غير المرغوب فيها (Spam)، فقد تتأخر بضع دقائق.
+          </p>
+          <button
+            className="btn"
+            type="button"
+            onClick={() => {
+              setSentTo(null);
+              setMode("in");
+              setMessage("");
+              setBad(false);
+            }}
+          >
+            تسجيل الدخول
+          </button>
+          <button
+            type="button"
+            className="swap"
+            onClick={() => {
+              setSentTo(null);
+              setMessage("");
+              setBad(false);
+            }}
+          >
+            بريد خاطئ؟ العودة إلى إنشاء الحساب
+          </button>
+        </div>
+      </div>
+    );
   }
 
   return (
