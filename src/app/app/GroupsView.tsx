@@ -53,6 +53,8 @@ type Props = {
   sessions: TpSession[];
   tpMarks: TpMark[];
   term: number;
+  /** الفصل مقفل: الحصص وعلاماتها تُعرض ولا تُنشأ ولا تُعدَّل. الأفواج والربط ليسا من الفصل. */
+  readOnly: boolean;
   criteria: Criterion[];
   components: Component[];
   tpAverageById: Map<string, number>;
@@ -114,6 +116,7 @@ export default function GroupsView(props: Props) {
           sessions={sessions}
           tpMarks={tpMarks}
           term={term}
+          readOnly={props.readOnly}
           target={target}
           tpAverageById={props.tpAverageById}
           onOpen={setOpenId}
@@ -174,6 +177,7 @@ export default function GroupsView(props: Props) {
           students={students}
           groups={groups}
           marks={tpMarks.filter((m) => m.session_id === opened.id)}
+          readOnly={props.readOnly}
           online={props.online}
           onClose={() => setOpenId(null)}
           onEdit={props.onEditSession}
@@ -192,7 +196,7 @@ export default function GroupsView(props: Props) {
 /* ================= الحصص ================= */
 
 function SessionsPart({
-  klass, students, groups, sessions, tpMarks, term, target, tpAverageById,
+  klass, students, groups, sessions, tpMarks, term, readOnly, target, tpAverageById,
   onOpen, onNew, onLink, onGroups,
 }: {
   klass: KlassInfo;
@@ -201,6 +205,7 @@ function SessionsPart({
   sessions: TpSession[];
   tpMarks: TpMark[];
   term: number;
+  readOnly: boolean;
   target: { ok: boolean; label: string };
   tpAverageById: Map<string, number>;
   onOpen: (id: string) => void;
@@ -255,7 +260,7 @@ function SessionsPart({
       )}
 
       <div className="pickbar">
-        <button className="btn" onClick={onNew}>+ حصة جديدة</button>
+        {!readOnly && <button className="btn" onClick={onNew}>+ حصة جديدة</button>}
         {target.ok && <span className="pill ok">تُحسب في: {target.label}</span>}
       </div>
 
@@ -392,12 +397,13 @@ function NewSessionSheet({
 }
 
 function SessionSheet({
-  session, students, groups, marks, online, onClose, onEdit, onDelete, onMark, say,
+  session, students, groups, marks, readOnly, online, onClose, onEdit, onDelete, onMark, say,
 }: {
   session: TpSession;
   students: StudentInfo[];
   groups: Group[];
   marks: TpMark[];
+  readOnly: boolean;
   online: boolean;
   onClose: () => void;
   onEdit: (id: string, patch: { held_on?: string; title?: string | null }) => void;
@@ -465,6 +471,9 @@ function SessionSheet({
           {groupName} · الفصل {session.term}. العلامة من 20، والفراغ يعني «لم يُنقَّط»
           فلا يدخل المعدّل ولا يُحسب صفرًا. و«غ» للغائب.
         </p>
+
+        {/* فصل مقفل: كل ما يُكتب في الحصة معطَّل دفعة واحدة، والإحصاء فوقه يبقى */}
+        <fieldset className="rofield" disabled={readOnly}>
 
         <div className="fld line">
           <div className="flab"><b>علامة واحدة لمن بلا علامة</b></div>
@@ -581,6 +590,7 @@ function SessionSheet({
         {confirmDelete && !online && (
           <div className="note warn">الحذف يحتاج اتصالًا.</div>
         )}
+        </fieldset>
       </div>
     </>
   );

@@ -618,6 +618,16 @@ a.btn, a.swap { text-decoration: none; }
 .delta.down { color: var(--danger); }
 .termnote { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
 .termnote span { flex: 1 1 160px; }
+/* fieldset معطَّل لفصل مقفل: بلا إطار المتصفح، ويُرى معطَّلًا */
+.rofield { border: 0; margin: 0; padding: 0; min-width: 0; }
+.rofield:disabled { opacity: 0.55; }
+/* نقطة صغيرة على زرّ الفصل الذي في مهلته، فلا يظنّه الأستاذ مغلقًا */
+.terms button[data-phase="grace"] { position: relative; }
+.terms button[data-phase="grace"]::after {
+  content: ""; position: absolute; top: 5px; inset-inline-end: 6px;
+  width: 6px; height: 6px; border-radius: 50%; background: var(--sand);
+}
+.terms button[data-phase="upcoming"], .terms button[data-phase="closed"] { opacity: 0.6; }
 
 /* ---- صفحة الإشراف (/admin) ---- */
 .adm { max-width: 760px; margin: 0 auto; padding-block: 20px 40px; }

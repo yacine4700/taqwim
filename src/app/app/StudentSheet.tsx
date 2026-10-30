@@ -110,13 +110,15 @@ export function readMark(
 }
 
 export function StudentSheet({
-  student, term, criteria, record, readings, components, tp,
+  student, term, readOnly, criteria, record, readings, components, tp,
   onClose, onCriterion, onMark, onRemoveReading, onEdit, onDelete,
   position, count, onStep,
 }: {
   student: Student;
   /** الفصل الذي تُكتب فيه العلامات، ظاهر في رأس البطاقة فلا يُنقَّط في فصل خطأً. */
   term: number;
+  /** الفصل مقفل: العلامات تُعرض ولا تُعدَّل. الاسم والحالة الخاصة ليسا من الفصل فيبقيان. */
+  readOnly: boolean;
   criteria: Criterion[];
   /** السجل للعرض: معدّل الحصص فيه محلّ الخانة المربوطة. لا يُكتب منه شيء. */
   record: RecordRow | undefined;
@@ -225,6 +227,8 @@ export function StudentSheet({
           </div>
         ) : null}
 
+        {/* fieldset معطَّل يعطّل كل عدّاد وخانة وحذف محاولة داخله دفعة واحدة */}
+        <fieldset className="rofield" disabled={readOnly}>
         {criteria.map((c) => {
           if (c.kind === "auto") {
             const avg = readingAverage(readings);
@@ -340,6 +344,7 @@ export function StudentSheet({
             </div>
           );
         })}
+        </fieldset>
 
         {/* الحالة الخاصة في الأسفل مطويّة: تُكتب مرة في الفصل، والعلامة كل حصة.
             وكانت تأكل رُبع الشاشة في رأس البطاقة قبل أن يُرى أول معيار. */}

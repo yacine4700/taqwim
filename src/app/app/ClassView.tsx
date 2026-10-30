@@ -24,7 +24,7 @@ import { MARK_HINT, readMark } from "./StudentSheet";
 import { ReadingPanel } from "./ReadingPanel";
 
 export function ClassView({
-  klass, students, term, criteria, components, recordOf,
+  klass, students, term, readOnly, criteria, components, recordOf,
   averageOf, readingCount, stats, tp, onGroups,
   onBack, onPick, onDelete, onAddStudents, onCriterion, onMark,
   column, onColumn, reading, readCount, onReadCount, draft, onDraft, onSaveReadings,
@@ -32,6 +32,8 @@ export function ClassView({
   klass: Klass;
   students: Student[];
   term: number;
+  /** الفصل مقفل: جدول المعدلات للاطلاع، بلا أعمدة تنقيط ولا قراءة. */
+  readOnly: boolean;
   criteria: Criterion[];
   components: Component[];
   recordOf: (id: string) => RecordRow | undefined;
@@ -87,7 +89,7 @@ export function ClassView({
       .filter((c) => c.code !== "cc" && c.active)
       .map((c) => ({ key: `m:${c.code}`, label: c.label })),
   ];
-  const open = columns.find((c) => c.key === column) ?? null;
+  const open = readOnly ? null : (columns.find((c) => c.key === column) ?? null);
   const isReading = open?.key === READING_COLUMN;
   const live = liveDraft(draft, students);
   const inDraft = new Set(live.picked.map((p) => p.id));
@@ -177,7 +179,7 @@ export function ClassView({
 
       {/* الواجب يُصحَّح للقسم كله مرة واحدة، لا تلميذًا تلميذًا: يُختار العمود
           مرة ثم يُنزَل على الأسماء بعدّاد لكل سطر. */}
-      {students.length > 0 && (
+      {students.length > 0 && !readOnly && (
         <div className="colbar">
           <span className="collab">عرض:</span>
           <div className="chips">

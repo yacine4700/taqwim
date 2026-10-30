@@ -1,4 +1,5 @@
 import { type Group } from "@/lib/groups";
+import { type TermRow } from "@/lib/terms";
 import {
   type Component,
   type Criterion,
@@ -73,5 +74,7 @@ export type Snapshot = {
   sessions?: TpSession[];
   tpMarks?: TpMark[];
   tpReady?: boolean;
+  /** روزنامة الفصول: غائبة من نسخة أقدم من هذا الإصدار، فلا يُقفل شيء حتى تصل. */
+  calendar?: TermRow[];
   savedAt: number;
 };

@@ -7,7 +7,13 @@ import { ensurePersistence, kvDel, kvGet, kvSet, type Persistence } from "@/lib/
 import { backupFileName, buildBackup, normalizeData, type Backup } from "@/lib/backup";
 import { exportFromServer } from "@/lib/backupDb";
 import { useBackLayers } from "@/lib/useBackLayers";
-import { currentTerm } from "@/lib/terms";
+import {
+  algiersToday,
+  termName,
+  termNotice,
+  termView,
+  type TermRow,
+} from "@/lib/terms";
 import { nextPositions } from "@/lib/roster";
 import { groupBySchool } from "@/lib/schools";
 import { assignment, cleanGroupName, shuffled, type Group } from "@/lib/groups";
@@ -81,6 +87,12 @@ export default function AppClient({
 
   const [tab, setTab] = useState<Tab>("classes");
   const [term, setTerm] = useState(1);
+  /* روزنامة الفصول من الخادم (أو نسخة الجهاز). فارغة = لا شيء يُقفل، كما في القاعدة. */
+  const [calendar, setCalendar] = useState<TermRow[]>([]);
+  /** وصلت الروزنامة من نسخة الجهاز أو الخادم، فيُفتح الفصل الجاري مرة واحدة. */
+  const [calendarKnown, setCalendarKnown] = useState(false);
+  /** اليوم بتوقيت الجزائر؛ يتجدد إذا بقي التطبيق مفتوحًا عبر منتصف الليل. */
+  const [todayIso, setTodayIso] = useState(() => algiersToday());
   const [classes, setClasses] = useState<Klass[]>([]);
   const [schools, setSchools] = useState<School[]>([]);
   const [criteria, setCriteria] = useState<Criterion[]>([]);
@@ -129,8 +141,6 @@ export default function AppClient({
     { criterion: Criterion; patch: Partial<Criterion>; marked: number } | null
   >(null);
   const [settingsTick, setSettingsTick] = useState(0);
-  /** الفصل الذي أخفى الأستاذ تنبيهه («الفصل المختار غير الجاري») في هذه الجلسة. */
-  const [termDismissed, setTermDismissed] = useState<number | null>(null);
   const [confirmStudent, setConfirmStudent] = useState<Student | null>(null);
   const [showPending, setShowPending] = useState(false);
   const [confirmSignOut, setConfirmSignOut] = useState(false);
@@ -282,6 +292,18 @@ export default function AppClient({
       supabase.from("students").select("id,group_id"),
     ]);
     const ready = !gr.error && !ss.error && !tm.error && !cg.error && !sg.error;
+    /* الروزنامة كالأفواج: غيابها (جدول لم يُرحَّل بعد، أو انقطاع) لا يحجب العلامات ولا يُقفل شيئًا. */
+    const cal = await supabase
+      .from("term_calendar")
+      .select("school_year,term,starts_on,ends_on,grace_days")
+      .order("starts_on");
+    const calendarRows: TermRow[] | null = cal.error
+      ? null
+      : ((cal.data ?? []) as TermRow[]).map((r) => ({
+          ...r,
+          term: Number(r.term),
+          grace_days: Number(r.grace_days),
+        }));
     const targetOfClass = new Map<string, TpTarget>(
       (ready ? (cg.data ?? []) : []).map((row) => [row.id as string, (row.tp_target as TpTarget) ?? null]),
     );
@@ -310,6 +332,7 @@ export default function AppClient({
           }))
         : [],
       tpReady: ready,
+      calendar: calendarRows ?? undefined,
       criteria: (cr.data ?? []) as Criterion[],
       components: (cp.data ?? []) as Component[],
       records: (r.data ?? []) as RecordRow[],
@@ -329,6 +352,11 @@ export default function AppClient({
     setBaseSessions(snapshot.sessions ?? []);
     setBaseTpMarks(snapshot.tpMarks ?? []);
     setTpReady(snapshot.tpReady ?? false);
+    // قراءة فاشلة تُبقي الروزنامة المحفوظة على الجهاز بدل أن تمحوها.
+    if (calendarRows) {
+      setCalendar(calendarRows);
+      setCalendarKnown(true);
+    }
     setCachedAt(null);
     setLoading(false);
     void kvSet(snapKey, snapshot);
@@ -351,6 +379,10 @@ export default function AppClient({
       setBaseSessions(saved.sessions ?? []);
       setBaseTpMarks(saved.tpMarks ?? []);
       setTpReady(saved.tpReady ?? false);
+      if (saved.calendar) {
+        setCalendar(saved.calendar);
+        setCalendarKnown(true);
+      }
       setProfile(saved.profile ?? NO_PROFILE);
       setCachedAt(saved.savedAt ?? 0);
       setLoading(false);
@@ -384,7 +416,7 @@ export default function AppClient({
         openSchool?: string | null;
       }>(whereKey);
       if (!saved) return;
-      if (saved.term >= 1 && saved.term <= 3) setTerm(saved.term);
+      /* الفصل لا يُستعاد: يُفتح التطبيق دائمًا على الفصل الجاري بالتاريخ (انظر landedRef). */
       /* تبويب «الحصة» حُذف: من تركه هناك يُفتح له قسمها على القراءة */
       const where = migrateWhere(saved, (id) => classes.some((c) => c.id === id));
       if (where.tab) setTab(where.tab as Tab);
@@ -410,6 +442,35 @@ export default function AppClient({
   useEffect(() => {
     setDrafts({});
   }, [term]);
+
+  /* ---------- الفصول: أيّها مفتوح للتنقيط ---------- */
+
+  /* اليوم يتجدد إن بقي التطبيق مفتوحًا عبر منتصف الليل أو عاد من الخلفية. */
+  useEffect(() => {
+    const refresh = () => setTodayIso(algiersToday());
+    const timer = window.setInterval(refresh, 60_000);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", refresh);
+    };
+  }, []);
+
+  const view = useMemo(() => termView(calendar, todayIso), [calendar, todayIso]);
+  /** الفصل المعروض مقفل: يُعرض ويُطبع ويُصدَّر، ولا يُنقَّط. القاعدة تحرس هذا أيضًا. */
+  const locked = !view.terms[term as 1 | 2 | 3]?.open;
+  const lockedSay = useCallback(
+    () => say(`${termName(term)} مغلق: للاطلاع فقط.`),
+    [say, term],
+  );
+
+  /* يُفتح التطبيق عند الدخول على الفصل الجاري بالتاريخ، مرة واحدة لا كلما تغيّر شيء. */
+  const landedRef = useRef(false);
+  useEffect(() => {
+    if (landedRef.current || !calendarKnown) return;
+    landedRef.current = true;
+    setTerm(view.landing);
+  }, [calendarKnown, view.landing]);
 
   /* عودة الشبكة: أعد القراءة من الخادم مرة واحدة، لا عند كل تبدّل حالة */
   const onlineRef = useRef(true);
@@ -525,6 +586,7 @@ export default function AppClient({
    * الخلفية. لا انتظار للخادم عند الضغطة، ولا إعادة تحميل تمحو ما أُدخل.
    */
   function saveRecord(studentId: string, patch: Partial<RecordRow>) {
+    if (locked) return lockedSay();
     const current = recordOf(studentId);
     const next: RecordRow = {
       student_id: studentId,
@@ -557,6 +619,10 @@ export default function AppClient({
   }
 
   async function addReadings(entries: Array<{ studentId: string; score: number }>) {
+    if (locked) {
+      lockedSay();
+      return false;
+    }
     const day = today();
     for (const entry of entries) {
       // المعرّف يُولَّد هنا: تظهر المحاولة فورًا، وإعادة الإرسال لا تكرّرها.
@@ -578,6 +644,7 @@ export default function AppClient({
   }
 
   function removeReading(id: string) {
+    if (locked) return lockedSay();
     const row = readings.find((r) => r.id === id);
     outbox.push(
       newOp("reading-del", { reading_id: id, student_id: row?.student_id ?? "" }),
@@ -736,6 +803,11 @@ export default function AppClient({
     held_on: string;
     title: string | null;
   }): string {
+    // الواجهة لا تعرض «حصة جديدة» في فصل مقفل؛ هذا حارس أخير. القاعدة ترفض أيضًا.
+    if (locked) {
+      lockedSay();
+      return "";
+    }
     const session: TpSession = { id: uid(), term, ...input };
     outbox.push(newOp("tp-session", { session }));
     return session.id;
@@ -744,11 +816,13 @@ export default function AppClient({
   function editTpSession(id: string, patch: { held_on?: string; title?: string | null }) {
     const current = sessions.find((s) => s.id === id);
     if (!current) return;
+    if (!view.terms[current.term as 1 | 2 | 3]?.open) return lockedSay();
     outbox.push(newOp("tp-session", { session: { ...current, ...patch } }));
   }
 
   /** حذف حصة وعلاماتها: يحتاج الخادم، وما لم يُرسل منها يُسقَط من الطابور أولًا. */
   async function deleteTpSession(session: TpSession) {
+    if (!view.terms[session.term as 1 | 2 | 3]?.open) return lockedSay();
     if (!needsNetwork()) return;
     for (const op of queue) {
       if (opSessionId(op) === session.id) outbox.discard(op.id);
@@ -766,6 +840,8 @@ export default function AppClient({
 
   /** علامة تلميذ في حصة. بلا علامة ولا غياب = مسح: يعود «لم يُقيَّم» لا صفرًا. */
   function setTpMark(sessionId: string, studentId: string, score: number | null, absent: boolean) {
+    const sessionTerm = sessions.find((s) => s.id === sessionId)?.term ?? term;
+    if (!view.terms[sessionTerm as 1 | 2 | 3]?.open) return lockedSay();
     outbox.push(
       newOp("tp-mark", { session_id: sessionId, student_id: studentId, score, absent }),
     );
@@ -1184,9 +1260,6 @@ export default function AppClient({
     router.refresh();
   }
 
-  /** الفصل الجاري بتاريخ اليوم، أو null في العطلة فلا تنبيه. */
-  const curTerm = currentTerm(new Date());
-
   /* ---------- زرّ الرجوع ---------- */
   /**
    * الطبقات المفتوحة من الأعلى إلى الأسفل: النوافذ ثم بطاقة التلميذ ثم الشاشات.
@@ -1255,11 +1328,28 @@ export default function AppClient({
             onClick={() => setShowPending(true)}
           />
           <div className="terms" role="group" aria-label="الفصل">
-            {[1, 2, 3].map((t) => (
-              <button key={t} aria-pressed={term === t} onClick={() => setTerm(t)}>
-                ف{t}
-              </button>
-            ))}
+            {[1, 2, 3].map((t) => {
+              const status = view.terms[t as 1 | 2 | 3];
+              return (
+                <button
+                  key={t}
+                  aria-pressed={term === t}
+                  data-phase={view.enforced ? status.phase : undefined}
+                  title={
+                    !view.enforced
+                      ? undefined
+                      : status.phase === "grace"
+                        ? `${termName(t)}: في مهلة التنقيط`
+                        : status.open
+                          ? undefined
+                          : `${termName(t)}: للاطلاع فقط`
+                  }
+                  onClick={() => setTerm(t)}
+                >
+                  ف{t}
+                </button>
+              );
+            })}
           </div>
         </div>
       </header>
@@ -1279,25 +1369,25 @@ export default function AppClient({
             </div>
           )}
 
-          {/* التنبيه حيث تُكتب العلامات فقط، ولا يمنع شيئًا: الأستاذ قد يُدخل علامات فصل سابق عن قصد */}
-          {tab === "classes" && openClass &&
-            curTerm !== null &&
-            term !== curTerm &&
-            termDismissed !== term && (
-              <div className="note warn termnote" role="status">
-                <span>تنقّط في الفصل {term}، والفصل الجاري {curTerm}.</span>
-                <button className="clearb" onClick={() => setTerm(curTerm)}>
-                  انتقل إلى الفصل {curTerm}
-                </button>
-                <button
-                  className="clearb"
-                  aria-label="أخفِ التنبيه"
-                  onClick={() => setTermDismissed(term)}
-                >
-                  ×
-                </button>
+          {/* التنبيه حيث تُكتب العلامات: مهلة الفصل المنتهي، أو فصل مقفل للاطلاع فقط.
+              ويقترح الفصل الجاري. القاعدة هي الحَكَم، وهذا تنبيه قبل أن يُرفض شيء. */}
+          {tab === "classes" && openClass && (() => {
+            const notice = termNotice(term, view);
+            if (!notice) return null;
+            return (
+              <div
+                className={`note ${notice.tone === "info" ? "" : notice.tone === "warn" ? "bad" : "warn"} termnote`}
+                role="status"
+              >
+                <span>{notice.text}</span>
+                {term !== view.landing && (
+                  <button className="clearb" onClick={() => setTerm(view.landing)}>
+                    انتقل إلى {termName(view.landing)}
+                  </button>
+                )}
               </div>
-            )}
+            );
+          })()}
 
           {tab === "classes" &&
             (openClass && classSection === "groups" && tpReady ? (
@@ -1308,6 +1398,7 @@ export default function AppClient({
                 sessions={sessions.filter((x) => x.class_id === openClass)}
                 tpMarks={tpMarks}
                 term={term}
+                readOnly={locked}
                 criteria={criteria}
                 components={components}
                 tpAverageById={tpAverageById}
@@ -1331,6 +1422,7 @@ export default function AppClient({
                 klass={classes.find((c) => c.id === openClass)!}
                 students={studentsOf(openClass)}
                 term={term}
+                readOnly={locked}
                 criteria={criteria}
                 components={components}
                 recordOf={effectiveRecordOf}
@@ -1440,6 +1532,7 @@ export default function AppClient({
         <StudentSheet
           student={openStudent}
           term={term}
+          readOnly={locked}
           criteria={criteria}
           record={effectiveRecordOf(openStudent.id)}
           readings={readingsOf(openStudent.id)}
