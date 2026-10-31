@@ -1318,9 +1318,15 @@ export default function AppClient({
     [openClass !== null, () => setOpenClass(null)],
     [openSchool !== null && manySchools, () => setOpenSchool(null)],
   ];
-  useBackLayers(layerStack.filter(([isOpen]) => isOpen).length, () => {
-    layerStack.find(([isOpen]) => isOpen)?.[1]();
-  });
+  /* الورقة الإلزامية (قسم بلا مؤسسة) لا يغلقها الرجوع: شرطها هنا هو شرط ظهورها أدناه. */
+  const mustFixSchool = !loading && outbox.online && orphans.length > 0 && !importing;
+  useBackLayers(
+    layerStack.filter(([isOpen]) => isOpen).length,
+    () => {
+      layerStack.find(([isOpen]) => isOpen)?.[1]();
+    },
+    mustFixSchool,
+  );
 
   /* ---------- render ---------- */
   return (
@@ -1585,7 +1591,7 @@ export default function AppClient({
       {/* قسم بلا مؤسسة لا يُترك: رأس كشفه يُطبع ناقصًا والأقسام لا تُجمع
           به. فيُسأل عنه أول ما يُفتح التطبيق — وحين تكون الشبكة قائمة، فلا
           يُحبس الأستاذ عن التنقيط في قاعة لا تغطية فيها. */}
-      {!loading && outbox.online && orphans.length > 0 && !importing && (
+      {mustFixSchool && (
         <SchoolFixSheet
           orphans={orphans}
           schools={schools}
