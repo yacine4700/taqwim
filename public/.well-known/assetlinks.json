@@ -1,0 +1,14 @@
+[
+  {
+    "relation": [
+      "delegate_permission/common.handle_all_urls"
+    ],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "app.vercel.taqwim_theta.twa",
+      "sha256_cert_fingerprints": [
+        "B7:6C:A3:2F:76:74:3B:AF:2C:46:0E:9A:09:B1:AD:F6:42:76:E2:0D:86:56:34:41:FB:E4:3A:06:F1:63:0F:2A"
+      ]
+    }
+  }
+]
