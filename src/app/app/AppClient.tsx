@@ -495,9 +495,14 @@ export default function AppClient({
   useEffect(() => {
     if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) return;
     const register = () => {
-      void navigator.serviceWorker.register("/sw.js").catch(() => {
-        /* متصفّح يمنع العمّال، أو سياق غير آمن: التطبيق يعمل دونه */
-      });
+      void navigator.serviceWorker
+        .register("/sw.js")
+        // بعد الدخول لا تمرّ صفحة /app الكاملة بالعامل، فيُطلب منه تخبئتها الآن
+        .then(() => navigator.serviceWorker.ready)
+        .then((registration) => registration.active?.postMessage({ type: "cache-app" }))
+        .catch(() => {
+          /* متصفّح يمنع العمّال، أو سياق غير آمن: التطبيق يعمل دونه */
+        });
     };
     if (document.readyState === "complete") register();
     else window.addEventListener("load", register, { once: true });

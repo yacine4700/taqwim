@@ -31,16 +31,37 @@ self.addEventListener("activate", (event) => {
   );
 });
 
-/** الخروج من الحساب يمسح كل ما خُبّئ: الجهاز قد يكون مشتركًا. */
+/**
+ * رسالتان من الصفحة:
+ * - clear-cache: الخروج من الحساب يمسح كل ما خُبّئ، فالجهاز قد يكون مشتركًا.
+ * - cache-app: يخبّئ هيكل /app إن لم يكن مخبّأً. بعد الدخول ينتقل التطبيق إلى /app
+ *   بتنقّل داخلي (طلب _rsc، وهو خارج الخبيئة أدناه)، فلا تمرّ الصفحة الكاملة بهذا
+ *   العامل أبدًا حتى أول إعادة فتح للتطبيق؛ ومن انقطع اتصاله قبلها فتح تطبيقه على
+ *   خطأ. وهذا ما يعدّه Chrome عطلًا في تطبيقات TWA (HTTP 200 دون اتصال).
+ */
 self.addEventListener("message", (event) => {
-  if (event.data && event.data.type === "clear-cache") {
+  const type = event.data && event.data.type;
+  if (type === "clear-cache") {
     event.waitUntil(
       caches.keys().then((names) =>
         Promise.all(names.filter((n) => n.startsWith("taqwim-")).map((n) => caches.delete(n))),
       ),
     );
+  } else if (type === "cache-app") {
+    event.waitUntil(warmApp());
   }
 });
+
+/** يجلب /app ويخبّئه إن لم يكن مخبّأً. التحويل إلى /login (لا جلسة) لا يُخبَّأ. */
+async function warmApp() {
+  try {
+    if (await caches.match("/app")) return;
+    const fresh = await fetch("/app", { credentials: "same-origin" });
+    if (fresh.ok && !fresh.redirected) await cachePut(SHELL, "/app", fresh);
+  } catch {
+    /* لا شبكة الآن: تعاد المحاولة عند فتح التطبيق التالي */
+  }
+}
 
 function isFont(url) {
   return url.hostname === "fonts.googleapis.com" || url.hostname === "fonts.gstatic.com";

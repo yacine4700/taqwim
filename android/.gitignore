@@ -1,0 +1,6 @@
+# لا يدخل المستودع شيء من مشروع Android ولا مفاتيح التوقيع أبدًا
+*.keystore
+*.jks
+*.apk
+*.aab
+local.properties
