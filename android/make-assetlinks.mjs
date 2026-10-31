@@ -1,63 +1,79 @@
 #!/usr/bin/env node
 /**
- * يولّد public/.well-known/assetlinks.json: الملف الذي يثبت لـ Chrome أن تطبيق
- * Android وهذا الموقع لصاحب واحد، فيفتح التطبيق كاملًا بلا شريط متصفح (TWA).
+ * يكتب public/.well-known/assetlinks.json: الملف الذي يثبت لـ Chrome أن تطبيق Android
+ * وهذا الموقع لصاحب واحد، فيفتح التطبيق بلا شريط عنوان (TWA).
  *
- * الاستعمال (من جذر المشروع):
- *   node android/make-assetlinks.mjs <packageId> <SHA256> [<SHA256> ...]
+ * الاستعمال (من أي مكان):
+ *   node android/make-assetlinks.mjs [--out <ملف>] <packageId> <SHA256> [<SHA256> ...]
  *
- * أعطه بصمة كل مفتاح توقيع تُثبَّت به نسخة من التطبيق: مفتاحك أنت للـ APK الذي
- * توزّعه بنفسك، ومفتاح «توقيع التطبيق» من Play Console إن نُشر التطبيق في Play.
- * الصيغة والعلاقة كما في وثائق Chrome (Android Concepts for Web Developers).
+ * يضيف ولا يحذف: إن وُجد الملف تبقى بصماته السابقة وتُلحق الجديدة بها، فبصمة مفتاحك
+ * وبصمة مفتاح Play تجتمعان بأمرين متتاليين أو بأمر واحد. لإزالة بصمة عدّل الملف بيدك.
+ *
+ * أي خطأ (حزمة أو بصمة غير صالحة، ملف موجود تالف) يُطبع ويخرج برمز 1، ولا يُمسّ الملف.
+ * هذا الملف لا يُستورد: المنطق في android/assetlinks.mjs.
  */
 
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { mergeAssetLinks } from "./assetlinks.mjs";
 
-/** اسم حزمة Android: مقطعان أو أكثر، يبدأ كل مقطع بحرف. */
-const PACKAGE_RE = /^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+$/;
+const USAGE = "الاستعمال: node android/make-assetlinks.mjs [--out <ملف>] <packageId> <SHA256> [<SHA256> ...]";
 
-/** يقبل بصمة بالنقطتين أو دونهما وبأي حالة أحرف، ويعيدها 32 زوجًا كبيرة مفصولة بنقطتين. */
-export function normalizeFingerprint(value) {
-  const hex = String(value).trim().replace(/^SHA-?256\s*[:=]?\s*/i, "").replace(/[:\s-]/g, "");
-  if (!/^[0-9A-Fa-f]{64}$/.test(hex)) {
-    throw new Error(`بصمة SHA-256 غير صالحة: «${value}» (المطلوب 64 خانة سداسية عشرية)`);
-  }
-  return hex.toUpperCase().match(/.{2}/g).join(":");
+function fail(message) {
+  console.error(`خطأ: ${message}`);
+  process.exit(1);
 }
 
-export function buildAssetLinks(packageId, fingerprints) {
-  if (!PACKAGE_RE.test(String(packageId))) {
-    throw new Error(`اسم الحزمة غير صالح: «${packageId}»`);
+function parse(argv) {
+  const args = [...argv];
+  let out = null;
+  const rest = [];
+  while (args.length) {
+    const a = args.shift();
+    if (a === "--out") {
+      out = args.shift();
+      if (!out) fail(`--out بلا مسار.\n${USAGE}`);
+    } else if (a === "-h" || a === "--help") {
+      console.log(USAGE);
+      process.exit(0);
+    } else if (a.startsWith("--")) {
+      fail(`خيار غير معروف: ${a}\n${USAGE}`);
+    } else {
+      rest.push(a);
+    }
   }
-  if (!fingerprints.length) throw new Error("لا بصمة. أعطِ بصمة واحدة على الأقل.");
-  const unique = [...new Set(fingerprints.map(normalizeFingerprint))];
-  return [
-    {
-      relation: ["delegate_permission/common.handle_all_urls"],
-      target: {
-        namespace: "android_app",
-        package_name: packageId,
-        sha256_cert_fingerprints: unique,
-      },
-    },
-  ];
+  const [packageId, ...fingerprints] = rest;
+  if (!packageId) fail(USAGE);
+  if (!fingerprints.length) fail(`لا بصمة. أعطِ بصمة SHA-256 واحدة على الأقل.\n${USAGE}`);
+  return { out, packageId, fingerprints };
 }
 
-const isMain = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+try {
+  const { out, packageId, fingerprints } = parse(process.argv.slice(2));
+  // الافتراضي public/.well-known في المستودع الذي فيه هذا الملف، أيًّا كان مكان التشغيل.
+  const target = out
+    ? resolve(out)
+    : resolve(dirname(fileURLToPath(import.meta.url)), "..", "public", ".well-known", "assetlinks.json");
 
-if (isMain) {
-  const [packageId, ...fingerprints] = process.argv.slice(2);
-  try {
-    if (!packageId) throw new Error("الاستعمال: node android/make-assetlinks.mjs <packageId> <SHA256> [<SHA256> ...]");
-    const json = buildAssetLinks(packageId, fingerprints);
-    const out = resolve(dirname(fileURLToPath(import.meta.url)), "..", "public", ".well-known", "assetlinks.json");
-    mkdirSync(dirname(out), { recursive: true });
-    writeFileSync(out, JSON.stringify(json, null, 2) + "\n");
-    console.log(`كُتب ${out}`);
-  } catch (problem) {
-    console.error(problem.message);
-    process.exit(1);
+  let existing = null;
+  if (existsSync(target)) {
+    try {
+      existing = JSON.parse(readFileSync(target, "utf8"));
+    } catch (problem) {
+      fail(`الملف الموجود ${target} ليس JSON صالحًا (${problem.message}). لم يُمسّ.`);
+    }
   }
+
+  const { json, added, kept } = mergeAssetLinks(existing, packageId, fingerprints);
+  mkdirSync(dirname(target), { recursive: true });
+  // كتابة ثم إعادة تسمية: انقطاع في المنتصف لا يترك ملفًا نصفه مكتوب.
+  const temp = `${target}.tmp-${process.pid}`;
+  writeFileSync(temp, JSON.stringify(json, null, 2) + "\n");
+  renameSync(temp, target);
+  const total = kept + added;
+  console.log(`كُتب ${target}`);
+  console.log(`  ${packageId}: ${total} بصمة (أُضيف ${added}، بقي ${kept} من قبل)`);
+} catch (problem) {
+  fail(problem && problem.message ? problem.message : String(problem));
 }

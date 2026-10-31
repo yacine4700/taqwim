@@ -54,9 +54,13 @@ export async function middleware(request: NextRequest) {
 /**
  * عامل الخدمة والـmanifest خارج المرشّح: لو مرّا بالوسيط لصار لكل طلب منهما
  * نداء تحقّق من الجلسة، وهما يُطلبان قبل الدخول أصلًا — عند تثبيت التطبيق.
+ *
+ * وكذلك /.well-known/ (assetlinks.json لتطبيق Android): تقرؤه خدمة Google بلا جلسة،
+ * ولا يُقبل فيه تحويل. الوسيط هو الموضع الوحيد الذي قد يحوّل طلبًا أو يضيف إليه
+ * كوكيز، فيبقى الملف خارجه ملفًّا ثابتًا لا يتعلّق بـ Supabase ولا بتعديل لاحق للوسيط.
  */
 export const config = {
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|sw\\.js|manifest\\.webmanifest|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
+    "/((?!_next/static|_next/image|favicon.ico|sw\\.js|manifest\\.webmanifest|\\.well-known/|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
   ],
 };

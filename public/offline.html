@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#0e6a56">
+<title>دفتر التقويم — لا اتصال</title>
+<!--
+  صفحة عامّة يعرضها عامل الخدمة حين لا شبكة ولا هيكل /app مخبّأ لصاحب الجهاز
+  (بعد الخروج، أو قبل أول دخول). لا تحمل شيئًا من أي حساب، ولا تطلب شيئًا من الشبكة.
+-->
+<style>
+  body { margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+         font-family: system-ui, sans-serif; background: #f5f8f6; color: #1d2b26; }
+  main { max-width: 22rem; padding: 1.5rem; text-align: center; }
+  h1 { font-size: 1.25rem; margin: 0 0 .75rem; color: #0e6a56; }
+  p { line-height: 1.7; margin: 0 0 1.25rem; }
+  button { font: inherit; padding: .7rem 1.5rem; border: 0; border-radius: .6rem;
+           background: #0e6a56; color: #fff; }
+  @media (prefers-color-scheme: dark) { body { background: #111a17; color: #e3ece8; } h1 { color: #5fc4a8; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>لا اتصال بالإنترنت</h1>
+  <p>الدخول إلى الحساب يحتاج شبكة. بعد أن تدخل مرة وأنت متصل، يفتح الدفتر دون اتصال
+     ويحفظ ما تنقّطه حتى تعود الشبكة.</p>
+  <button type="button" onclick="location.reload()">أعد المحاولة</button>
+</main>
+</body>
+</html>

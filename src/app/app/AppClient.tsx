@@ -6,6 +6,7 @@ import { ensurePersistence, kvDel, kvGet, kvSet, type Persistence } from "@/lib/
 import { backupFileName, buildBackup, normalizeData, type Backup } from "@/lib/backup";
 import { exportFromServer } from "@/lib/backupDb";
 import { useBackLayers } from "@/lib/useBackLayers";
+import { clearAppCaches } from "@/lib/appCache";
 import {
   algiersToday,
   termName,
@@ -497,16 +498,19 @@ export default function AppClient({
     const register = () => {
       void navigator.serviceWorker
         .register("/sw.js")
-        // بعد الدخول لا تمرّ صفحة /app الكاملة بالعامل، فيُطلب منه تخبئتها الآن
+        // بعد الدخول لا تمرّ صفحة /app الكاملة بالعامل، فيُطلب منه تخبئتها الآن،
+        // مقرونةً بصاحبها: هيكل أستاذ آخر على الجهاز نفسه يُمحى ولا يُعرض.
         .then(() => navigator.serviceWorker.ready)
-        .then((registration) => registration.active?.postMessage({ type: "cache-app" }))
+        .then((registration) =>
+          registration.active?.postMessage({ type: "cache-app", owner: teacherId }),
+        )
         .catch(() => {
           /* متصفّح يمنع العمّال، أو سياق غير آمن: التطبيق يعمل دونه */
         });
     };
     if (document.readyState === "complete") register();
     else window.addEventListener("load", register, { once: true });
-  }, []);
+  }, [teacherId]);
 
   /* ---------- derived ---------- */
   const studentsOf = useCallback(
@@ -1274,6 +1278,9 @@ export default function AppClient({
       await kvDel(`snapshot:${teacherId}`);
       await kvDel(`queue:${teacherId}`);
       outbox.reset();
+      // تُمحى الخبيئة من الصفحة نفسها وتُنتظر قبل المغادرة: رسالة العامل وحدها لا جواب لها،
+      // وقد لا يكون للصفحة عامل يتحكّم فيها بعد. وإلا بقي هيكل /app بمعرّف هذا الأستاذ للتالي.
+      await clearAppCaches();
       navigator.serviceWorker?.controller?.postMessage({ type: "clear-cache" });
       const { error } = await supabase.auth.signOut();
       // بلا شبكة يفشل نداء الخادم فتبقى الجلسة في الكوكيز، فيردّ الوسيط /login إلى /app.

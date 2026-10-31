@@ -8,3 +8,10 @@ build
 *.tsbuildinfo
 next-env.d.ts
 .vercel
+
+# تغليف Android: لا مفتاح توقيع ولا حزمة مبنية في المستودع، أينما وُضعت (android/.gitignore يكرّرها لمجلده)
+*.keystore
+*.jks
+*.apk
+*.aab
+local.properties
