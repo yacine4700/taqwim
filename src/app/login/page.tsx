@@ -75,6 +75,11 @@ export default function LoginPage() {
       setMessage("تعذّر فتح الرابط: انتهت صلاحيته أو فُتح في جهاز آخر. اطلب رابطًا جديدًا.");
       setMode("forgot");
     }
+    // رابط الاستعادة وصل لحساب موقوف: طلب رابط جديد لا ينفعه، فتُشرح الحال ويبقى نموذج الدخول
+    if (query.get("error") === "banned") {
+      setBad(true);
+      setMessage(BANNED_MESSAGE);
+    }
   }, []);
 
   async function submit(event: React.FormEvent) {

@@ -19,6 +19,16 @@ export function safeNext(value: string | null | undefined): string {
   return ok ? value : "/app";
 }
 
+/**
+ * وجهة /auth/callback بعد محاولة تبديل الرمز: النجاح إلى وجهته، والحساب الموقوف إلى شرحه،
+ * وما سواه إلى «رابط منتهٍ». كان كل فشل يُعامَل رابطًا فاسدًا، فيُقال للموقوف إن رابطه انتهى
+ * ويطلب رابطًا بعد رابط بلا جدوى.
+ */
+export function callbackTarget(outcome: "ok" | "banned" | "failed", next: string): string {
+  if (outcome === "ok") return next;
+  return outcome === "banned" ? "/login?error=banned" : "/login?error=link";
+}
+
 /** رسالة بالعربية إن كانت كلمتا السر غير صالحتين، وإلا null. */
 export function passwordProblem(password: string, again: string): string | null {
   if (password.length < MIN_PASSWORD) {

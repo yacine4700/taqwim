@@ -13,6 +13,11 @@ function safeNext(value) {
   return ok ? value : "/app";
 }
 
+function callbackTarget(outcome, next) {
+  if (outcome === "ok") return next;
+  return outcome === "banned" ? "/login?error=banned" : "/login?error=link";
+}
+
 function passwordProblem(password, again) {
   if (password.length < MIN_PASSWORD) {
     return `كلمة السر قصيرة: ${MIN_PASSWORD} أحرف على الأقل.`;
@@ -107,6 +112,11 @@ eq("غير متطابقتين", passwordProblem("secret1", "secret2"), "الكل
 eq("سليمة", passwordProblem("secret1", "secret1"), null);
 eq("حدّ الطول", passwordProblem("123456", "123456"), null);
 eq("القصر قبل التطابق", passwordProblem("12", "34"), "كلمة السر قصيرة: 6 أحرف على الأقل.");
+
+/* وجهة الرابط بعد تبديل الرمز */
+eq("نجاح: إلى وجهته", callbackTarget("ok", "/reset"), "/reset");
+eq("حساب موقوف: شرح الإيقاف لا «رابط منتهٍ»", callbackTarget("banned", "/reset"), "/login?error=banned");
+eq("فشل آخر: رابط منتهٍ", callbackTarget("failed", "/app"), "/login?error=link");
 
 /* الرسائل */
 eq("دخول خاطئ", translateAuthError("Invalid login credentials"), "البريد أو كلمة السر غير صحيحة.");

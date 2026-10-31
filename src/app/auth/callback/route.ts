@@ -1,7 +1,8 @@
 import { NextResponse, type NextRequest } from "next/server";
 import type { EmailOtpType } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
-import { safeNext } from "@/lib/auth";
+import { callbackTarget, safeNext } from "@/lib/auth";
+import { isBannedError } from "@/lib/account";
 
 /**
  * ما بعد النقر على الرابط في البريد (استعادة كلمة السر، وتأكيد العنوان).
@@ -17,16 +18,18 @@ export async function GET(request: NextRequest) {
   const type = searchParams.get("type") as EmailOtpType | null;
 
   const supabase = await createClient();
-  let failed = true;
+  let outcome: "ok" | "banned" | "failed" = "failed";
 
-  if (code) {
+  // قد يردّ Supabase إلى هنا بنفسه والخطأ في العنوان قبل أي رمز
+  if (searchParams.get("error_code") === "user_banned") {
+    outcome = "banned";
+  } else if (code) {
     const { error } = await supabase.auth.exchangeCodeForSession(code);
-    failed = !!error;
+    outcome = !error ? "ok" : isBannedError(error) ? "banned" : "failed";
   } else if (tokenHash && type) {
     const { error } = await supabase.auth.verifyOtp({ type, token_hash: tokenHash });
-    failed = !!error;
+    outcome = !error ? "ok" : isBannedError(error) ? "banned" : "failed";
   }
 
-  const target = failed ? "/login?error=link" : next;
-  return NextResponse.redirect(new URL(target, request.url));
+  return NextResponse.redirect(new URL(callbackTarget(outcome, next), request.url));
 }
