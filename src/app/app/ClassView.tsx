@@ -34,7 +34,7 @@ import { ReadingPanel } from "./ReadingPanel";
 export function ClassView({
   klass, students, term, readOnly, criteria, components, recordOf,
   averageOf, readingCount, stats, tp, onGroups,
-  onBack, onPick, onDelete, onAddStudents, onCriterion, onMark,
+  onBack, onPick, onCard, onAddStudents, onCriterion, onMark,
   column, onColumn, readCount, onReadCount, draftOf, onDraft, onSaveReadings,
 }: {
   klass: Klass;
@@ -55,7 +55,8 @@ export function ClassView({
   onGroups?: () => void;
   onBack: () => void;
   onPick: (s: Student) => void;
-  onDelete: () => void;
+  /** بطاقة القسم: معلوماته وتعديل اسمه وحذفه. */
+  onCard: () => void;
   onAddStudents: () => void;
   onCriterion: (studentId: string, code: string, value: number | null) => void;
   onMark: (studentId: string, field: MarkField, value: number | null) => void;
@@ -78,8 +79,6 @@ export function ClassView({
   const setColumn = onColumn;
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<"all" | "todo" | "low">("all");
-  /** «حذف القسم» مطويّ: كان بجوار «+ تلميذ» بالحجم نفسه في أسفل كل قسم. */
-  const [more, setMore] = useState(false);
 
   const ranked = students
     .map((s) => ({ student: s, average: averageOf(s.id) }))
@@ -402,21 +401,12 @@ export function ClassView({
         ) : (
           <>
             <button className="btn soft" onClick={onAddStudents}>+ تلميذ</button>
-            <button
-              className="btn ghost"
-              aria-expanded={more}
-              onClick={() => setMore(!more)}
-            >
-              ⋯ خيارات القسم
+            <button className="btn ghost" onClick={onCard}>
+              بطاقة القسم
             </button>
           </>
         )}
       </div>
-      {more && !open && (
-        <div className="pickbar">
-          <button className="btn warn" onClick={onDelete}>حذف القسم</button>
-        </div>
-      )}
     </section>
   );
 }

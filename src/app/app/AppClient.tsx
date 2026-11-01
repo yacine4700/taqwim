@@ -68,6 +68,7 @@ import {
 } from "@/lib/readingDraft";
 import { ClassesView } from "./ClassesView";
 import { ClassView } from "./ClassView";
+import { ClassCardSheet } from "./ClassCardSheet";
 import { StatsView } from "./StatsView";
 import { DocsView } from "./DocsView";
 import { SettingsView } from "./SettingsView";
@@ -145,6 +146,8 @@ export default function AppClient({
   const [drafts, setDrafts] = useState<Record<string, ReadingDraft<Student>>>({});
   const [hideStart, setHideStart] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<Klass | null>(null);
+  /** القسم الذي تُعرض بطاقته. */
+  const [cardOf, setCardOf] = useState<string | null>(null);
   const [confirmCriterion, setConfirmCriterion] = useState<Criterion | null>(null);
   /** تغيير نوع معيار أو سقفه ينتظر موافقة، وعدّاد يُعيد خانات الإعدادات إلى قيمها إن رُفض. */
   const [criterionChange, setCriterionChange] = useState<
@@ -1138,6 +1141,22 @@ export default function AppClient({
     say(`حُذفت ${school.name} — أقسامها باقية بلا مؤسسة`);
   }
 
+  /**
+   * تغيير اسم قسم. يعيد النتيجة لبطاقة القسم لتعرض الخطأ بالأحمر عندها: الاسم
+   * يُكتب في الخادم أولًا ثم يتغيّر على الشاشة، فلا يظهر اسم لم يُحفظ.
+   */
+  async function renameClass(
+    id: string,
+    name: string,
+  ): Promise<{ ok: true } | { ok: false; error: string }> {
+    if (!outbox.online) return { ok: false, error: "لا اتصال بالإنترنت. أعد المحاولة حين يعود." };
+    const { error } = await supabase.from("classes").update({ name }).eq("id", id);
+    if (error) return { ok: false, error: "رفض الخادم حفظ الاسم. أعد المحاولة." };
+    setClasses((cs) => cs.map((c) => (c.id === id ? { ...c, name } : c)));
+    say("حُفظ اسم القسم");
+    return { ok: true };
+  }
+
   /** نسبة قسم إلى مؤسسة. لا تُستعمل إلا في إصلاح قسم وُجد بلا واحدة. */
   async function assignSchool(classId: string, schoolId: string) {
     if (!needsNetwork()) return false;
@@ -1380,6 +1399,7 @@ export default function AppClient({
     [confirmCriterion !== null, () => setConfirmCriterion(null)],
     [confirmStudent !== null, () => setConfirmStudent(null)],
     [confirmDelete !== null, () => setConfirmDelete(null)],
+    [cardOf !== null, () => setCardOf(null)],
     [exporting, () => setExporting(false)],
     [!!printing && classes.some((c) => c.id === printing), () => setPrinting(null)],
     [importing, () => setImporting(false)],
@@ -1542,7 +1562,7 @@ export default function AppClient({
                 onGroups={tpReady ? () => setClassSection("groups") : undefined}
                 onBack={() => setOpenClass(null)}
                 onPick={(s) => setOpenStudentId(s.id)}
-                onDelete={() => setConfirmDelete(classes.find((c) => c.id === openClass)!)}
+                onCard={() => setCardOf(openClass)}
                 onAddStudents={() => setAddingTo(openClass)}
                 onCriterion={setCriterion}
                 onMark={(studentId, field, value) =>
@@ -1732,6 +1752,26 @@ export default function AppClient({
           term={term}
           say={say}
           onClose={() => setExporting(false)}
+        />
+      )}
+
+      {cardOf && classes.some((c) => c.id === cardOf) && (
+        <ClassCardSheet
+          klass={classes.find((c) => c.id === cardOf)!}
+          school={schools.find((s) => s.id === classes.find((c) => c.id === cardOf)!.school_id) ?? null}
+          count={studentsOf(cardOf).length}
+          stats={statsOf(cardOf)}
+          termLabel={termName(term)}
+          criteria={criteria}
+          components={components}
+          otherNames={classes.filter((c) => c.id !== cardOf).map((c) => c.name)}
+          onRename={(name) => renameClass(cardOf, name)}
+          onDelete={() => {
+            const klass = classes.find((c) => c.id === cardOf)!;
+            setCardOf(null);
+            setConfirmDelete(klass);
+          }}
+          onClose={() => setCardOf(null)}
         />
       )}
 
