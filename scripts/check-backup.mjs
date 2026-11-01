@@ -397,6 +397,12 @@ t("كود معيار فارغ يُرفض", mutate((b) => (b.data.readings[0].cri
 t("نوع معيار مجهول", mutate((b) => (b.data.criteria[0].kind = "magic")).ok, false);
 const strangeOps = mutate((b) => b.pending.push({ id: "x", at: 1, kind: "future-op" }));
 t("معلّقة مجهولة النوع تُترك وتُعدّ، والملف يُقبل", [strangeOps.ok, strangeOps.droppedPending], [true, 1]);
+const withChanges = mutate((b) => { b.pending[0].changes = { criteria: { disc: null, part: 4 }, tp: null }; });
+t("علامة معلّقة بتغييراتها (مسح بـ null) تُقبل", [withChanges.ok, withChanges.ok && withChanges.droppedPending], [true, 0]);
+const badChanges = mutate((b) => { b.pending[0].changes = { criteria: { part: "x" } }; });
+t("تغييرات بقيمة نصّية: العملية لا تُقبل", badChanges.ok && badChanges.droppedPending, 1);
+const badMark = mutate((b) => { b.pending[0].changes = { tp: 25 }; });
+t("تغيير خانة خارج 0..20: العملية لا تُقبل", badMark.ok && badMark.droppedPending, 1);
 t("الرفض يقول أين", mutate((b) => (b.data.students[0].class_id = "dddddddd-0000-4000-8000-000000000000")).problem, "التلميذ «تلميذ رقم 1»: يشير إلى قسم ليس في الملف.");
 
 /* ---------- نسخة الجهاز (دون اتصال) ---------- */

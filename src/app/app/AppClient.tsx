@@ -37,6 +37,7 @@ import {
   pendingLabel,
   uid,
   type Op,
+  type RecordChanges,
 } from "@/lib/outbox";
 import {
   applyTpTarget,
@@ -628,7 +629,7 @@ export default function AppClient({
    * كل علامة تدخل الطابور أولًا فتظهر في الشاشة في اللحظة نفسها، ثم تُرسل في
    * الخلفية. لا انتظار للخادم عند الضغطة، ولا إعادة تحميل تمحو ما أُدخل.
    */
-  function saveRecord(studentId: string, patch: Partial<RecordRow>) {
+  function saveRecord(studentId: string, patch: Partial<RecordRow>, changes: RecordChanges) {
     if (locked) return lockedSay();
     const current = recordOf(studentId);
     const next: RecordRow = {
@@ -648,6 +649,8 @@ export default function AppClient({
         tp: next.tp,
         devoir: next.devoir,
         exam: next.exam,
+        // ما لمسه الأستاذ وحده هو ما يُرسل (انظر RecordChanges)
+        changes,
       }),
     );
   }
@@ -658,7 +661,7 @@ export default function AppClient({
     // الحذف لا التصفير: «مسح» يعيد المعيار إلى «لم يُقيَّم».
     if (value === null) delete map[code];
     else map[code] = value;
-    saveRecord(studentId, { criteria: map });
+    saveRecord(studentId, { criteria: map }, { criteria: { [code]: value } });
   }
 
   async function addReadings(
@@ -1515,7 +1518,7 @@ export default function AppClient({
                 onAddStudents={() => setAddingTo(openClass)}
                 onCriterion={setCriterion}
                 onMark={(studentId, field, value) =>
-                  saveRecord(studentId, { [field]: value } as Partial<RecordRow>)
+                  saveRecord(studentId, { [field]: value } as Partial<RecordRow>, { [field]: value })
                 }
                 column={columnOf[openClass] ?? null}
                 onColumn={(column) => setColumnOf((c) => ({ ...c, [openClass]: column }))}
@@ -1619,7 +1622,9 @@ export default function AppClient({
           }}
           onClose={() => setOpenStudentId(null)}
           onCriterion={(code, value) => setCriterion(openStudent.id, code, value)}
-          onMark={(field, value) => saveRecord(openStudent.id, { [field]: value } as Partial<RecordRow>)}
+          onMark={(field, value) =>
+            saveRecord(openStudent.id, { [field]: value } as Partial<RecordRow>, { [field]: value })
+          }
           onRemoveReading={removeReading}
           onEdit={(patch) => updateStudent(openStudent.id, patch)}
           onDelete={() => setConfirmStudent(openStudent)}

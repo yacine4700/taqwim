@@ -6,6 +6,7 @@
 
 import {
   afterFailure,
+  applyChanges,
   applyRecords,
   applyReadings,
   canSignOut,
@@ -182,6 +183,62 @@ console.log("— سباق القراءة والإرسال (العلامة لا �
   log.land(newOp("reading-del", { reading_id: "r1", student_id: S1 }));
   t("حذف قُبل أثناء القراءة لا يعود", applyReadings(stale, log.since(ticket)), []);
   log.end(ticket);
+}
+
+console.log("— إرسال التغيير وحده (المنطق نفسه الذي في merge_record بالقاعدة)");
+{
+  const change = (student, changes, extra = {}) =>
+    newOp("record", { student_id: student, term: 1, criteria: {}, tp: null, devoir: null, exam: null, changes, ...extra });
+  const server = [{ student_id: S1, term: 1, criteria: { part: 3, disc: -1 }, tp: 12, devoir: 13, exam: null }];
+
+  t("معيار واحد فوق صف الخادم: لا يمسّ البقية",
+    applyRecords(server, [change(S1, { criteria: { hw: 1.5 } })])[0],
+    { student_id: S1, term: 1, criteria: { part: 3, disc: -1, hw: 1.5 }, tp: 12, devoir: 13, exam: null });
+  t("المسح (null) يحذف المفتاح لا يصفّره",
+    applyRecords(server, [change(S1, { criteria: { part: null } })])[0].criteria, { disc: -1 });
+  t("الصفر المقيَّم يبقى صفرًا",
+    applyRecords(server, [change(S1, { criteria: { part: 0 } })])[0].criteria, { part: 0, disc: -1 });
+  t("خانة بـ null تُمسح والباقي باقٍ",
+    [applyRecords(server, [change(S1, { tp: null })])[0].tp, applyRecords(server, [change(S1, { tp: null })])[0].devoir], [null, 13]);
+  t("خانة غائبة من التغييرات لا تُمسّ",
+    applyRecords(server, [change(S1, { exam: 8 })])[0].tp, 12);
+  t("لا صف في الخادم: يُنشأ بالتغيير وحده",
+    applyRecords([], [change(S1, { criteria: { disc: -2 }, devoir: 14 })]),
+    [{ student_id: S1, term: 1, criteria: { disc: -2 }, tp: null, devoir: 14, exam: null }]);
+  t("عملية قديمة بلا changes: الصف كاملًا كما كان",
+    applyRecords(server, [rec(S1, { part: 9 })])[0].criteria, { part: 9 });
+
+  // الحالة التي رآها الأستاذ: جهاز آخر عدّل disc في الخادم، وهذا الهاتف يعدّل part فقط
+  const other = [{ student_id: S1, term: 1, criteria: { part: 1, disc: -5 }, tp: null, devoir: null, exam: null }];
+  t("تعديل part لا يعيد disc القديم الذي على هذه الشاشة",
+    applyRecords(other, [change(S1, { criteria: { part: 4 } }, { criteria: { part: 4, disc: -1 } })])[0].criteria,
+    { part: 4, disc: -5 });
+
+  // الدمج في الطابور
+  const q1 = enqueue([], change(S1, { criteria: { part: 2 } }, { criteria: { part: 2 } }));
+  const q2 = enqueue(q1, change(S1, { criteria: { disc: -1 }, tp: 11 }, { criteria: { part: 2, disc: -1 } }));
+  t("عمليتان على الصف نفسه تُدمجان في واحدة", q2.length, 1);
+  t("تغييرات الاثنتين معًا", q2[0].changes, { criteria: { part: 2, disc: -1 }, tp: 11 });
+  const q3 = enqueue(q2, change(S1, { criteria: { part: null }, tp: null }, { criteria: { disc: -1 } }));
+  t("الأحدث يغلب على المفتاح نفسه (مسح بعد كتابة)", q3[0].changes, { criteria: { part: null, disc: -1 }, tp: null });
+  t("الصف الكامل للعرض هو آخر ما رآه الأستاذ", q3[0].criteria, { disc: -1 });
+  const q4 = enqueue(q3, change(S1, { exam: 7 }));
+  t("خانة جديدة تُضاف وما قبلها باقٍ", q4[0].changes, { criteria: { part: null, disc: -1 }, tp: null, exam: 7 });
+
+  // قديمة + جديدة: لا دمج بالتغييرات، تُرسل صفًّا كاملًا كما رآه الأستاذ
+  const legacy = enqueue([], rec(S1, { part: 2 }));
+  const mixed = enqueue(legacy, change(S1, { criteria: { disc: -1 } }, { criteria: { part: 2, disc: -1 } }));
+  t("عملية قديمة ثم جديدة: تبقى واحدة", mixed.length, 1);
+  t("ولا تحمل changes (فتُرسل الصف كاملًا كما كان)", "changes" in mixed[0], false);
+  t("والصف الكامل فيها ما رآه الأستاذ", mixed[0].criteria, { part: 2, disc: -1 });
+
+  // عملية في الطريق لا تُمسّ، والجديدة تُضاف بعدها بتغييرها وحده
+  const inflight = enqueue([], change(S1, { criteria: { part: 2 } }));
+  const after = enqueue(inflight, change(S1, { criteria: { disc: -1 } }), inflight[0].id);
+  t("عملية في الطريق: تبقى والجديدة بعدها", after.map((o) => o.changes), [{ criteria: { part: 2 } }, { criteria: { disc: -1 } }]);
+
+  // applyChanges ولا تغيير: الصف كما هو
+  t("بلا تغييرات الصف كما هو", applyChanges(server[0], rec(S1, {}), {}), server[0]);
 }
 
 console.log(`\n${passed} ok, ${failed} failed`);

@@ -124,6 +124,24 @@ export function useOutbox(
     async (op: Op): Promise<SendResult> => {
       try {
         if (op.kind === "record") {
+          if (op.changes) {
+            // التغيير وحده، يدمجه الخادم في الصف القائم: لا يمحو ما لم تلمسه.
+            const merged = await supabase.rpc("merge_record", {
+              p_student_id: op.student_id,
+              p_term: op.term,
+              p_changes: op.changes,
+              p_at: new Date(op.at).toISOString(),
+            });
+            if (merged.error?.message === "student_not_found") {
+              return {
+                ok: false,
+                message: "التلميذ غير موجود في الخادم (ربما حُذف)",
+                kind: "rejected",
+              };
+            }
+            // الدالة غير موجودة بعد (الترحيل لم يُطبَّق): الإرسال القديم، صفًّا كاملًا.
+            if (merged.error?.code !== "PGRST202") return reply(merged);
+          }
           const answer = await supabase.from("records").upsert(
             {
               teacher_id: teacherId,

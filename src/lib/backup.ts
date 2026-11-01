@@ -492,6 +492,16 @@ export function parseBackup(text: string): ParseResult {
   }
 }
 
+/** تغييرات صف العلامات: معيار بقيمة أو null (مسح)، وخانات 0..20 أو null. */
+function validChanges(v: unknown): boolean {
+  if (!isObj(v)) return false;
+  if (v.criteria !== undefined) {
+    if (!isObj(v.criteria)) return false;
+    if (!Object.values(v.criteria).every((x) => x === null || finite(x))) return false;
+  }
+  return (["tp", "devoir", "exam"] as const).every((f) => v[f] === undefined || mark20(v[f]));
+}
+
 /** عملية طابور سليمة البنية؟ ما لا يعرفه هذا الإصدار يُترك ولا يُخمَّن. */
 function validOp(v: unknown): boolean {
   if (!isObj(v) || typeof v.id !== "string" || !finite(v.at)) return false;
@@ -499,7 +509,8 @@ function validOp(v: unknown): boolean {
   switch (v.kind) {
     case "record":
       return id(v.student_id) && term(v.term) && isObj(v.criteria) &&
-        Object.values(v.criteria).every(finite) && mark20(v.tp) && mark20(v.devoir) && mark20(v.exam);
+        Object.values(v.criteria).every(finite) && mark20(v.tp) && mark20(v.devoir) && mark20(v.exam) &&
+        (v.changes === undefined || validChanges(v.changes));
     case "reading-add":
       return isObj(v.reading) && id(v.reading.id) && id(v.reading.student_id) &&
         term(v.reading.term) && finite(v.reading.score) && typeof v.reading.read_on === "string";

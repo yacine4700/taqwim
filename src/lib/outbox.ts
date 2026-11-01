@@ -37,7 +37,24 @@ type OpBase = {
   nextTry: number;
 };
 
-/** علامات تلميذ في فصل: الصف كاملًا، فآخر عملية تُغني عمّا قبلها. */
+/**
+ * ما غيّره الأستاذ في صف علاماته، لا الصف كله. حضور المفتاح هو التغيير:
+ * `criteria[code] = null` يعني «مسح» (يعود المعيار إلى غير مقيَّم)، و`tp: null`
+ * يمسح الخانة، وغياب المفتاح يعني أنه لم يُمسّ.
+ */
+export type RecordChanges = {
+  criteria?: Record<string, number | null>;
+  tp?: number | null;
+  devoir?: number | null;
+  exam?: number | null;
+};
+
+/**
+ * علامات تلميذ في فصل. الحقول الكاملة (criteria وtp...) هي ما رآه الأستاذ لحظة
+ * التعديل، وتبقى للعرض ولعمليات الطابور القديمة. أما ما يُرسَل إلى الخادم فهو
+ * `changes` وحده حين يوجد: إرسال الصف كاملًا كان يمحو في الخادم ما عدّلته شاشة
+ * أخرى أو قراءة قديمة. عملية بلا `changes` (من إصدار سابق) تُرسل صفًّا كاملًا كما كانت.
+ */
 export type RecordOp = OpBase & {
   kind: "record";
   student_id: string;
@@ -46,6 +63,7 @@ export type RecordOp = OpBase & {
   tp: number | null;
   devoir: number | null;
   exam: number | null;
+  changes?: RecordChanges;
 };
 
 /** محاولة قراءة جديدة. معرّفها يُولَّد في الهاتف فالإرسال لا يكرّرها. */
@@ -162,10 +180,15 @@ export function enqueue(queue: Op[], op: Op, inFlight: string | null = null): Op
     );
     if (index >= 0) {
       const previous = queue[index];
-      const merged: Op =
-        op.kind === "student" && previous.kind === "student"
-          ? { ...op, id: previous.id, at: op.at, patch: { ...previous.patch, ...op.patch } }
-          : { ...op, id: previous.id };
+      let merged: Op;
+      if (op.kind === "student" && previous.kind === "student") {
+        merged = { ...op, id: previous.id, at: op.at, patch: { ...previous.patch, ...op.patch } };
+      } else if (op.kind === "record" && previous.kind === "record") {
+        merged = { ...op, id: previous.id, changes: mergeChanges(previous, op) };
+        if (!merged.changes) delete merged.changes;
+      } else {
+        merged = { ...op, id: previous.id };
+      }
       const next = [...queue];
       next[index] = { ...merged, tries: 0, error: null, blocked: false, nextTry: 0 };
       return next;
@@ -175,6 +198,41 @@ export function enqueue(queue: Op[], op: Op, inFlight: string | null = null): Op
   return [...queue, op];
 }
 
+/**
+ * دمج تغييرَي عمليتين على الصف نفسه: الأحدث يغلب على كل مفتاح لمسه، وما لم
+ * تمسّه يبقى من الأقدم. إن كانت إحداهما بلا `changes` (طابور إصدار سابق) فلا
+ * دمج ممكن بالتغييرات: تُرسل الجديدة صفًّا كاملًا، وهو ما رآه الأستاذ بعد القديمة.
+ */
+function mergeChanges(previous: RecordOp, next: RecordOp): RecordChanges | undefined {
+  if (!previous.changes || !next.changes) return undefined;
+  const out: RecordChanges = {};
+  const criteria = { ...previous.changes.criteria, ...next.changes.criteria };
+  if (Object.keys(criteria).length) out.criteria = criteria;
+  for (const field of ["tp", "devoir", "exam"] as const) {
+    if (field in next.changes) out[field] = next.changes[field] ?? null;
+    else if (field in previous.changes) out[field] = previous.changes[field] ?? null;
+  }
+  return out;
+}
+
+/** تغييرات تُطبَّق على صف (أو على صف فارغ إن لم يكن في الخادم صف بعد). */
+export function applyChanges(row: RecordRow | undefined, op: RecordOp, changes: RecordChanges): RecordRow {
+  const criteria: Record<string, number> = { ...(row?.criteria ?? {}) };
+  for (const [code, value] of Object.entries(changes.criteria ?? {})) {
+    // «مسح» يحذف المفتاح فيعود المعيار غير مقيَّم، ولا يُكتب صفرًا.
+    if (value === null || value === undefined) delete criteria[code];
+    else criteria[code] = value;
+  }
+  return {
+    student_id: op.student_id,
+    term: op.term,
+    criteria,
+    tp: "tp" in changes ? (changes.tp ?? null) : (row?.tp ?? null),
+    devoir: "devoir" in changes ? (changes.devoir ?? null) : (row?.devoir ?? null),
+    exam: "exam" in changes ? (changes.exam ?? null) : (row?.exam ?? null),
+  };
+}
+
 /* ---------- تطبيق الطابور فوق نسخة الخادم ---------- */
 
 export function applyRecords(base: RecordRow[], queue: Op[]): RecordRow[] {
@@ -182,6 +240,16 @@ export function applyRecords(base: RecordRow[], queue: Op[]): RecordRow[] {
   if (!ops.length) return base;
   const out = [...base];
   for (const op of ops) {
+    const index = out.findIndex(
+      (r) => r.student_id === op.student_id && r.term === op.term,
+    );
+    // بالتغييرات: فوق صف الخادم الحالي، فلا يمحو العرضُ ما لم يمسّه الأستاذ.
+    if (op.changes) {
+      const row = applyChanges(out[index], op, op.changes);
+      if (index >= 0) out[index] = row;
+      else out.push(row);
+      continue;
+    }
     const row: RecordRow = {
       student_id: op.student_id,
       term: op.term,
@@ -190,9 +258,6 @@ export function applyRecords(base: RecordRow[], queue: Op[]): RecordRow[] {
       devoir: op.devoir,
       exam: op.exam,
     };
-    const index = out.findIndex(
-      (r) => r.student_id === op.student_id && r.term === op.term,
-    );
     if (index >= 0) out[index] = row;
     else out.push(row);
   }
