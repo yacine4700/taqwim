@@ -28,6 +28,7 @@ import {
   applyTpMarks,
   applyTpSessions,
   canSignOut,
+  createLandedLog,
   newOp,
   opFingerprint,
   opSessionId,
@@ -160,17 +161,21 @@ export default function AppClient({
 
   /* ---------- الطابور: ما أُدخل ولم يصل الخادم ---------- */
 
+  const [accepted] = useState(createLandedLog);
+
   /**
    * العملية التي قبلها الخادم تنتقل إلى نسخة الخادم في اللحظة نفسها التي
    * تخرج فيها من الطابور، فلا يرتجف الرقم على الشاشة بينهما.
    */
   const onApplied = useCallback((op: Op) => {
+    // قراءة جارية قد تحمل القيمة القديمة: يُعاد تطبيق هذه العملية فوقها (انظر createLandedLog)
+    accepted.land(op);
     if (op.kind === "record") setBaseRecords((rows) => applyRecords(rows, [op]));
     else if (op.kind === "student") setBaseStudents((rows) => applyStudents(rows, [op]));
     else if (op.kind === "tp-session") setBaseSessions((rows) => applyTpSessions(rows, [op]));
     else if (op.kind === "tp-mark") setBaseTpMarks((rows) => applyTpMarks(rows, [op]));
     else setBaseReadings((rows) => applyReadings(rows, [op]));
-  }, []);
+  }, [accepted]);
 
   const outbox = useOutbox(supabase, teacherId, onApplied);
 
@@ -261,7 +266,7 @@ export default function AppClient({
   /** وصلت نسخة من الخادم، فلا تكتب فوقها نسخة الجهاز القديمة. */
   const servedRef = useRef(false);
 
-  const load = useCallback(async () => {
+  const fetchAll = useCallback(async (ticket: number) => {
     const [c, sc, s, cr, cp, r, rd, me] = await Promise.all([
       supabase.from("classes").select("id,name,position,school_id").order("position"),
       supabase.from("schools").select("id,name,position").order("position"),
@@ -314,32 +319,47 @@ export default function AppClient({
       (ready ? (sg.data ?? []) : []).map((row) => [row.id as string, (row.group_id as string | null) ?? null]),
     );
 
+    /*
+     * ما قبله الخادم بعد أن بدأت هذه القراءة قد لا تحمله قراءتها: يُعاد تطبيقه
+     * قبل أن تُكتب في الشاشة وفي نسخة الجهاز، وإلا رجعت العلامة إلى قيمتها القديمة.
+     */
+    const landed = accepted.since(ticket);
+
     const snapshot: Snapshot = {
       classes: ((c.data ?? []) as Array<Omit<Klass, "tp_target">>).map((k) => ({
         ...k,
         tp_target: targetOfClass.get(k.id) ?? null,
       })),
       schools: (sc.data ?? []) as School[],
-      students: ((s.data ?? []) as Array<Omit<Student, "group_id">>).map((st) => ({
-        ...st,
-        group_id: groupOfStudent.get(st.id) ?? null,
-      })),
+      students: applyStudents(
+        ((s.data ?? []) as Array<Omit<Student, "group_id">>).map((st) => ({
+          ...st,
+          group_id: groupOfStudent.get(st.id) ?? null,
+        })),
+        landed,
+      ),
       groups: ready ? ((gr.data ?? []) as Group[]) : [],
       sessions: ready
-        ? ((ss.data ?? []) as TpSession[]).map((x) => ({ ...x, term: Number(x.term) }))
+        ? applyTpSessions(
+            ((ss.data ?? []) as TpSession[]).map((x) => ({ ...x, term: Number(x.term) })),
+            landed,
+          )
         : [],
       tpMarks: ready
-        ? ((tm.data ?? []) as TpMark[]).map((x) => ({
-            ...x,
-            score: x.score === null ? null : Number(x.score),
-          }))
+        ? applyTpMarks(
+            ((tm.data ?? []) as TpMark[]).map((x) => ({
+              ...x,
+              score: x.score === null ? null : Number(x.score),
+            })),
+            landed,
+          )
         : [],
       tpReady: ready,
       calendar: calendarRows ?? undefined,
       criteria: (cr.data ?? []) as Criterion[],
       components: (cp.data ?? []) as Component[],
-      records: (r.data ?? []) as RecordRow[],
-      readings: (rd.data ?? []) as Reading[],
+      records: applyRecords((r.data ?? []) as RecordRow[], landed),
+      readings: applyReadings((rd.data ?? []) as Reading[], landed),
       profile: (me.data as Profile | null) ?? NO_PROFILE,
       savedAt: Date.now(),
     };
@@ -363,7 +383,16 @@ export default function AppClient({
     setCachedAt(null);
     setLoading(false);
     void kvSet(snapKey, snapshot);
-  }, [supabase, snapKey, teacherId]);
+  }, [supabase, snapKey, teacherId, accepted]);
+
+  const load = useCallback(async () => {
+    const ticket = accepted.begin();
+    try {
+      await fetchAll(ticket);
+    } finally {
+      accepted.end(ticket);
+    }
+  }, [fetchAll, accepted]);
 
   useEffect(() => {
     let alive = true;
@@ -478,9 +507,12 @@ export default function AppClient({
   /* عودة الشبكة: أعد القراءة من الخادم مرة واحدة، لا عند كل تبدّل حالة */
   const onlineRef = useRef(true);
   useEffect(() => {
-    if (outbox.online && !onlineRef.current) void load();
+    if (outbox.online && !onlineRef.current) {
+      // الإرسال أولًا ثم القراءة: لا تسابق القراءةُ حفظَ ما أُدخل دون شبكة
+      void outbox.flush().finally(() => void load());
+    }
     onlineRef.current = outbox.online;
-  }, [outbox.online, load]);
+  }, [outbox.online, outbox.flush, load]);
 
   /* المظهر المحفوظ يُطبَّق عند فتح التطبيق، فالزرّ صار في الإعدادات ولا يُرسم قبل فتحها */
   useEffect(() => {

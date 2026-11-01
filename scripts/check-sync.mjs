@@ -6,7 +6,10 @@
 
 import {
   afterFailure,
+  applyRecords,
+  applyReadings,
   canSignOut,
+  createLandedLog,
   classifyFailure,
   enqueue,
   isPermanent,
@@ -116,6 +119,70 @@ t("الحالة: مجمَّد", writesBlocked({ purge_after: "x", writes_blocked
 t("الحالة: غير مجمَّد", writesBlocked({ purge_after: null, writes_blocked: false }), false);
 t("الحالة: ردّ قديم بلا الحقل", writesBlocked({ purge_after: null }), false);
 t("الحالة: لا ردّ", writesBlocked(null), false);
+
+console.log("— سباق القراءة والإرسال (العلامة لا ترجع إلى قيمتها القديمة)");
+{
+  // الحالة التي رآها الأستاذ: الخادم يقبل التعديل بينما قراءة بدأت قبله تحمل القيمة القديمة.
+  const log = createLandedLog();
+  const old = [{ student_id: S1, term: 1, criteria: { part: 1 }, tp: null, devoir: null, exam: null }];
+  const edit = rec(S1, { part: 4 });
+
+  const ticket = log.begin();            // بدأت القراءة وأخذت القيمة القديمة
+  log.land(edit);                         // قبل الخادمُ التعديل وخرج من الطابور
+  // بلا السجلّ: القراءة تكتب القديم فوق الجديد (هذا ما كان يحدث)
+  t("بلا السجلّ: ترجع العلامة القديمة", applyRecords(old, [])[0].criteria, { part: 1 });
+  // مع السجلّ: يُعاد تطبيق ما قُبل بعد بدء القراءة
+  t("مع السجلّ: تبقى العلامة الجديدة", applyRecords(old, log.since(ticket))[0].criteria, { part: 4 });
+  log.end(ticket);
+}
+{
+  // ما قُبل قبل بدء القراءة لا يُعاد تطبيقه: القراءة رأته في الخادم
+  const log = createLandedLog();
+  const other = log.begin();
+  log.land(rec(S1, { part: 2 }));
+  const later = log.begin();
+  t("قراءة بدأت بعد القبول لا تعيد تطبيقه", log.since(later).length, 0);
+  t("القراءة الأقدم ما تزال تراه", log.since(other).length, 1);
+  log.end(other);
+  t("بعد انتهاء الأقدم يسقط ما لا تحتاجه الباقية", log.since(later).length, 0);
+  log.end(later);
+}
+{
+  // ترتيب القبول محفوظ: الأحدث هو الأخير فيغلب
+  const log = createLandedLog();
+  const ticket = log.begin();
+  log.land(rec(S1, { part: 2 }));
+  log.land(rec(S1, { part: 5 }));
+  t("الأحدث يغلب عند إعادة التطبيق", applyRecords([], log.since(ticket))[0].criteria, { part: 5 });
+  log.end(ticket);
+}
+{
+  // لا قراءة جارية: لا يُحفظ شيء فلا يكبر السجلّ
+  const log = createLandedLog();
+  log.land(rec(S1, { part: 3 }));
+  const ticket = log.begin();
+  t("ما قُبل دون قراءة جارية لا يُحفظ", log.since(ticket).length, 0);
+  log.end(ticket);
+}
+{
+  // فشل القراءة (end بلا since) لا يترك بقايا
+  const log = createLandedLog();
+  const a = log.begin();
+  log.land(rec(S1, { part: 3 }));
+  log.end(a);
+  const b = log.begin();
+  t("بعد انتهاء كل القراءات يُفرَّغ السجلّ", log.since(b).length, 0);
+  log.end(b);
+}
+{
+  // الحذف: محاولة حذفها الخادم أثناء قراءة لا تعود من قراءة قديمة
+  const log = createLandedLog();
+  const stale = [{ id: "r1", student_id: S1, term: 1, score: 3, read_on: "2026-11-01", criterion_code: "read" }];
+  const ticket = log.begin();
+  log.land(newOp("reading-del", { reading_id: "r1", student_id: S1 }));
+  t("حذف قُبل أثناء القراءة لا يعود", applyReadings(stale, log.since(ticket)), []);
+  log.end(ticket);
+}
 
 console.log(`\n${passed} ok, ${failed} failed`);
 if (failed) process.exit(1);

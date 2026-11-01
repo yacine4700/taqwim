@@ -267,6 +267,57 @@ export function applyTpMarks(base: TpMark[], queue: Op[]): TpMark[] {
   return out;
 }
 
+/* ---------- سباق القراءة والإرسال ---------- */
+
+/**
+ * سجلّ ما قبله الخادم أثناء قراءةٍ من الخادم.
+ *
+ * المشكلة: القراءة (load) والإرسال يجريان معًا عند فتح التطبيق أو عودة الشبكة.
+ * إن وصل طلب القراءة إلى الخادم قبل حفظ العملية، عادت القراءة بالقيمة القديمة؛
+ * وفي أثناء ذلك تكون العملية قد قُبلت وخرجت من الطابور، فتأتي القراءة بعدها
+ * وتكتب القيمة القديمة فوق الجديدة ولا شيء يغطّيها — فترجع العلامة على الشاشة،
+ * ثم يُرسل التعديل التالي الصفَّ القديم كاملًا فيمحو ما وصل.
+ *
+ * العلاج: كل قراءة تأخذ تذكرة عند بدئها، وما قبله الخادم بعد ذلك يُعاد تطبيقه
+ * فوق ما قرأته قبل أن تكتبه في الشاشة. الترتيب بعدّاد لا بساعة، فلا يتأثر
+ * بتغيّر وقت الجهاز. ولا يُحفظ شيء حين لا تجري قراءة، فلا يكبر السجلّ.
+ */
+export function createLandedLog() {
+  let tick = 0;
+  let seq = 0;
+  const loads = new Map<number, number>();
+  let landed: Array<{ op: Op; at: number }> = [];
+
+  return {
+    /** تبدأ قراءة: تُرجع تذكرتها. تُستدعى قبل إرسال أول طلب قراءة. */
+    begin(): number {
+      const id = ++seq;
+      loads.set(id, ++tick);
+      return id;
+    },
+    /** قبل الخادم عملية. تُحفظ فقط إن كانت قراءة جارية. */
+    land(op: Op): void {
+      if (loads.size) landed.push({ op, at: ++tick });
+    },
+    /** ما قُبل بعد بدء هذه القراءة، بترتيب قبوله. */
+    since(id: number): Op[] {
+      const start = loads.get(id);
+      if (start === undefined) return [];
+      return landed.filter((l) => l.at > start).map((l) => l.op);
+    },
+    /** انتهت القراءة (نجحت أو فشلت): يُنظَّف ما لم تعد تحتاجه قراءة جارية. */
+    end(id: number): void {
+      loads.delete(id);
+      if (!loads.size) {
+        landed = [];
+        return;
+      }
+      const oldest = Math.min(...loads.values());
+      landed = landed.filter((l) => l.at > oldest);
+    },
+  };
+}
+
 /* ---------- ما يُعرض للأستاذ ---------- */
 
 export type Pending = {

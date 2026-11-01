@@ -61,7 +61,11 @@ export type Outbox = {
   /** الحساب مجدول للحذف أو موقوف: لا يُرسل شيء حتى يُلغى ذلك، ولا يضيع شيء. */
   frozen: boolean;
   push: (op: Op) => void;
-  flush: () => void;
+  /**
+   * يرسل ما في الطابور. الوعد يتم حين تنتهي الجولة الجارية (أو لا شيء يُرسل)،
+   * فمن يريد قراءةً بعد الإرسال ينتظره بدل أن يسابقه.
+   */
+  flush: () => Promise<void>;
   retry: (id: string) => void;
   discard: (id: string) => void;
   reset: () => void;
@@ -82,7 +86,7 @@ export function useOutbox(
   const [frozen, setFrozen] = useState(false);
 
   const queueRef = useRef<Op[]>([]);
-  const flushingRef = useRef(false);
+  const runRef = useRef<Promise<void> | null>(null);
   const inFlightRef = useRef<string | null>(null);
   const appliedRef = useRef(onApplied);
   const readyRef = useRef(false);
@@ -264,13 +268,14 @@ export function useOutbox(
     }
   }, [supabase]);
 
-  const flush = useCallback(() => {
-    void (async () => {
-      if (flushingRef.current || !readyRef.current) return;
-      if (typeof navigator !== "undefined" && !navigator.onLine) return;
-      if (!queueRef.current.some((op) => !op.blocked)) return;
+  const flush = useCallback((): Promise<void> => {
+    // جولة جارية: من طلب الإرسال ينتظرها هي، ولا تبدأ جولة ثانية معها
+    if (runRef.current) return runRef.current;
+    if (!readyRef.current) return Promise.resolve();
+    if (typeof navigator !== "undefined" && !navigator.onLine) return Promise.resolve();
+    if (!queueRef.current.some((op) => !op.blocked)) return Promise.resolve();
 
-      flushingRef.current = true;
+    const run = (async () => {
       setSending(true);
       try {
         const session = await sessionState();
@@ -346,10 +351,12 @@ export function useOutbox(
         if (!queueRef.current.some((op) => !op.blocked)) setLastSyncedAt(Date.now());
       } finally {
         inFlightRef.current = null;
-        flushingRef.current = false;
+        runRef.current = null;
         setSending(false);
       }
     })();
+    runRef.current = run;
+    return run;
   }, [send, sessionState, accountState, setQ]);
 
   const push = useCallback(
