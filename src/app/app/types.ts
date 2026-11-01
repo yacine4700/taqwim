@@ -78,3 +78,6 @@ export type Snapshot = {
   calendar?: TermRow[];
   savedAt: number;
 };
+
+/** نتيجة إنشاء قسم: يعرضها الاستيراد على صاحبها بدل إشعار يزول. */
+export type CreateResult = { ok: true; id: string; students: number } | { ok: false; error: string };

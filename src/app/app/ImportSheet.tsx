@@ -2,7 +2,7 @@
 
 import { countWord } from "@/lib/outbox";
 import { useState } from "react";
-import { School } from "./types";
+import { CreateResult, School } from "./types";
 
 /** الملف كما هو، حين يعجز المتصفّح عن فكّ ترميز الصورة (HEIC من آيفون مثلًا). */
 function fileAsBase64(file: File): Promise<{ data: string; mime: string }> {
@@ -47,10 +47,11 @@ const MAX_SHOTS = 2;
  * يبقى قابلًا للتصحيح باليد قبل الإنشاء، فلا تُحفظ قراءة خاطئة.
  */
 export function ImportSheet({
-  onClose, onCreate, schools, defaultSchool, onAddSchool,
+  onClose, onCreate, schools, defaultSchool, onAddSchool, online,
 }: {
   onClose: () => void;
-  onCreate: (name: string, names: string[], schoolId: string) => void;
+  onCreate: (name: string, names: string[], schoolId: string) => Promise<CreateResult>;
+  online: boolean;
   schools: School[];
   /** مؤسسة آخر قسم استُورد: الأستاذ يستورد أقسام ثانوية في جلسة واحدة. */
   defaultSchool: string | null;
@@ -66,6 +67,8 @@ export function ImportSheet({
   const [status, setStatus] = useState("");
   const [reading, setReading] = useState(false);
   const [busy, setBusy] = useState(false);
+  /** خطأ الإنشاء والتحقق: أحمر وملاصق للزرّ الذي ضُغط، لا في أعلى الورقة خارج الشاشة. */
+  const [problem, setProblem] = useState("");
   /** صور الورقة: صفحة أو صفحتان، تُقرآن معًا. */
   const [shots, setShots] = useState<Array<{ url: string; data: string; mime: string }>>([]);
 
@@ -319,8 +322,9 @@ export function ImportSheet({
             id="import-class"
             className="inp"
             style={{ width: "100%" }}
+            aria-invalid={problem === "اكتب اسم القسم."}
             value={name}
-            onChange={(e) => setName(e.target.value)}
+            onChange={(e) => { setName(e.target.value); setProblem(""); }}
             placeholder="مثال: ثانية ثانوي علوم تجريبية -3-"
           />
         </div>
@@ -385,17 +389,40 @@ export function ImportSheet({
           )}
         </div>
 
+        {!online && (
+          <div className="note bad" role="alert" style={{ marginTop: 10 }}>
+            لا اتصال بالإنترنت. إنشاء القسم يحتاج الشبكة، وستبقى الأسماء هنا حتى يعود.
+          </div>
+        )}
+        {problem && (
+          <div id="import-problem" className="note bad" role="alert" style={{ marginTop: 10 }}>
+            {problem}
+          </div>
+        )}
         <button
           className="btn"
           style={{ marginTop: 14 }}
-          disabled={busy || reading}
-          onClick={() => {
-            if (!name.trim()) return setStatus("اكتب اسم القسم.");
-            if (!names.length) return setStatus("لا أسماء بعد: صوّر الورقة أو ارفع الملف أو الصقها.");
+          disabled={busy || reading || !online}
+          onClick={async () => {
+            // يرى الأستاذ الخطأ حيث ضغط، وتنزل الشاشة إلى الحقل الناقص.
+            const fail = (text: string, field: string) => {
+              setProblem(text);
+              const el = document.getElementById(field);
+              el?.scrollIntoView({ block: "center", behavior: "smooth" });
+              if (el instanceof HTMLElement && el.tagName !== "DIV") el.focus({ preventScroll: true });
+            };
+            if (!name.trim()) return fail("اكتب اسم القسم.", "import-class");
+            if (!names.length) return fail("لا أسماء بعد: صوّر الورقة أو ارفع الملف أو اكتبها.", "import-names");
             // المؤسسة إلزامية: قسمٌ بلا واحدة يُطبع رأس كشفه ناقصًا.
-            if (!schoolId) return setStatus("اختر مؤسسة القسم أو أضفها.");
+            if (!schoolId) return fail("اختر مؤسسة القسم أو أضفها.", "import-school");
+            setProblem("");
             setBusy(true);
-            onCreate(name.trim(), names, schoolId);
+            const result = await onCreate(name.trim(), names, schoolId);
+            // النجاح يغلق الورقة من الخارج. الفشل يُبقيها بأسمائها.
+            if (!result.ok) {
+              setBusy(false);
+              fail(result.error, "import-problem");
+            }
           }}
         >
           {busy ? "جارٍ الإنشاء…" : `أنشئ القسم (${names.length} تلميذًا)`}

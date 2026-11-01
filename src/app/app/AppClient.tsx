@@ -56,7 +56,7 @@ import {
   type TpTarget,
   termStatsFor,
 } from "@/lib/scoring";
-import { Klass, NO_PROFILE, Profile, School, Snapshot, Student, Tab } from "./types";
+import { CreateResult, Klass, NO_PROFILE, Profile, School, Snapshot, Student, Tab } from "./types";
 import { today } from "./util";
 import {
   draftKey,
@@ -78,6 +78,13 @@ import { StudentSheet } from "./StudentSheet";
 import { ImportSheet } from "./ImportSheet";
 import { BackupSheet, backupJson, downloadBlob } from "./BackupSheet";
 import { Tabs } from "./parts";
+
+/** رسالة تقول للأستاذ ما حدث وما يفعل، لا «تعذّر» وحدها. */
+function createFailure(error: { message?: string } | null): string {
+  return /fetch|network|load failed|timeout/i.test(error?.message ?? "")
+    ? "انقطع الاتصال أثناء الإنشاء. تحقّق من الشبكة ثم أعد المحاولة."
+    : "رفض الخادم إنشاء القسم. أعد المحاولة، فإن تكرّر فأعد فتح التطبيق.";
+}
 
 export default function AppClient({
   email,
@@ -228,7 +235,7 @@ export default function AppClient({
       steps.push({
         key: "classes",
         label: "استورد أقسامك",
-        hint: "من ملف الإشراف التربوي، أو بلصق الأسماء",
+        hint: "من صورة الورقة أو ملف Excel أو بكتابة الأسماء",
         action: "استيراد",
         onDo: () => setImporting(true),
       });
@@ -1148,26 +1155,32 @@ export default function AppClient({
     return true;
   }
 
+  /** آخر ترتيب أُعطي لقسم في هذه الجلسة: أقسام الدفعة الواحدة تُنشأ قبل أن تصل القائمة المحمّلة. */
+  const lastClassPosition = useRef(0);
+
+  /**
+   * ينشئ قسمًا بأسمائه ويعيد النتيجة ولا يغلق شيئًا: الورقة التي استدعته هي
+   * التي تقرّر. فشل الإنشاء لا يجوز أن يضيّع أسماء راجعها الأستاذ وصحّحها،
+   * فلا يُكتفى بإشعار عابر. وإن فشل إدراج الأسماء بعد إنشاء القسم يُحذف
+   * القسم حتى لا تُنتج إعادة المحاولة قسمين بالاسم نفسه.
+   */
   async function createClassWithStudents(
     name: string,
     names: string[],
     schoolId: string,
-  ) {
-    if (!needsNetwork()) return;
+  ): Promise<CreateResult> {
+    if (!outbox.online) {
+      return { ok: false, error: "لا اتصال بالإنترنت. أعد المحاولة حين يعود." };
+    }
+    const position = Math.max(classes.length, lastClassPosition.current) + 1;
     const { data: created, error } = await supabase
       .from("classes")
-      .insert({
-        teacher_id: teacherId,
-        name,
-        position: classes.length + 1,
-        school_id: schoolId,
-      })
+      .insert({ teacher_id: teacherId, name, position, school_id: schoolId })
       .select("id,name,position,school_id")
       .single();
-    if (error || !created) {
-      say("تعذّر إنشاء القسم");
-      return;
-    }
+    if (error || !created) return { ok: false, error: createFailure(error) };
+    lastClassPosition.current = position;
+
     const rows = names.map((full_name, i) => ({
       teacher_id: teacherId,
       class_id: created.id,
@@ -1176,13 +1189,28 @@ export default function AppClient({
     }));
     const { error: se } = await supabase.from("students").insert(rows);
     if (se) {
-      say("أُنشئ القسم لكن تعذّر إدراج الأسماء");
-    } else {
-      say(`أُضيف القسم: ${names.length} تلميذًا`);
+      const { error: de } = await supabase.from("classes").delete().eq("id", created.id);
+      return {
+        ok: false,
+        error: de
+          ? `أُنشئ القسم «${name}» فارغًا وتعذّر إدراج الأسماء. احذفه من قائمة الأقسام ثم أعد المحاولة.`
+          : "تعذّر إدراج الأسماء فلم يُنشأ القسم. أعد المحاولة.",
+      };
     }
+    return { ok: true, id: created.id, students: names.length };
+  }
+
+  /** بعد دفعة إنشاء: يحمّل الأقسام، ويفتح أولها، ولا يغلق الورقة إلا إن نجح كل شيء. */
+  async function finishImport(firstId: string | null, made: number, students: number, allDone: boolean) {
     await load();
-    setOpenClass(created.id);
-    setTab("classes");
+    if (firstId) {
+      setOpenClass(firstId);
+      setTab("classes");
+    }
+    if (made > 0) {
+      say(made === 1 ? `أُضيف القسم: ${students} تلميذًا` : `أُضيفت ${made} أقسام: ${students} تلميذًا`);
+    }
+    if (allDone) setImporting(false);
   }
 
   /**
@@ -1671,9 +1699,11 @@ export default function AppClient({
           schools={schools}
           defaultSchool={classes[classes.length - 1]?.school_id ?? null}
           onAddSchool={addSchool}
+          online={outbox.online}
           onCreate={async (name, names, schoolId) => {
-            setImporting(false);
-            await createClassWithStudents(name, names, schoolId);
+            const result = await createClassWithStudents(name, names, schoolId);
+            if (result.ok) await finishImport(result.id, 1, result.students, true);
+            return result;
           }}
         />
       )}
