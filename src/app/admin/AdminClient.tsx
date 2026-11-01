@@ -111,6 +111,63 @@ const CONFIRM_BUTTON: Record<Pending["action"], string> = {
   purge: "احذف نهائيًّا الآن",
 };
 
+/**
+ * خروج المشرف بنقرتين: الأولى تُبدّل الزر في مكانه بـ«تأكيد الخروج» و«تراجع» (لا نافذة عائمة،
+ * كبقية تأكيدات اللوحة)، والثانية تُنفّذ. وتزول بعد خمس ثوانٍ إن لم تُؤكَّد، فلا يبقى زرّ
+ * الخروج مسلَّحًا في الشاشة بعد أن يغيّر المشرف رأيه. كان الزر يُنفّذ بنقرة واحدة فتُنهى
+ * الجلسة وتُفقد صلاحية التحقّق الثنائي (12 ساعة) بلمسة خطأ.
+ */
+function LogoutButton({
+  className,
+  confirmClassName,
+  cancelClassName,
+  onConfirm,
+}: {
+  className: string;
+  confirmClassName: string;
+  cancelClassName: string;
+  onConfirm: () => Promise<void>;
+}) {
+  const [armed, setArmed] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (!armed || busy) return;
+    const timer = setTimeout(() => setArmed(false), 5000);
+    return () => clearTimeout(timer);
+  }, [armed, busy]);
+
+  if (!armed) {
+    return (
+      <button type="button" className={className} onClick={() => setArmed(true)}>
+        خروج
+      </button>
+    );
+  }
+  return (
+    <span role="group" aria-label="تأكيد الخروج" style={{ display: "inline-flex", gap: 6, alignItems: "center", justifyContent: "center" }}>
+      <button
+        type="button"
+        className={confirmClassName}
+        disabled={busy}
+        onClick={async () => {
+          setBusy(true);
+          try {
+            await onConfirm();
+          } finally {
+            setBusy(false);
+          }
+        }}
+      >
+        {busy ? "لحظة…" : "تأكيد الخروج"}
+      </button>
+      <button type="button" className={cancelClassName} disabled={busy} onClick={() => setArmed(false)}>
+        تراجع
+      </button>
+    </span>
+  );
+}
+
 export default function AdminClient({
   email,
   initialExpiresAt,
@@ -460,9 +517,7 @@ export default function AdminClient({
         <div className="authbox">
           <h1>لا صلاحية</h1>
           <p className="lead">هذا الحساب ليس حساب المشرف.</p>
-          <button className="btn ghost" onClick={signOut}>
-            خروج
-          </button>
+          <LogoutButton className="btn ghost" confirmClassName="btn danger" cancelClassName="btn ghost" onConfirm={signOut} />
         </div>
       </div>
     );
@@ -483,9 +538,7 @@ export default function AdminClient({
           >
             أعد المحاولة
           </button>
-          <button className="swap" onClick={signOut}>
-            خروج
-          </button>
+          <LogoutButton className="swap" confirmClassName="btn danger" cancelClassName="swap" onConfirm={signOut} />
         </div>
       </div>
     );
@@ -514,9 +567,7 @@ export default function AdminClient({
           <button className="btn" type="submit" disabled={busy || !codeReady(code)}>
             {busy ? "لحظة…" : "تحقّق"}
           </button>
-          <button className="swap" type="button" onClick={signOut}>
-            خروج
-          </button>
+          <LogoutButton className="swap" confirmClassName="btn danger" cancelClassName="swap" onConfirm={signOut} />
         </form>
       </div>
     );
@@ -693,9 +744,7 @@ export default function AdminClient({
             <button className="clearb" onClick={refresh} disabled={refreshing}>
               {refreshing ? "لحظة…" : "حدّث"}
             </button>
-            <button className="clearb" onClick={signOut}>
-              خروج
-            </button>
+            <LogoutButton className="clearb" confirmClassName="clearb danger" cancelClassName="clearb" onConfirm={signOut} />
           </div>
         </div>
       </div>
