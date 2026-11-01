@@ -20,6 +20,18 @@ export function safeNext(value: string | null | undefined): string {
 }
 
 /**
+ * دخول بحساب لم يؤكّد صاحبه بريده. يُعرف برمزه (email_not_confirmed) لا بنصّه وحده، فتُعرض
+ * معه رسالته الصحيحة وزرّ إعادة إرسال التأكيد بدل أن يبقى الأستاذ بلا طريق.
+ */
+export function isEmailNotConfirmed(
+  error: { code?: string | null; message?: string | null } | null | undefined,
+): boolean {
+  if (!error) return false;
+  if (error.code === "email_not_confirmed") return true;
+  return /email not confirmed/i.test(error.message ?? "");
+}
+
+/**
  * وجهة /auth/callback بعد محاولة تبديل الرمز: النجاح إلى وجهته، والحساب الموقوف إلى شرحه،
  * وما سواه إلى «رابط منتهٍ». كان كل فشل يُعامَل رابطًا فاسدًا، فيُقال للموقوف إن رابطه انتهى
  * ويطلب رابطًا بعد رابط بلا جدوى.

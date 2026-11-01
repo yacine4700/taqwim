@@ -317,6 +317,7 @@ export const ACTION_LABEL: Record<string, string> = {
   set_exams: "تعديل بداية الاختبارات",
   set_backup: "تعديل النسخ الاحتياطي",
   admin_purge: "حذف فوري لحساب",
+  purge_unconfirmed: "حذف حساب لم يؤكّد بريده",
 };
 
 export const ACTOR_LABEL: Record<AdminLogRow["actor_kind"], string> = {

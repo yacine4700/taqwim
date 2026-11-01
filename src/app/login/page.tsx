@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import {
   consentProblem,
+  isEmailNotConfirmed,
   signupMetadata,
   translateAuthError as translate,
 } from "@/lib/auth";
@@ -26,6 +27,8 @@ export default function LoginPage() {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [bad, setBad] = useState(false);
+  /* الدخول رُدّ لأن البريد لم يؤكَّد: يظهر معه زرّ إعادة إرسال رسالة التأكيد */
+  const [unconfirmed, setUnconfirmed] = useState(false);
   /* بعد إرسال رسالة (تأكيد الحساب، أو رابط الاستعادة) تُعرض شاشة كاملة لا تنبيه صغير */
   const [sent, setSent] = useState<{ kind: "signup" | "recovery"; email: string } | null>(null);
   /* ثوانٍ تبقت قبل أن يُسمح بإعادة الإرسال (الخادم نفسه يمنع أقل من دقيقة) */
@@ -87,6 +90,7 @@ export default function LoginPage() {
     setBusy(true);
     setMessage("");
     setBad(false);
+    setUnconfirmed(false);
     const supabase = createClient();
 
     if (mode === "forgot") {
@@ -136,6 +140,10 @@ export default function LoginPage() {
         setBad(true);
         // الحظر يُعرف برمزه (user_banned) لا بنصّه وحده: النص إنجليزي وقد يتغيّر
         setMessage(isBannedError(error) ? BANNED_MESSAGE : translate(error.message));
+        if (isEmailNotConfirmed(error)) {
+          setMessage(translate("Email not confirmed"));
+          setUnconfirmed(true);
+        }
       } else {
         router.push("/app");
         router.refresh();
@@ -143,6 +151,23 @@ export default function LoginPage() {
       }
     }
     setBusy(false);
+  }
+
+  /** من رُدّ دخوله لعدم التأكيد: رسالة جديدة، ثم شاشة «تحقّق من بريدك» بمهلتها. */
+  async function resendConfirmation() {
+    setBusy(true);
+    setMessage("");
+    setBad(false);
+    const { error } = await createClient().auth.resend({ type: "signup", email });
+    setBusy(false);
+    if (error) {
+      setBad(true);
+      setMessage(translate(error.message));
+      return;
+    }
+    setUnconfirmed(false);
+    setPassword("");
+    showSent("signup", email);
   }
 
   if (sent) {
@@ -326,6 +351,12 @@ export default function LoginPage() {
           </div>
         )}
 
+        {unconfirmed && mode === "in" && (
+          <button className="btn soft" type="button" disabled={busy} onClick={() => void resendConfirmation()}>
+            {busy ? "لحظة…" : "أعد إرسال رسالة التأكيد"}
+          </button>
+        )}
+
         <button className="btn" type="submit" disabled={busy}>
           {busy
             ? "لحظة…"
@@ -344,6 +375,7 @@ export default function LoginPage() {
               setMode("forgot");
               setMessage("");
               setBad(false);
+              setUnconfirmed(false);
             }}
           >
             نسيت كلمة السر؟
@@ -357,6 +389,7 @@ export default function LoginPage() {
             setMode(mode === "in" ? "up" : "in");
             setMessage("");
             setBad(false);
+            setUnconfirmed(false);
           }}
         >
           {mode === "in" ? "ليس لي حساب بعد" : mode === "up" ? "لي حساب، أريد الدخول" : "رجوع إلى الدخول"}

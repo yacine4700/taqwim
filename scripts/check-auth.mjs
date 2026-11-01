@@ -13,6 +13,12 @@ function safeNext(value) {
   return ok ? value : "/app";
 }
 
+function isEmailNotConfirmed(error) {
+  if (!error) return false;
+  if (error.code === "email_not_confirmed") return true;
+  return /email not confirmed/i.test(error.message ?? "");
+}
+
 function callbackTarget(outcome, next) {
   if (outcome === "ok") return next;
   return outcome === "banned" ? "/login?error=banned" : "/login?error=link";
@@ -112,6 +118,12 @@ eq("غير متطابقتين", passwordProblem("secret1", "secret2"), "الكل
 eq("سليمة", passwordProblem("secret1", "secret1"), null);
 eq("حدّ الطول", passwordProblem("123456", "123456"), null);
 eq("القصر قبل التطابق", passwordProblem("12", "34"), "كلمة السر قصيرة: 6 أحرف على الأقل.");
+
+/* دخول بحساب غير مؤكَّد */
+eq("يُعرف برمزه", isEmailNotConfirmed({ code: "email_not_confirmed", message: "x" }), true);
+eq("وبنصّه إن غاب الرمز", isEmailNotConfirmed({ message: "Email not confirmed" }), true);
+eq("بيانات دخول خاطئة ليست منه", isEmailNotConfirmed({ code: "invalid_credentials", message: "Invalid login credentials" }), false);
+eq("بلا خطأ", isEmailNotConfirmed(null), false);
 
 /* وجهة الرابط بعد تبديل الرمز */
 eq("نجاح: إلى وجهته", callbackTarget("ok", "/reset"), "/reset");
