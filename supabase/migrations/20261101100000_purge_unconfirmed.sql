@@ -1,21 +1,21 @@
--- تنظيف الحسابات التي سجّلت ولم تؤكّد بريدها.
+-- حذف الحسابات التي سجّلت ولم تؤكّد بريدها، بتأكيد المشرف وحده.
 --
--- بعد تفعيل Confirm email، التسجيل يُنشئ صفّه في auth.users فورًا ومعه (بمحفّزي handle_new_user
--- وseed_teacher) صفّ الأستاذ ومعاييره الخمسة ومركّباته الأربعة، ثم لا يدخل صاحبه ولا يُحذف
--- الصفّ: Supabase لا ينظّف غير المؤكَّدين. فتتراكم حسابات لا يملكها أحد، ويبقى بريد كل منها
--- محجوزًا، ويحصيها اللوحة مع الأساتذة.
+-- بعد تفعيل Confirm email يُنشأ صفّ المسجِّل ومعه (بمحفّزي handle_new_user وseed_teacher) صفّ الأستاذ
+-- ومعاييره الخمسة ومركّباته الأربعة فورًا، ثم لا يُحذف إن لم يؤكّد: Supabase لا ينظّف غير المؤكَّدين،
+-- فيبقى بريده محجوزًا وتحصيه اللوحة مع الأساتذة.
 --
--- الحذف بعد 7 أيام من التسجيل، وبشروط كلها معًا (أي شرط يخالفه حسابٌ يُترك):
---   * لا بريد مؤكَّد ولا هاتف، ولم يسجّل دخولًا قطّ.
---   * مزوّده البريد (لا حسابات أخرى).
---   * ليس مشرفًا، وليس عليه طلب حذف، وليس موقوفًا (الإيقاف قرار بشري لا يُمحى بتنظيف).
---   * لا بيانات: لا مؤسسة ولا قسم ولا تلميذ ولا علامة. فلا يضيع بهذا الحذف شيء يملكه أستاذ،
---     حتى لو أخطأ شرط آخر.
--- وحاجز: أكثر من 20 حسابًا في تشغيلة واحدة يعني خللًا لا تنظيفًا، فلا يُحذف شيء ويُكتب تحذير.
+-- لا حذف تلقائي: لا يُحذف حساب إلا حين يضغط المشرف «احذف» في لوحته بعد أن يرى القائمة. ولا يُمسّ
+-- الحذف الليلي (private.purge_deleted_accounts) ولا غيره من الدوال القائمة.
 --
--- يُشغَّل مع الحذف النهائي الليلي (private.purge_deleted_accounts) لا بجدولة جديدة: pg_cron غير
--- مفعَّلة في المشروع، والتشغيل الليلي يأتي بعد نسخة ناجحة ومتحقَّق منها. وخطأ التنظيف لا يعطّل
--- الحذف الأصلي: يُسجَّل تحذيرًا ويمضي. توقيع الدالة وقيمتها المُرجَعة كما كانا.
+-- «قابل للحذف» (تحدّده القاعدة لا الواجهة، وكل الشروط معًا):
+--   * مرّت 7 أيام على التسجيل، ولا بريد ولا هاتف مؤكَّد، ولم يدخل قطّ، ومزوّده البريد.
+--   * ليس مشرفًا، ولا عليه طلب حذف، ولا موقوفًا (الإيقاف قرار بشري لا يمحوه تنظيف).
+--   * لا بيانات: لا مؤسسة ولا قسم ولا تلميذ ولا علامة. فلا يضيع بهذا الحذف شيء يملكه أستاذ.
+--
+-- الحذف يُمرَّر معه العدد الذي رآه المشرف: إن تغيّر (تأكّد حساب في الأثناء، أو سُجّل غيره، أو قفل
+-- صفّه) رُفض ولم يُحذف شيء، فلا يُحذف ما لم يره. وأكثر من 50 حسابًا في المرة يعني خللًا، فيُرفض.
+-- الصلاحية: private.require_admin (مشرف + aal2 + TOTP خلال 12 ساعة). لا رمزًا جديدًا ولا بريدًا
+-- مكتوبًا كالحذف الفوري، لأن ما يُحذف هنا حسابات بلا بيانات لم يستعملها أحد.
 
 alter table private.audit_log drop constraint if exists audit_log_action_check;
 alter table private.audit_log
@@ -23,108 +23,108 @@ alter table private.audit_log
     'disable', 'enable', 'cancel_deletion', 'request_deletion', 'purge',
     'set_term', 'set_backup', 'set_exams', 'admin_purge', 'purge_unconfirmed'));
 
-create function private.purge_unconfirmed_accounts(
-  min_age interval default interval '7 days',
-  max_accounts integer default 20
-) returns integer
+-- القابلون للحذف: تعريف واحد تقرؤه القائمة والحذف معًا، فلا يختلفان.
+create function private.stale_unconfirmed(min_age interval default interval '7 days')
+returns table (id uuid, created_at timestamptz)
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select u.id, u.created_at
+  from auth.users u
+  where u.email_confirmed_at is null
+    and u.phone_confirmed_at is null
+    and u.last_sign_in_at is null
+    and u.banned_until is null
+    and u.created_at < now() - min_age
+    and coalesce(u.raw_app_meta_data ->> 'provider', 'email') = 'email'
+    and not exists (select 1 from private.admins a where a.user_id = u.id)
+    and not exists (select 1 from private.deletion_requests d where d.user_id = u.id)
+    and not exists (select 1 from public.schools x where x.teacher_id = u.id)
+    and not exists (select 1 from public.classes x where x.teacher_id = u.id)
+    and not exists (select 1 from public.students x where x.teacher_id = u.id)
+    and not exists (select 1 from public.records x where x.teacher_id = u.id)
+$$;
+
+-- القائمة: كل من لم يؤكّد بريده (مع الحديثين، للاطلاع)، وأيّهم يُحذف الآن. لا بيانات غير الهويّة والعمر.
+create function public.admin_unconfirmed_accounts()
+returns table (
+  id uuid, email text, full_name text, created_at timestamptz,
+  days_old integer, deletable boolean)
 language plpgsql
 security definer
 set search_path = ''
 as $$
-declare
-  stale uuid[];
-  n integer;
 begin
-  -- for update skip locked: تأكيدٌ يصل أثناء التشغيل يحجز صفّه فيُتخطّى، لا يُحذف حساب يتأكّد الآن.
-  select coalesce(array_agg(s.id order by s.created_at), '{}')
-    into stale
-  from (
-    select u.id, u.created_at
-    from auth.users u
-    where u.email_confirmed_at is null
-      and u.phone_confirmed_at is null
-      and u.last_sign_in_at is null
-      and u.banned_until is null
-      and u.created_at < now() - min_age
-      and coalesce(u.raw_app_meta_data ->> 'provider', 'email') = 'email'
-      and not exists (select 1 from private.admins a where a.user_id = u.id)
-      and not exists (select 1 from private.deletion_requests d where d.user_id = u.id)
-      and not exists (select 1 from public.schools x where x.teacher_id = u.id)
-      and not exists (select 1 from public.classes x where x.teacher_id = u.id)
-      and not exists (select 1 from public.students x where x.teacher_id = u.id)
-      and not exists (select 1 from public.records x where x.teacher_id = u.id)
-    for update of u skip locked
-  ) s;
+  perform private.require_admin();
 
-  n := cardinality(stale);
-  if n = 0 then
-    return 0;
-  end if;
-  if n > max_accounts then
-    raise warning 'refusing to purge % unconfirmed accounts (limit %)', n, max_accounts;
-    return 0;
-  end if;
-
-  -- بلا بريد في السجلّ: الحساب لم يُفعَّل، وبريده معرِّف شخص لم يطلب شيئًا.
-  insert into private.audit_log (actor_kind, action, target_id, detail)
-  select 'system', 'purge_unconfirmed', u.id,
-         jsonb_build_object('created_at', u.created_at, 'min_age', min_age::text)
+  return query
+  select u.id, u.email::text, t.full_name, u.created_at,
+         floor(extract(epoch from (now() - u.created_at)) / 86400)::integer,
+         exists (select 1 from private.stale_unconfirmed() s where s.id = u.id)
   from auth.users u
-  where u.id = any(stale);
-
-  -- الحذف التسلسلي يمحو teachers ومعاييرها ومركّباتها التي أنشأها المحفّز.
-  delete from auth.users where id = any(stale);
-  return n;
+  left join public.teachers t on t.id = u.id
+  where u.email_confirmed_at is null
+    and u.phone_confirmed_at is null
+    and not exists (select 1 from private.admins a where a.user_id = u.id)
+  order by u.created_at;
 end;
 $$;
 
--- الدالة نفسها كما في 20261022130000، والجديد استدعاء التنظيف في أولها داخل كتلة استثناء.
-create or replace function private.purge_deleted_accounts(max_accounts integer default 5)
+-- الحذف: يُرجع عدد المحذوفين. expected = ما رآه المشرف قابلًا للحذف.
+create function public.admin_purge_unconfirmed(expected integer)
 returns integer
 language plpgsql
 security definer
 set search_path = ''
 as $$
 declare
-  due uuid[];
+  me uuid := private.require_admin();
+  stale uuid[];
   n integer;
 begin
-  begin
-    perform private.purge_unconfirmed_accounts();
-  exception when others then
-    raise warning 'purge_unconfirmed_accounts failed: % (%)', sqlerrm, sqlstate;
-  end;
+  if expected is null or expected < 1 then
+    raise exception 'invalid arguments' using errcode = '22023';
+  end if;
+  if expected > 50 then
+    raise exception 'too_many' using errcode = 'P0001',
+      hint = 'أكثر من 50 حسابًا في المرة: راجعها قبل الحذف';
+  end if;
 
-  -- for update: إلغاء يصل أثناء التشغيل ينتظر حتى ينتهي، وإلغاء سبقه لا يُرى هنا.
-  -- بدون القفل كان يمكن أن يُلغي الأستاذ طلبه بين القراءة والحذف فيُحذف حسابه رغم الإلغاء.
-  select coalesce(array_agg(s.user_id order by s.purge_after), '{}')
-    into due
+  -- القفل مع تخطّي المقفول: تأكيدٌ يصل أثناء التشغيل يحجز صفّه فيُتخطّى (فيختلف العدد ويُرفض الحذف).
+  -- وشرطا التأكيد والدخول يُعادان بعد القفل، فحسابٌ تأكّد بين الاختيار والقفل لا يُحذف.
+  select coalesce(array_agg(s.id order by s.created_at), '{}')
+    into stale
   from (
-    select d.user_id, d.purge_after
-    from private.deletion_requests d
-    where d.purge_after <= now()
-    for update
+    select c.id, c.created_at
+    from private.stale_unconfirmed() c
+    join auth.users u on u.id = c.id
+    where u.email_confirmed_at is null and u.last_sign_in_at is null
+    for update of u skip locked
   ) s;
 
-  n := cardinality(due);
-  if n = 0 then
-    return 0;
-  end if;
-  -- حاجز: عدد غير معتاد يستدعي نظر إنسان، فلا يُحذف شيء.
-  if n > max_accounts then
-    raise exception 'refusing to purge % accounts (limit %)', n, max_accounts using errcode = 'P0001';
+  n := cardinality(stale);
+  if n <> expected then
+    raise exception 'unconfirmed_changed' using errcode = 'P0001',
+      hint = 'تغيّرت القائمة منذ أن رأيتها';
   end if;
 
-  insert into private.audit_log (actor_kind, action, target_id, detail)
-  select 'system', 'purge', x, jsonb_build_object('requested_at', d.requested_at, 'purge_after', d.purge_after)
-  from unnest(due) x join private.deletion_requests d on d.user_id = x;
+  -- بلا بريد في السجلّ: الحساب لم يُفعَّل، وبريده معرِّف شخص لم يطلب شيئًا.
+  insert into private.audit_log (actor_kind, actor_id, action, target_id, detail)
+  select 'admin', me, 'purge_unconfirmed', u.id,
+         jsonb_build_object('created_at', u.created_at)
+  from auth.users u
+  where u.id = any(stale);
 
-  -- الحذف التسلسلي الحالي يمحو teachers وكل ما يتبعها، وطلب الحذف نفسه.
-  delete from auth.users where id = any(due);
+  -- الحذف التسلسلي نفسه المستعمل في بقية الحذف: يمحو teachers ومعاييرها ومركّباتها التي أنشأها المحفّز.
+  delete from auth.users where id = any(stale);
   return n;
 end;
 $$;
 
--- لا يستدعيها أحد مباشرة: تُستدعى من الدالة أعلاه (security definer بمالكها).
-revoke all on function private.purge_unconfirmed_accounts(interval, integer)
+revoke all on function private.stale_unconfirmed(interval),
+  public.admin_unconfirmed_accounts(), public.admin_purge_unconfirmed(integer)
   from public, anon, authenticated, service_role;
+grant execute on function public.admin_unconfirmed_accounts(), public.admin_purge_unconfirmed(integer)
+  to authenticated;

@@ -30,6 +30,66 @@ export type AdminLogRow = {
   detail: ({ reason?: string; email_masked?: string; students?: number; classes?: number; records?: number } & import("./adminTerms").TermLogDetail & import("./adminBackup").BackupLogDetail) | null;
 };
 
+/**
+ * حساب سجّل ولم يؤكّد بريده (admin_unconfirmed_accounts). `deletable` تحدّده القاعدة لا الواجهة:
+ * مرّت 7 أيام، ولم يدخل قطّ، وليس موقوفًا ولا عليه طلب حذف ولا فيه بيانات.
+ */
+export type AdminUnconfirmed = {
+  id: string;
+  email: string | null;
+  full_name: string | null;
+  created_at: string;
+  days_old: number;
+  deletable: boolean;
+};
+
+/** كما في القاعدة: أيام الانتظار قبل أن يصير الحساب غير المؤكَّد قابلًا للحذف، وأقصى عدد في المرة. */
+export const UNCONFIRMED_MIN_DAYS = 7;
+export const UNCONFIRMED_MAX_BATCH = 50;
+
+/** ما تردّه القاعدة، مقروءًا بحذر: غير القائمة تُعامل كقائمة فارغة، وأعداد الأيام تُحوَّل إلى أرقام. */
+export function parseUnconfirmed(data: unknown): AdminUnconfirmed[] {
+  if (!Array.isArray(data)) return [];
+  return data
+    .filter((r): r is Record<string, unknown> => !!r && typeof r === "object" && typeof (r as Record<string, unknown>).id === "string")
+    .map((r) => ({
+      id: String(r.id),
+      email: typeof r.email === "string" ? r.email : null,
+      full_name: typeof r.full_name === "string" && r.full_name ? r.full_name : null,
+      created_at: typeof r.created_at === "string" ? r.created_at : "",
+      days_old: Math.max(0, Number(r.days_old) || 0),
+      deletable: r.deletable === true,
+    }));
+}
+
+export function unconfirmedCounts(rows: readonly AdminUnconfirmed[]): { total: number; deletable: number } {
+  return { total: rows.length, deletable: rows.filter((r) => r.deletable).length };
+}
+
+/** «اليوم»، «منذ يوم»، «منذ يومين»، «منذ 5 أيام»، «منذ 12 يومًا». */
+export function unconfirmedAge(days: number): string {
+  if (days <= 0) return "اليوم";
+  if (days === 1) return "منذ يوم";
+  if (days === 2) return "منذ يومين";
+  return days <= 10 ? `منذ ${days} أيام` : `منذ ${days} يومًا`;
+}
+
+/** لماذا لا يُحذف هذا الحساب بعد؟ للحديث: كم بقي. ولغيره: أنه محميّ (بيانات أو إيقاف أو طلب حذف). */
+export function unconfirmedWhyKept(row: AdminUnconfirmed): string {
+  if (row.deletable) return "";
+  return row.days_old < UNCONFIRMED_MIN_DAYS
+    ? `حديث: يُحذف بعد ${UNCONFIRMED_MIN_DAYS - row.days_old} ${UNCONFIRMED_MIN_DAYS - row.days_old === 1 ? "يوم" : "أيام"}`
+    : "محميّ: فيه بيانات أو موقوف أو عليه طلب حذف";
+}
+
+/** خطأ حذف غير المؤكَّدين بعبارة المشرف، أو null إن لم يكن من أخطائه (فيُعالَج كبقية أخطاء اللوحة). */
+export function unconfirmedErrorMessage(error: { code?: string | null; message?: string | null } | null | undefined): string | null {
+  const m = error?.message ?? "";
+  if (m.includes("unconfirmed_changed")) return "تغيّرت القائمة منذ أن رأيتها (تأكّد حساب أو سُجّل غيره). حدّثتُها، فراجعها ثم أعد المحاولة. لم يُحذف شيء.";
+  if (m.includes("too_many")) return `أكثر من ${UNCONFIRMED_MAX_BATCH} حسابًا في المرة. هذا غير معتاد، فراجع القائمة قبل الحذف. لم يُحذف شيء.`;
+  return null;
+}
+
 /** أقصى طول للسبب. القاعدة تقصّ عند هذا الحدّ نفسه. */
 export const REASON_MAX = 300;
 

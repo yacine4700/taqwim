@@ -6,6 +6,8 @@ import {
   msLeft, leftLabel, daysLeft, summarize, filterTeachers, adminProblemMessage,
   countWord, dueWord, attentionItems,
   parseTab, agoLabel, sortTeachers, statusCounts, filterLog, nextLogLimit, LOG_MAX,
+  parseUnconfirmed, unconfirmedCounts, unconfirmedAge, unconfirmedWhyKept, unconfirmedErrorMessage,
+  UNCONFIRMED_MIN_DAYS, ACTION_LABEL,
 } from "../src/lib/admin.ts";
 import {
   groupByYear, closesOn, graceWord, nextYearLabel, suggestYear, validateTerm, termErrorMessage, calendarIssues, termLogSummary, phaseOn, editEffect,
@@ -365,6 +367,50 @@ ok("المزيد من السجلّ: دفعات من 60 ولا يتجاوز حد�
   assert.equal(nextLogLimit(60), 120);
   assert.equal(nextLogLimit(180), LOG_MAX);
   assert.equal(nextLogLimit(LOG_MAX), LOG_MAX);
+});
+
+
+/* حسابات لم تؤكّد بريدها */
+const UNC = [
+  { id: "1", email: "a@x.dz", full_name: null, created_at: "2026-10-20T10:00:00Z", days_old: 12, deletable: true },
+  { id: "2", email: "b@x.dz", full_name: "ب", created_at: "2026-10-30T10:00:00Z", days_old: "2", deletable: false },
+  { id: "3", email: null, full_name: "", created_at: "2026-10-01T10:00:00Z", days_old: 30, deletable: false },
+];
+ok("parseUnconfirmed: غير القائمة ⇒ فارغة، وأعداد الأيام أرقام", () => {
+  for (const v of [null, undefined, 5, "x", {}]) assert.deepEqual(parseUnconfirmed(v), []);
+  const rows = parseUnconfirmed(UNC);
+  assert.equal(rows.length, 3);
+  assert.equal(rows[1].days_old, 2);
+  assert.equal(rows[2].full_name, null);
+  assert.deepEqual(parseUnconfirmed([null, 1, { id: 7 }, { id: "z" }]).map((r) => r.id), ["z"]);
+});
+ok("unconfirmedCounts: الكل والقابل للحذف", () =>
+  assert.deepEqual(unconfirmedCounts(parseUnconfirmed(UNC)), { total: 3, deletable: 1 }));
+ok("unconfirmedAge: كلمات الأيام", () => {
+  assert.equal(unconfirmedAge(0), "اليوم");
+  assert.equal(unconfirmedAge(1), "منذ يوم");
+  assert.equal(unconfirmedAge(2), "منذ يومين");
+  assert.equal(unconfirmedAge(5), "منذ 5 أيام");
+  assert.equal(unconfirmedAge(12), "منذ 12 يومًا");
+});
+ok("unconfirmedWhyKept: الحديث بما بقي، والقديم المحميّ بسببه، والقابل بلا شيء", () => {
+  const [a, b, c] = parseUnconfirmed(UNC);
+  assert.equal(unconfirmedWhyKept(a), "");
+  assert.equal(unconfirmedWhyKept(b), `حديث: يُحذف بعد ${UNCONFIRMED_MIN_DAYS - 2} أيام`);
+  assert.ok(unconfirmedWhyKept(c).startsWith("محميّ"));
+  assert.equal(unconfirmedWhyKept({ ...b, days_old: 6 }), "حديث: يُحذف بعد 1 يوم".replace("1 يوم", "1 يوم"));
+});
+ok("unconfirmedErrorMessage: تغيّر القائمة والحدّ، وغيرهما null فيُعالج كبقية الأخطاء", () => {
+  assert.ok(unconfirmedErrorMessage({ message: "unconfirmed_changed" }).includes("لم يُحذف شيء"));
+  assert.ok(unconfirmedErrorMessage({ message: "too_many" }).includes("50"));
+  assert.equal(unconfirmedErrorMessage({ code: "42501", message: "mfa_required" }), null);
+  assert.equal(unconfirmedErrorMessage(null), null);
+});
+ok("فعل السجلّ purge_unconfirmed له تسمية عربية، ويقع في «الحسابات» لا «التشغيل الليلي»", () => {
+  assert.equal(ACTION_LABEL.purge_unconfirmed, "حذف حساب لم يؤكّد بريده");
+  const row = { at: "2026-11-01T10:00:00Z", actor_kind: "admin", action: "purge_unconfirmed", target_email: null, detail: { created_at: "x" } };
+  assert.equal(filterLog([row], "accounts").length, 1);
+  assert.equal(filterLog([row], "system").length, 0);
 });
 
 console.log(`${n} اختبارًا نجحت`);

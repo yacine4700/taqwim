@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { algiersToday } from "@/lib/terms";
 import BackupPanel from "./BackupPanel";
+import UnconfirmedPanel from "./UnconfirmedPanel";
 import { backupLogSummary } from "@/lib/adminBackup";
 import {
   GRACE_DEFAULT,
@@ -48,6 +49,9 @@ import {
   canConfirmPurge,
   purgeErrorMessage,
   purgeLogSummary,
+  parseUnconfirmed,
+  unconfirmedErrorMessage,
+  type AdminUnconfirmed,
   PURGE_REASON_MIN,
   sortTeachers,
   statusCounts,
@@ -179,6 +183,8 @@ export default function AdminClient({
   const [supabase] = useState(() => createClient());
   const [phase, setPhase] = useState<Phase>("loading");
   const [teachers, setTeachers] = useState<AdminTeacher[]>([]);
+  /* من سجّل ولم يؤكّد بريده: ثانوية كالسجلّ، فالدالة قد لا تكون رُحِّلت بعد فتبقى القائمة فارغة */
+  const [unconfirmed, setUnconfirmed] = useState<AdminUnconfirmed[]>([]);
   const [log, setLog] = useState<AdminLogRow[]>([]);
   const [expiresAt, setExpiresAt] = useState<string | null>(initialExpiresAt);
   const [now, setNow] = useState(() => Date.now());
@@ -248,13 +254,14 @@ export default function AdminClient({
     setExpiresAt(state.mfaExpiresAt);
     if (!state.ready) return setPhase("reverify");
 
-    const [list, recent, cal] = await Promise.all([
+    const [list, recent, cal, unconf] = await Promise.all([
       supabase.rpc("admin_list_teachers"),
       supabase.rpc("admin_log_recent", { max_rows: logLimit }),
       supabase
         .from("term_calendar")
         .select("school_year,term,starts_on,ends_on,grace_days,exams_from")
         .order("starts_on"),
+      supabase.rpc("admin_unconfirmed_accounts"),
     ]);
     if (!alive.current) return;
     if (list.error) {
@@ -263,6 +270,7 @@ export default function AdminClient({
       return;
     }
     setTeachers((list.data ?? []) as AdminTeacher[]);
+    setUnconfirmed(unconf.error ? [] : parseUnconfirmed(unconf.data));
     // السجلّ ثانوي: فشله لا يُسقط القائمة، لكن يُقال.
     setLog(recent.error ? [] : ((recent.data ?? []) as AdminLogRow[]));
     // الرزنامة ثانوية كالسجلّ: فشلها لا يُسقط القائمة (الجدول قد لا يكون رُحِّل بعد).
@@ -332,6 +340,30 @@ export default function AdminClient({
     setDone(
       pending.action === "disable" ? "أُوقف الحساب." : pending.action === "enable" ? "أُعيد تفعيل الحساب." : "أُلغي طلب الحذف.",
     );
+    await load();
+  }
+
+  /**
+   * حذف من لم يؤكّد بريده: العدد الذي رآه المشرف يُمرَّر إلى القاعدة، فترفض إن تغيّرت القائمة بعده
+   * ولا يُحذف ما لم يره. تُعاد القائمة بعد كل محاولة، ناجحة أو لا.
+   */
+  async function purgeUnconfirmed(expected: number) {
+    setBusy(true);
+    setMessage("");
+    setDone("");
+    const { data, error } = await supabase.rpc("admin_purge_unconfirmed", { expected });
+    setBusy(false);
+    if (error) {
+      const own = unconfirmedErrorMessage(error);
+      if (own) {
+        setMessage(own);
+        await load();
+        setMessage(own);
+      } else handleProblem(error);
+      return;
+    }
+    const n = typeof data === "number" ? data : expected;
+    setDone(n === 1 ? "حُذف حساب لم يؤكّد بريده." : `حُذف ${n} حسابات لم تؤكّد بريدها.`);
     await load();
   }
 
@@ -817,6 +849,7 @@ export default function AdminClient({
       <div className="adm-content">
       {tab === "accounts" && (
         <>
+          <UnconfirmedPanel rows={unconfirmed} busy={busy} onPurge={(n) => void purgeUnconfirmed(n)} />
           <input
             className="adm-search"
             value={query}

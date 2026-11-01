@@ -1,17 +1,27 @@
--- اختبارات ترحيل 20261101100000 (تنظيف الحسابات غير المؤكَّدة).
+-- اختبارات ترحيل 20261101100000 (حذف الحسابات غير المؤكَّدة بتأكيد المشرف).
 -- يُشغَّل بدور supabase_admin بعد ترحيل 20261022130000 وهذا الترحيل، وبعد seed.sql.
--- ملاحظة: حسابات seed.sql (A وB والمشرف M) بلا email_confirmed_at، فهي مرشَّحة بالعمر وحده،
--- وتحميها هنا شروط البيانات والإشراف، وهذا من صلب الاختبار.
+-- حسابات seed.sql (A وB والمشرف M) بلا email_confirmed_at، فهي مرشَّحة بالعمر وحده، وتحميها هنا شروط
+-- البيانات والإشراف، وهذا من صلب الاختبار.
 \set ON_ERROR_STOP 1
 \set A '''aaaaaaaa-0000-4000-8000-00000000000a'''
 \set B '''bbbbbbbb-0000-4000-8000-00000000000b'''
 \set M '''eeeeeeee-0000-4000-8000-00000000000e'''
+\set sM '''5e550000-0000-4000-8000-0000000000e1'''
+\set sA '''5e550000-0000-4000-8000-0000000000a1'''
 
 truncate tests.results;
 insert into private.admins (user_id, note) values (:M, 'test') on conflict do nothing;
+update auth.users set created_at = now() - interval '10 days' where id = :M;
 
--- العمر: كل الحسابات الأقدم من 7 أيام
-update auth.users set created_at = now() - interval '10 days' where id in (:M);
+create function tests.err(stmt text) returns text language plpgsql as $$
+begin execute stmt; return 'no error';
+exception when others then return sqlstate || ' ' || sqlerrm; end $$;
+
+-- رمز TOTP أُدخل قبل n دقيقة
+create function tests.totp_ago(mins numeric) returns void language sql as $$
+  update auth.mfa_amr_claims set updated_at = now() - make_interval(secs => mins * 60)
+  where session_id = '5e550000-0000-4000-8000-0000000000e1' and authentication_method = 'totp';
+$$;
 
 create function tests.mk(n int, age interval, patch text default '')
 returns uuid language plpgsql as $$
@@ -23,32 +33,93 @@ begin
   return id;
 end $$;
 
--- 1: قديم وغير مؤكَّد وبلا بيانات → يُحذف
 select tests.mk(1, interval '10 days') as u1 \gset
--- 2: حديث (يومان) → يبقى
 select tests.mk(2, interval '2 days') as u2 \gset
--- 3: قديم لكن بريده مؤكَّد → يبقى
 select tests.mk(3, interval '10 days', 'email_confirmed_at = now()') as u3 \gset
--- 4: قديم لكنه سجّل دخولًا مرة → يبقى
 select tests.mk(4, interval '10 days', 'last_sign_in_at = now()') as u4 \gset
--- 5: قديم وموقوف → يبقى (الإيقاف قرار بشري)
 select tests.mk(5, interval '10 days', 'banned_until = now() + interval ''100 years''') as u5 \gset
--- 6: قديم وله مؤسسة → يبقى (بيانات)
 select tests.mk(6, interval '10 days') as u6 \gset
 insert into public.schools (teacher_id, name) values (:'u6', 'ثانوية');
--- 7: قديم وعليه طلب حذف → يبقى
 select tests.mk(7, interval '10 days') as u7 \gset
 insert into private.deletion_requests (user_id, requested_at, purge_after) values (:'u7', now() - interval '1 day', now() + interval '6 days');
--- 9: قديم بمزوّد آخر → يبقى
 select tests.mk(9, interval '10 days', 'raw_app_meta_data = ''{"provider":"google"}''') as u9 \gset
 
 select tests.fp(:A) as fp_a0 \gset
 select tests.fp(:B) as fp_b0 \gset
+select count(*) as log0 from private.audit_log \gset
 
 -- ============================================================
--- 1) التنظيف
+-- 1) من يستطيع
 -- ============================================================
-select tests.ok('أول تشغيل يحذف حسابًا واحدًا فقط', private.purge_unconfirmed_accounts() = 1);
+select tests.totp_ago(0);
+select tests.claims(:A, :sA, 'aal2');
+set role authenticated;
+select tests.ok('أستاذ (ولو aal2) لا يرى القائمة: forbidden',
+  tests.err($$select * from public.admin_unconfirmed_accounts()$$) = '42501 forbidden');
+select tests.ok('ولا يحذف: forbidden', tests.err($$select public.admin_purge_unconfirmed(1)$$) = '42501 forbidden');
+select tests.claims(:M, :sM, 'aal1');
+select tests.ok('المشرف بجلسة aal1: mfa_required للقائمة',
+  tests.err($$select * from public.admin_unconfirmed_accounts()$$) = '42501 mfa_required');
+select tests.ok('وللحذف', tests.err($$select public.admin_purge_unconfirmed(1)$$) = '42501 mfa_required');
+reset role;
+set role anon;
+select tests.ok('anon لا يستدعي', tests.err($$select public.admin_purge_unconfirmed(1)$$) like '42501%');
+reset role;
+select tests.totp_ago(13 * 60);
+select tests.claims(:M, :sM, 'aal2');
+set role authenticated;
+select tests.ok('رمز مضى عليه أكثر من 12 ساعة: mfa_required', tests.err($$select public.admin_purge_unconfirmed(1)$$) = '42501 mfa_required');
+reset role;
+select tests.totp_ago(0);
+select tests.ok('كل المرفوضات لم تمسّ شيئًا ولم تُسجَّل',
+  (select count(*) from auth.users where id = :'u1') = 1 and (select count(*) from private.audit_log) = :log0);
+
+-- ============================================================
+-- 2) القائمة
+-- ============================================================
+select tests.claims(:M, :sM, 'aal2');
+set role authenticated;
+select count(*) filter (where deletable) as n_del, count(*) as n_all,
+       bool_or(id = :'u2' and not deletable) as u2_listed_not_deletable,
+       bool_or(id = :'u1' and deletable) as u1_deletable,
+       bool_or(id = :M) as admin_listed,
+       bool_or(id = :'u3') as confirmed_listed,
+       bool_or(id = :A and not deletable) as a_not_deletable
+from public.admin_unconfirmed_accounts() \gset
+reset role;
+select tests.ok('القابل للحذف واحد فقط (u1)', :n_del = 1 and :'u1_deletable' = 't');
+select tests.ok('الحديث (يومان) يُعرض ولا يُحذف', :'u2_listed_not_deletable' = 't');
+select tests.ok('المؤكَّد والمشرف لا يظهران في القائمة', :'confirmed_listed' = 'f' and :'admin_listed' = 'f');
+select tests.ok('A (قديم بلا تأكيد وعنده بيانات) يظهر ولا يُحذف', :'a_not_deletable' = 't');
+select tests.ok('أعداد القائمة: كل غير المؤكَّدين غير المشرف (u1 u2 u4 u5 u6 u7 u9 وA وB = 9)', :n_all = 9, :n_all::text);
+
+-- ============================================================
+-- 3) الحذف: لا يحذف ما لم يره المشرف
+-- ============================================================
+select tests.claims(:M, :sM, 'aal2');
+set role authenticated;
+select tests.ok('العدد غير المطابق (2 والقابل 1): unconfirmed_changed',
+  tests.err($$select public.admin_purge_unconfirmed(2)$$) = 'P0001 unconfirmed_changed');
+select tests.ok('عدد صفر مرفوض', tests.err($$select public.admin_purge_unconfirmed(0)$$) = '22023 invalid arguments');
+select tests.ok('فوق الحدّ مرفوض', tests.err($$select public.admin_purge_unconfirmed(51)$$) = 'P0001 too_many');
+reset role;
+select tests.ok('لم يُحذف شيء ولم يُسجَّل', (select count(*) from auth.users where id = :'u1') = 1 and (select count(*) from private.audit_log) = :log0);
+
+-- حساب يتأكّد بعد أن رآه المشرف قابلًا للحذف: يُرفض الحذف ويبقى الحساب
+select tests.mk(10, interval '10 days') as u10 \gset
+update auth.users set email_confirmed_at = now() where id = :'u10';
+select tests.claims(:M, :sM, 'aal2');
+set role authenticated;
+select tests.ok('تأكّد حساب بعد القائمة: العدد 2 لم يعد صحيحًا', tests.err($$select public.admin_purge_unconfirmed(2)$$) = 'P0001 unconfirmed_changed');
+reset role;
+select tests.ok('والمؤكَّد باقٍ', exists (select 1 from auth.users where id = :'u10'));
+
+-- الحذف الصحيح
+select tests.claims(:M, :sM, 'aal2');
+set role authenticated;
+select public.admin_purge_unconfirmed(1) as purged \gset
+reset role;
+select tests.ok('حُذف واحد', :purged = 1);
 select tests.ok('القديم غير المؤكَّد حُذف', not exists (select 1 from auth.users where id = :'u1'));
 select tests.ok('وحُذف معه صفّ الأستاذ ومعاييره ومركّباته (لا يتيم)',
   (select count(*) from public.teachers where id = :'u1')
@@ -62,64 +133,35 @@ select tests.ok('صاحب البيانات يبقى (مؤسسة)', exists (selec
 select tests.ok('من عليه طلب حذف يبقى', exists (select 1 from auth.users where id = :'u7'));
 select tests.ok('مزوّد غير البريد يبقى', exists (select 1 from auth.users where id = :'u9'));
 select tests.ok('المشرف يبقى رغم أنه بلا تأكيد وقديم', exists (select 1 from auth.users where id = :M));
-select tests.ok('A وB (قديمان بلا تأكيد لكن عندهما أقسام وعلامات) يبقيان وبياناتهما كما هي',
+select tests.ok('A وB يبقيان وبياناتهما كما هي',
   tests.fp(:A) = :'fp_a0' and tests.fp(:B) = :'fp_b0'
   and exists (select 1 from auth.users where id = :A) and exists (select 1 from auth.users where id = :B));
-select tests.ok('تشغيل ثانٍ لا يحذف شيئًا', private.purge_unconfirmed_accounts() = 0);
 
 -- ============================================================
--- 2) السجلّ: فعل خاص، بلا بريد
+-- 4) السجلّ: فعل خاص، ومن فعل، بلا بريد
 -- ============================================================
-select tests.ok('سُجّل فعل purge_unconfirmed للمحذوف',
-  (select count(*) from private.audit_log where action = 'purge_unconfirmed' and target_id = :'u1' and actor_kind = 'system') = 1);
+select tests.ok('سُجّل مرة واحدة بالفعل purge_unconfirmed ومن فعل',
+  (select count(*) from private.audit_log) = :log0 + 1
+  and (select (action, actor_kind, actor_id, target_id) = ('purge_unconfirmed', 'admin', :M::uuid, :'u1'::uuid)
+       from private.audit_log order by id desc limit 1));
 select tests.ok('السجلّ بلا بريد ولا اسم',
-  (select detail::text from private.audit_log where action = 'purge_unconfirmed' and target_id = :'u1') !~ '(@|حساب)');
-
--- ============================================================
--- 3) الحاجز: أكثر من الحدّ لا يُحذف منه شيء
--- ============================================================
-select tests.mk(20, interval '9 days') as v1 \gset
-select tests.mk(21, interval '9 days') as v2 \gset
-select tests.mk(22, interval '9 days') as v3 \gset
-select tests.ok('ثلاثة مرشَّحين والحدّ اثنان: يرفض ولا يحذف', private.purge_unconfirmed_accounts(interval '7 days', 2) = 0);
-select tests.ok('الثلاثة باقون', (select count(*) from auth.users where id in (:'v1', :'v2', :'v3')) = 3);
-select tests.ok('وبالحدّ الكافي يُحذفون', private.purge_unconfirmed_accounts(interval '7 days', 3) = 3);
-
--- ============================================================
--- 4) الصلاحيات: لا يستدعيها غير مالكها
--- ============================================================
-select tests.claims(:A, null);
+  (select detail::text from private.audit_log order by id desc limit 1) !~ '(@|حساب)');
+select tests.claims(:M, :sM, 'aal2');
 set role authenticated;
-select tests.fails('الأستاذ لا يستدعي دالة التنظيف', 'select private.purge_unconfirmed_accounts()', '42501');
-reset role;
-set role taqwim_purger;
-select tests.fails('دور الحذف الليلي لا يستدعيها مباشرة', 'select private.purge_unconfirmed_accounts()', '42501');
+select tests.ok('إعادة الحذف بعد أن لم يبق قابل: unconfirmed_changed', tests.err($$select public.admin_purge_unconfirmed(1)$$) = 'P0001 unconfirmed_changed');
 reset role;
 
 -- ============================================================
--- 5) التكامل مع الحذف الليلي
+-- 5) لا أثر على الحذف الليلي
 -- ============================================================
-select tests.mk(30, interval '12 days') as w1 \gset
+select tests.ok('الحذف الليلي كما كان (لا ذكر للتنظيف فيه)',
+  (select prosrc not like '%unconfirmed%' from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+   where n.nspname = 'private' and p.proname = 'purge_deleted_accounts'));
 set role taqwim_purger;
-select tests.ok('الحذف الليلي يرجع عدد طلبات الحذف لا التنظيف (لا طلب مستحق: 0)', private.purge_deleted_accounts() = 0);
+select tests.ok('وصاحبه لا يستدعي دالة المشرف ولا التعريف',
+  tests.err($$select public.admin_purge_unconfirmed(1)$$) like '42501%'
+  and tests.err($$select * from private.stale_unconfirmed()$$) like '42501%');
 reset role;
-select tests.ok('وقد نظّف الحساب غير المؤكَّد في طريقه', not exists (select 1 from auth.users where id = :'w1'));
-
--- طلب حذف مستحق + حساب غير مؤكَّد يفشل حذفه: الحذف الأصلي لا يتعطّل
-select tests.mk(31, interval '12 days') as x1 \gset
-select tests.mk(32, interval '12 days') as dueu \gset
-insert into private.deletion_requests (user_id, requested_at, purge_after)
-values (:'dueu', now() - interval '8 days', now() - interval '1 day');
-create function tests.block_x1() returns trigger language plpgsql as $$
-begin
-  if old.id = 'c0ffee00-0000-4000-8000-000000000031'::uuid then raise exception 'blocked for test'; end if;
-  return old;
-end $$;
-create trigger trg_block_x1 before delete on auth.users for each row execute function tests.block_x1();
-select tests.ok('خطأ في التنظيف لا يعطّل الحذف الأصلي: حُذف الحساب المستحق (1)', private.purge_deleted_accounts() = 1);
-select tests.ok('والحساب المستحق حُذف فعلًا', not exists (select 1 from auth.users where id = :'dueu'));
-select tests.ok('وغير المؤكَّد الذي فشل حذفه باقٍ (لم يُمسّ)', exists (select 1 from auth.users where id = :'x1'));
-drop trigger trg_block_x1 on auth.users;
 
 -- ============================================================
 \pset format aligned

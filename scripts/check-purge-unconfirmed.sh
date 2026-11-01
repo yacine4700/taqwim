@@ -26,13 +26,14 @@ as postgres --single-transaction -f "$PRE"
 as postgres --single-transaction -f "$MIG"
 as supabase_admin -f "$T/purge_unconfirmed.test.sql"
 
-echo "== التراجع يعيد الحذف الليلي كما كان ويزيل الدالة"
-as supabase_admin -At -c "insert into private.audit_log (actor_kind, action, target_id) values ('system', 'purge_unconfirmed', 'c0ffee00-0000-4000-8000-000000000099')" >/dev/null
+echo "== التراجع يزيل الدالتين ويُبقي الحذف الليلي كما هو"
+as supabase_admin -At -c "insert into private.audit_log (actor_kind, action, target_id) values ('admin', 'purge_unconfirmed', 'c0ffee00-0000-4000-8000-000000000099')" >/dev/null
+before=$(as supabase_admin -At -c "select md5(prosrc) from pg_proc where proname = 'purge_deleted_accounts'")
 as postgres --single-transaction -f "$DOWN"
-left=$(as supabase_admin -At -c "select count(*) from pg_proc where proname = 'purge_unconfirmed_accounts'")
-[ "$left" = "0" ] && echo "ok  دالة التنظيف أُزيلت" || { echo "FAIL: بقيت دالة التنظيف"; exit 1; }
-old=$(as supabase_admin -At -c "select prosrc like '%purge_unconfirmed%' from pg_proc where proname = 'purge_deleted_accounts'")
-[ "$old" = "f" ] && echo "ok  الحذف الليلي عاد إلى تعريفه السابق" || { echo "FAIL: لم يعد"; exit 1; }
+left=$(as supabase_admin -At -c "select count(*) from pg_proc where proname in ('stale_unconfirmed','admin_unconfirmed_accounts','admin_purge_unconfirmed')")
+[ "$left" = "0" ] && echo "ok  لا دالة باقية" || { echo "FAIL: بقي $left"; exit 1; }
+after=$(as supabase_admin -At -c "select md5(prosrc) from pg_proc where proname = 'purge_deleted_accounts'")
+[ "$before" = "$after" ] && echo "ok  الحذف الليلي لم يُمسّ" || { echo "FAIL: تغيّر الحذف الليلي"; exit 1; }
 conv=$(as supabase_admin -At -c "select count(*) from private.audit_log where action = 'purge' and detail ->> 'was' = 'purge_unconfirmed'")
 [ "$conv" -ge 1 ] && echo "ok  سطور السجلّ حُوّلت إلى purge ولم تُحذف" || { echo "FAIL: سجلّ"; exit 1; }
 as postgres --single-transaction -f "$MIG" && echo "ok  الترحيل يُطبَّق من جديد بعد التراجع"
