@@ -1700,11 +1700,9 @@ export default function AppClient({
           defaultSchool={classes[classes.length - 1]?.school_id ?? null}
           onAddSchool={addSchool}
           online={outbox.online}
-          onCreate={async (name, names, schoolId) => {
-            const result = await createClassWithStudents(name, names, schoolId);
-            if (result.ok) await finishImport(result.id, 1, result.students, true);
-            return result;
-          }}
+          existingNames={classes.map((c) => c.name)}
+          onCreate={createClassWithStudents}
+          onFinish={finishImport}
         />
       )}
 

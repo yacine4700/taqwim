@@ -6,6 +6,10 @@
  * لسبب واحد: مفتاح Gemini سرّ، ولو وُضع في صفحة تُحمَّل على الهاتف لقرأه
  * كل من فتح الصفحة واستُنزف حساب الأستاذ.
  *
+ * وللملفات بابٌ ثانٍ (sheets): الواجهة تقرأ ما تفهمه الشفرة من أوراق Excel
+ * بنفسها، وما عجزت عنه ورقةٌ بعينها يصل هنا نصًّا فيقرؤه Gemini. الصورة
+ * تأتي بابًا أول لأن الشفرة لا تقرأ الصور.
+ *
  * ولا يُستجاب إلا لأستاذ داخل بجلسته: بغير ذلك يصير هذا المسار بابًا
  * مفتوحًا على حصّة Gemini يستعمله من شاء.
  */
@@ -29,6 +33,11 @@ const MAX_BASE64 = 12 * 1024 * 1024;
 /** ورقة القسم صفحتان على الأكثر. */
 const MAX_IMAGES = 2;
 
+/** حدود الأوراق النصّية (يطابقها src/lib/rosterParse.ts): ورقة تتجاوزها لا قائمة تلاميذ فيها. */
+const MAX_SHEETS = 12;
+const MAX_SHEET_CSV = 60_000;
+const MAX_ALL_CSV = 300_000;
+
 const ALLOWED = new Set(["image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"]);
 
 const PROMPT = `هذه صور قائمة تلاميذ قسم في ثانوية جزائرية: ورقة مطبوعة أو مكتوبة بخطّ اليد. وقد تكون صورتين لصفحتين من القائمة نفسها، فاقرأهما بالترتيب واجمع أسماءهما في قائمة واحدة متّصلة.
@@ -45,7 +54,23 @@ const PROMPT = `هذه صور قائمة تلاميذ قسم في ثانوية �
 - لا تكرّر اسمًا ظهر في الصفحتين معًا (كأن يكون سطرًا مقطوعًا بينهما).
 - إن لم تكن الصور قائمة تلاميذ فأرجع قائمة فارغة.`;
 
+const SHEETS_PROMPT = `هذه أوراق من ملف Excel لأستاذ في ثانوية جزائرية، كل ورقة نصًّا بخلاياها مفصولة بفاصلة. بعضها قائمة تلاميذ قسم، وبعضها لا (جداول علامات أو غيرها). كل ورقة مسبوقة بسطر «### اسم الورقة».
+
+لكل ورقة فيها قائمة تلاميذ أرجع:
+1. sheet: اسم الورقة كما كُتب بعد ### بالحرف.
+2. class_name: اسم القسم إن كان مكتوبًا في الورقة (مثل: أولى ثانوي جذع مشترك علوم وتكنولوجيا 3). إن لم يكن مكتوبًا فاتركه فارغًا.
+3. students: أسماء التلاميذ بالترتيب الذي تظهر به.
+
+قواعد لازمة:
+- انسخ كل اسم كما هو مكتوب بالعربية حرفًا بحرف. لا تصحّح إملاءً ولا تُكمل اسمًا ناقصًا ولا تغيّر همزة.
+- اللقب والاسم في سطر واحد (اللقب أولًا). إن كانا في عمودين فاجمعهما.
+- احذف أرقام الترتيب وتواريخ الميلاد وأرقام التعريف والجنس والملاحظات ورؤوس الجدول والمجاميع: الأسماء وحدها.
+- لا تخترع اسمًا أبدًا.
+- الورقة التي ليست قائمة تلاميذ لا تُرجعها.`;
+
 type Parsed = { class_name?: unknown; students?: unknown };
+
+type ParsedSheets = { sheets?: unknown };
 
 function badRequest(message: string, status = 400) {
   return Response.json({ error: message }, { status });
@@ -78,17 +103,19 @@ export async function POST(request: Request) {
   const key = process.env.GEMINI_API_KEY;
   if (!key) {
     return badRequest(
-      "قراءة الصور غير مُفعَّلة: مفتاح Gemini غير مضبوط في إعدادات النشر.",
+      "القراءة بالذكاء الاصطناعي غير مُفعَّلة: مفتاح Gemini غير مضبوط في إعدادات النشر. اكتب الأسماء بيدك.",
       503,
     );
   }
 
-  let body: { images?: unknown };
+  let body: { images?: unknown; sheets?: unknown };
   try {
     body = await request.json();
   } catch {
     return badRequest("طلب غير مفهوم.");
   }
+
+  if (Array.isArray(body.sheets)) return readSheets(key, body.sheets);
 
   const raw = Array.isArray(body.images) ? body.images : [];
   const images = raw
@@ -175,4 +202,107 @@ export async function POST(request: Request) {
   const cls = typeof parsed.class_name === "string" ? parsed.class_name.trim() : "";
 
   return Response.json({ cls, names });
+}
+
+
+/**
+ * أوراق Excel نصًّا. المخطّط ملزم كما في الصور: تُقرأ الإجابة آليًا.
+ * اسم الورقة يرجع كما أُرسل، والواجهة تطابق به ما أرسلته.
+ */
+async function readSheets(key: string, raw: unknown[]) {
+  const sent = raw
+    .slice(0, MAX_SHEETS)
+    .map((item) => {
+      const part = item as { name?: unknown; csv?: unknown };
+      return {
+        name: typeof part.name === "string" ? part.name.replace(/[\r\n]+/g, " ").trim().slice(0, 120) : "",
+        csv: typeof part.csv === "string" ? part.csv.slice(0, MAX_SHEET_CSV) : "",
+      };
+    })
+    .filter((part) => part.name && part.csv.trim());
+  if (!sent.length) return badRequest("لا أوراق في الطلب.");
+  if (sent.reduce((sum, part) => sum + part.csv.length, 0) > MAX_ALL_CSV) {
+    return badRequest("الملف كبير. جرّب ملفًا أصغر أو أرسل أقسامه على دفعات.");
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(ENDPOINT, {
+      method: "POST",
+      headers: { "x-goog-api-key": key, "Content-Type": "application/json" },
+      signal: AbortSignal.timeout(50_000),
+      body: JSON.stringify({
+        contents: [
+          {
+            parts: [
+              { text: SHEETS_PROMPT },
+              ...sent.map((part) => ({ text: `### ${part.name}\n${part.csv}` })),
+            ],
+          },
+        ],
+        generationConfig: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: "OBJECT",
+            properties: {
+              sheets: {
+                type: "ARRAY",
+                items: {
+                  type: "OBJECT",
+                  properties: {
+                    sheet: { type: "STRING" },
+                    class_name: { type: "STRING" },
+                    students: { type: "ARRAY", items: { type: "STRING" } },
+                  },
+                  required: ["sheet", "students"],
+                },
+              },
+            },
+            required: ["sheets"],
+          },
+          temperature: 0,
+        },
+      }),
+    });
+  } catch {
+    return badRequest("تعذّر الوصول إلى خدمة القراءة. أعد المحاولة.", 502);
+  }
+  if (!response.ok) {
+    const status = response.status === 429 ? 429 : 502;
+    return badRequest(
+      status === 429
+        ? "خدمة القراءة مشغولة الآن. أعد المحاولة بعد قليل."
+        : "تعذّرت قراءة الملف. أعد المحاولة أو اكتب الأسماء.",
+      status,
+    );
+  }
+
+  const payload = (await response.json()) as {
+    candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+  };
+  const text =
+    payload.candidates?.[0]?.content?.parts?.map((p) => p.text ?? "").join("") ?? "";
+  const parsed = parseJson(text) as ParsedSheets | null;
+  if (!parsed || !Array.isArray(parsed.sheets)) {
+    return badRequest("لم أفهم ما في الملف. جرّب ملفًا أوضح.", 422);
+  }
+
+  const known = new Set(sent.map((part) => part.name));
+  const sheets = parsed.sheets
+    .map((item) => {
+      const part = item as { sheet?: unknown; class_name?: unknown; students?: unknown };
+      return {
+        sheet: typeof part.sheet === "string" ? part.sheet.trim() : "",
+        cls: typeof part.class_name === "string" ? part.class_name.trim() : "",
+        names: Array.isArray(part.students)
+          ? part.students
+              .map((n) => (typeof n === "string" ? n.replace(/\s+/g, " ").trim() : ""))
+              .filter((n) => n.length > 1)
+          : [],
+      };
+    })
+    // ورقة لم نرسلها لا تُقبل: النموذج قد يخترع اسمًا فيضيع الربط
+    .filter((part) => known.has(part.sheet) && part.names.length > 0);
+
+  return Response.json({ sheets });
 }

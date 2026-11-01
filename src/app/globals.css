@@ -751,3 +751,26 @@ a.btn, a.swap { text-decoration: none; }
   border: 1px solid transparent;
 }
 .volbtn[aria-pressed="true"] { background: var(--primary); color: var(--on-primary); border-color: var(--primary); }
+
+/* استيراد الأقسام: مصادر الأسماء الأربعة، وبطاقة لكل قسم يُراجع قبل الإنشاء */
+.note.ok { background: var(--primary-soft); color: var(--primary); }
+.srcgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.srcgrid .shot { min-width: 0; font: inherit; width: 100%; }
+.dcard {
+  border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface);
+  padding: 12px; margin-bottom: 10px; display: flex; flex-direction: column; gap: 8px;
+}
+.dcard.done { border-color: var(--primary); background: var(--primary-soft); }
+.dcard.error { border-color: var(--danger); }
+.dcard:has(.dtop input[type="checkbox"]:not(:checked)) .dmeta,
+.dcard:has(.dtop input[type="checkbox"]:not(:checked)) textarea { opacity: 0.55; }
+.dtop { display: flex; align-items: center; gap: 8px; }
+.dtop .inp { flex: 1; min-width: 0; }
+.dtop input[type="checkbox"] { width: 22px; height: 22px; flex: none; accent-color: var(--primary); }
+.dmeta { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; font-size: 12px; color: var(--muted); }
+.dmeta b { color: var(--ink); font-variant-numeric: tabular-nums; }
+.dmeta .clearb { margin-inline-start: auto; }
+.dbadge { padding: 2px 8px; border-radius: 999px; background: var(--surface-2); font-size: 11px; font-weight: 600; }
+.dbadge.warn { background: var(--sand-soft); color: var(--sand); }
+.dwarn { font-size: 12px; color: var(--sand); line-height: 1.7; }
+.dok { font-size: 12px; font-weight: 700; color: var(--primary); }
