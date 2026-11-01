@@ -11,8 +11,8 @@ import {
 
 /**
  * حسابات سجّلت ولم تؤكّد بريدها. لا يُحذف شيء تلقائيًا: يرى المشرف القائمة، وإن وُجد قابل للحذف
- * ظهر زرّ يُبدَّل في مكانه بتأكيد («احذف N حسابًا» و«تراجع») ويزول بعد ثماني ثوانٍ إن لم يُؤكَّد،
- * كبقية تأكيدات اللوحة. والعدد يُمرَّر إلى القاعدة فترفض الحذف إن تغيّرت القائمة بعد أن رآها.
+ * ظهر زرّ يُبدَّل في مكانه بتأكيد («نعم، احذف N» و«تراجع») يبقى حتى يختار المشرف (لا مهلة تُسقطه
+ * وهو يقرأ). والعدد يُمرَّر إلى القاعدة فترفض الحذف إن تغيّرت القائمة بعد أن رآها.
  */
 export default function UnconfirmedPanel({
   rows,
@@ -30,12 +30,6 @@ export default function UnconfirmedPanel({
   useEffect(() => {
     setArmed(false);
   }, [deletable]);
-
-  useEffect(() => {
-    if (!armed || busy) return;
-    const timer = setTimeout(() => setArmed(false), 8000);
-    return () => clearTimeout(timer);
-  }, [armed, busy]);
 
   if (total === 0) return null;
   const phrase = deletable === 1 ? "حساب واحد" : deletable === 2 ? "حسابين" : `${deletable} ${deletable <= 10 ? "حسابات" : "حسابًا"}`;

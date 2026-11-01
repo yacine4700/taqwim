@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { createPortal } from "react-dom";
 import { createClient } from "@/lib/supabase/client";
 import { algiersToday } from "@/lib/terms";
 import BackupPanel from "./BackupPanel";
@@ -116,59 +117,67 @@ const CONFIRM_BUTTON: Record<Pending["action"], string> = {
 };
 
 /**
- * خروج المشرف بنقرتين: الأولى تُبدّل الزر في مكانه بـ«تأكيد الخروج» و«تراجع» (لا نافذة عائمة،
- * كبقية تأكيدات اللوحة)، والثانية تُنفّذ. وتزول بعد خمس ثوانٍ إن لم تُؤكَّد، فلا يبقى زرّ
- * الخروج مسلَّحًا في الشاشة بعد أن يغيّر المشرف رأيه. كان الزر يُنفّذ بنقرة واحدة فتُنهى
- * الجلسة وتُفقد صلاحية التحقّق الثنائي (12 ساعة) بلمسة خطأ.
+ * خروج المشرف: النقرة تفتح ورقة تأكيد بنمط ورقات التحذير في التطبيق كله (خلفية معتمة وورقة من
+ * أسفل الشاشة)، لا سطرًا صغيرًا بجانب الزر. لا مهلة تُغلقها: تبقى حتى يختار المشرف «تراجع» أو
+ * ينقر خارجها أو يضغط Esc، فلا تختفي وهو يقرأها. كان الزر يُنفّذ بنقرة واحدة فتُنهى الجلسة وتُفقد
+ * صلاحية التحقّق الثنائي (12 ساعة) بلمسة خطأ.
  */
-function LogoutButton({
-  className,
-  confirmClassName,
-  cancelClassName,
-  onConfirm,
-}: {
-  className: string;
-  confirmClassName: string;
-  cancelClassName: string;
-  onConfirm: () => Promise<void>;
-}) {
-  const [armed, setArmed] = useState(false);
+function LogoutButton({ className, onConfirm }: { className: string; onConfirm: () => Promise<void> }) {
+  const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    if (!armed || busy) return;
-    const timer = setTimeout(() => setArmed(false), 5000);
-    return () => clearTimeout(timer);
-  }, [armed, busy]);
+    if (!open || busy) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, busy]);
 
-  if (!armed) {
-    return (
-      <button type="button" className={className} onClick={() => setArmed(true)}>
+  return (
+    <>
+      <button type="button" className={className} onClick={() => setOpen(true)}>
         خروج
       </button>
-    );
-  }
-  return (
-    <span role="group" aria-label="تأكيد الخروج" style={{ display: "inline-flex", gap: 6, alignItems: "center", justifyContent: "center" }}>
-      <button
-        type="button"
-        className={confirmClassName}
-        disabled={busy}
-        onClick={async () => {
-          setBusy(true);
-          try {
-            await onConfirm();
-          } finally {
-            setBusy(false);
-          }
-        }}
-      >
-        {busy ? "لحظة…" : "تأكيد الخروج"}
-      </button>
-      <button type="button" className={cancelClassName} disabled={busy} onClick={() => setArmed(false)}>
-        تراجع
-      </button>
-    </span>
+      {/* في جذر الصفحة لا داخل الشريط الجانبي: هو sticky فيُنشئ سياق ترتيب يُبقي الورقة تحت المحتوى */}
+      {open && createPortal(
+        <>
+          <div className="scrim" onClick={busy ? undefined : () => setOpen(false)} />
+          <div className="sheet" role="dialog" aria-modal="true" aria-labelledby="adm-logout-title">
+            <div className="shead">
+              <h3 id="adm-logout-title">تسجيل الخروج؟</h3>
+            </div>
+            <p className="lead">
+              ستُنهي جلسة المشرف على هذا الجهاز. وللعودة تحتاج البريد وكلمة السر، ثم رمز التحقّق الثنائي من
+              تطبيق المصادقة.
+            </p>
+            <div className="srow2">
+              <button type="button" className="btn ghost" disabled={busy} autoFocus onClick={() => setOpen(false)}>
+                تراجع
+              </button>
+              <div className="hspace" />
+              <button
+                type="button"
+                className="btn danger"
+                disabled={busy}
+                onClick={async () => {
+                  setBusy(true);
+                  try {
+                    await onConfirm();
+                  } finally {
+                    setBusy(false);
+                  }
+                }}
+              >
+                {busy ? "جارٍ الخروج…" : "نعم، اخرج"}
+              </button>
+            </div>
+          </div>
+        </>,
+        document.body,
+      )}
+    </>
   );
 }
 
@@ -549,7 +558,7 @@ export default function AdminClient({
         <div className="authbox">
           <h1>لا صلاحية</h1>
           <p className="lead">هذا الحساب ليس حساب المشرف.</p>
-          <LogoutButton className="btn ghost" confirmClassName="btn danger" cancelClassName="btn ghost" onConfirm={signOut} />
+          <LogoutButton className="btn ghost" onConfirm={signOut} />
         </div>
       </div>
     );
@@ -570,7 +579,7 @@ export default function AdminClient({
           >
             أعد المحاولة
           </button>
-          <LogoutButton className="swap" confirmClassName="btn danger" cancelClassName="swap" onConfirm={signOut} />
+          <LogoutButton className="swap" onConfirm={signOut} />
         </div>
       </div>
     );
@@ -599,7 +608,7 @@ export default function AdminClient({
           <button className="btn" type="submit" disabled={busy || !codeReady(code)}>
             {busy ? "لحظة…" : "تحقّق"}
           </button>
-          <LogoutButton className="swap" confirmClassName="btn danger" cancelClassName="swap" onConfirm={signOut} />
+          <LogoutButton className="swap" onConfirm={signOut} />
         </form>
       </div>
     );
@@ -776,7 +785,7 @@ export default function AdminClient({
             <button className="clearb" onClick={refresh} disabled={refreshing}>
               {refreshing ? "لحظة…" : "حدّث"}
             </button>
-            <LogoutButton className="clearb" confirmClassName="clearb danger" cancelClassName="clearb" onConfirm={signOut} />
+            <LogoutButton className="clearb" onConfirm={signOut} />
           </div>
         </div>
       </div>
