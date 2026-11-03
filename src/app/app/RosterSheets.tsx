@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { MIN_PASSWORD, changePasswordProblem, translateAuthError } from "@/lib/auth";
+import { leakedPasswordProblem } from "@/lib/pwned";
 import { splitNewNames } from "@/lib/roster";
 import { countWord } from "@/lib/outbox";
 import { Klass, School } from "./types";
@@ -28,6 +29,12 @@ export function ChangePasswordSheet({ email, onClose }: { email: string; onClose
     }
     setBusy(true);
     setMessage("");
+    const leaked = await leakedPasswordProblem(next);
+    if (leaked) {
+      setMessage(leaked);
+      setBusy(false);
+      return;
+    }
     const client = createClient();
 
     const check = await client.auth.signInWithPassword({ email, password: current });

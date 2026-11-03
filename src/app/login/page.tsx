@@ -10,6 +10,7 @@ import {
   translateAuthError as translate,
 } from "@/lib/auth";
 import { BANNED_MESSAGE, isBannedError } from "@/lib/account";
+import { leakedPasswordProblem } from "@/lib/pwned";
 
 /** بريد التواصل لصاحب الحساب الموقوف (متغيّر بيئة، كما في صفحة الخصوصية). */
 const CONTACT = process.env.NEXT_PUBLIC_CONTACT_EMAIL;
@@ -113,6 +114,13 @@ export default function LoginPage() {
       if (refused) {
         setBad(true);
         setMessage(refused);
+        setBusy(false);
+        return;
+      }
+      const leaked = await leakedPasswordProblem(password);
+      if (leaked) {
+        setBad(true);
+        setMessage(leaked);
         setBusy(false);
         return;
       }

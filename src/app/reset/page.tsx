@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { passwordProblem, translateAuthError, MIN_PASSWORD } from "@/lib/auth";
+import { leakedPasswordProblem } from "@/lib/pwned";
 
 /**
  * تعيين كلمة سر جديدة. تُفتح بعد /auth/callback وقد صارت الجلسة قائمة؛
@@ -39,6 +40,12 @@ export default function ResetPage() {
     }
     setBusy(true);
     setMessage("");
+    const leaked = await leakedPasswordProblem(password);
+    if (leaked) {
+      setMessage(leaked);
+      setBusy(false);
+      return;
+    }
     const { error } = await createClient().auth.updateUser({ password });
     if (error) {
       setMessage(translateAuthError(error.message));
