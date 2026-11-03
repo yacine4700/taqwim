@@ -15,6 +15,7 @@
  */
 
 import { createClient } from "@/lib/supabase/server";
+import { quotaVerdict } from "@/lib/aiQuota";
 
 /** قراءة صورة فيها ستّة وثلاثون اسمًا تتجاوز المهلة الافتراضية. */
 export const maxDuration = 60;
@@ -93,6 +94,23 @@ function parseJson(text: string): Parsed | null {
   }
 }
 
+type Supabase = Awaited<ReturnType<typeof createClient>>;
+
+/**
+ * يحتسب الطلب في الحدّ اليومي قبل إرساله إلى Gemini (ترحيل ai_quota)، ويعيد
+ * جواب الرفض إن بلغ الأستاذ حدّه. يُنادى بعد فحص الطلب، فالطلب المعيب لا يُحتسب.
+ * عطل العدّاد لا يمنع القراءة، ويُسجَّل فقط.
+ */
+async function quotaRefusal(supabase: Supabase, kind: "images" | "sheets"): Promise<Response | null> {
+  const { data, error } = await supabase.rpc("consume_ai_quota", { p_kind: kind });
+  const verdict = quotaVerdict(data, error);
+  if (verdict.allow) {
+    if (verdict.note) console.warn(`ai_quota ${verdict.note}: ${error?.code ?? ""} ${error?.message ?? ""}`);
+    return null;
+  }
+  return badRequest(verdict.message, verdict.status);
+}
+
 export async function POST(request: Request) {
   const supabase = await createClient();
   const {
@@ -115,7 +133,7 @@ export async function POST(request: Request) {
     return badRequest("طلب غير مفهوم.");
   }
 
-  if (Array.isArray(body.sheets)) return readSheets(key, body.sheets);
+  if (Array.isArray(body.sheets)) return readSheets(supabase, key, body.sheets);
 
   const raw = Array.isArray(body.images) ? body.images : [];
   const images = raw
@@ -135,6 +153,8 @@ export async function POST(request: Request) {
   }
   const total = images.reduce((sum, part) => sum + part.data.length, 0);
   if (total > MAX_BASE64) return badRequest("الصور كبيرة. صوّرها بدقّة أقل.");
+  const refusedImages = await quotaRefusal(supabase, "images");
+  if (refusedImages) return refusedImages;
 
   let response: Response;
   try {
@@ -209,7 +229,7 @@ export async function POST(request: Request) {
  * أوراق Excel نصًّا. المخطّط ملزم كما في الصور: تُقرأ الإجابة آليًا.
  * اسم الورقة يرجع كما أُرسل، والواجهة تطابق به ما أرسلته.
  */
-async function readSheets(key: string, raw: unknown[]) {
+async function readSheets(supabase: Supabase, key: string, raw: unknown[]) {
   const sent = raw
     .slice(0, MAX_SHEETS)
     .map((item) => {
@@ -224,6 +244,8 @@ async function readSheets(key: string, raw: unknown[]) {
   if (sent.reduce((sum, part) => sum + part.csv.length, 0) > MAX_ALL_CSV) {
     return badRequest("الملف كبير. جرّب ملفًا أصغر أو أرسل أقسامه على دفعات.");
   }
+  const refusedSheets = await quotaRefusal(supabase, "sheets");
+  if (refusedSheets) return refusedSheets;
 
   let response: Response;
   try {
