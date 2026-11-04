@@ -95,7 +95,7 @@ export function confirmMatches(typed: string, email: string): boolean {
  * نسخة سياسة الخصوصية التي يوافق عليها المسجِّل. تُسجَّل مع الموافقة في بيانات
  * المستخدم، فإذا تغيّرت السياسة جوهريًا غُيّر هذا الرقم وعُرف من وافق على أي نسخة.
  */
-export const PRIVACY_VERSION = "2026-10-22";
+export const PRIVACY_VERSION = "2026-11-04";
 
 /** الموافقة شرط إنشاء الحساب: لا تُملأ عنه، ولا يكفيها وسم HTML وحده. */
 export function consentProblem(accepted: boolean): string | null {

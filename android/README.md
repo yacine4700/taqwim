@@ -120,6 +120,27 @@ bubblewrap build
 قبل الرفع إلى Play، تحقّق من شرط Play الحالي لـ`targetSdkVersion` في صفحة سياسة Google Play وقارنه بما في
 `app/build.gradle` الناتج: الشرط يرتفع كل سنة.
 
+**منذ 31 أوت 2026 الشرط API 36 (Android 16)** للتطبيقات الجديدة وتحديثاتها. قالب Bubblewrap يكتب
+`targetSdkVersion` حرفيًّا في `app/build.gradle`، فالإصدار هو ما يحدّده: 1.24.x وما قبله يكتب 35 (يُرفض)،
+و1.25.0 فما بعده يكتب 36. فحدّث ثم أعد توليد المشروع وارفع رقم الإصدار:
+
+```bash
+npm i -g @bubblewrap/cli@latest   # 1.25.0 أو أحدث
+bubblewrap update --appVersionName=<اسم> # يرفع appVersionCode ويعيد كتابة app/build.gradle
+bubblewrap build
+```
+
+ثم افحص المشروع قبل الرفع (لا يكتب شيئًا، ولا يقرأ ملف المفتاح ولا كلمة مروره):
+
+```bash
+node <مسار taqwim>/android/preflight.mjs --project ~/taqwim-android --aab app-release-bundle.aab --live
+```
+
+يتحقّق من: targetSdk ≥ 36، وتطابق packageId وapplicationId، وأن الحزمة في `assetlinks.json`، والنطاق
+و`startUrl` و`display`، وأن مفتاح التوقيع خارج المستودع، وتطابق رقم الإصدار، وبصمة موقِّع الحزمة، و(مع
+`--live`) أن الملف المنشور يطابق المستودع. يخرج برمز 1 إن وُجد ما يمنع الرفع. اختباراته في
+`scripts/check-twa.mjs`.
+
 ## 4) خذ البصمة وولّد assetlinks.json
 
 خذ البصمة من **الملف الذي ستثبّته فعلًا**، لا من keystore قد لا يكون هو ما وقّع به:
@@ -196,5 +217,11 @@ adb logcat -v brief | grep -e OriginVerifier -e digital_asset_links
 node android/make-assetlinks.mjs io.github.yacine4700.taqwim "SHA256: <بصمة مفتاح توقيع التطبيق من Play>"
 ```
 
-ويحتاج المتجر أيضًا ما ورد في تقرير النشر: رابط عام لطلب حذف الحساب، وحساب تجريبي للمراجعين، وتصحيح نص
-الخصوصية عن Gemini.
+ثم ادمج وانشر، وتحقّق بـ`preflight.mjs --live`.
+
+ويحتاج المتجر أيضًا: رابط حذف الحساب العام (`https://<النطاق>/delete-account`)، ورابط الخصوصية
+(`https://<النطاق>/privacy`)، وحسابًا تجريبيًّا للمراجعين. الإجابات المقترحة كلها في `docs/play-store/`.
+
+> **اسم الحزمة الفعلي:** `public/.well-known/assetlinks.json` فيه الحزمة `app.vercel.taqwim_theta.twa`
+> (الاسم الذي يقترحه Bubblewrap من النطاق)، لا `io.github.yacine4700.taqwim` المقترح أعلاه. اسم الحزمة لا
+> يتغيّر بعد أول رفع إلى Play، فقرّره قبله (انظر `docs/play-store/README.md`).

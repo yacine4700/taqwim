@@ -68,7 +68,7 @@ function confirmMatches(typed, email) {
   return typed.trim().toLowerCase() === want;
 }
 
-const PRIVACY_VERSION = "2026-10-22";
+const PRIVACY_VERSION = "2026-11-04";
 
 function consentProblem(accepted) {
   return accepted ? null : "للمتابعة وافق على سياسة الخصوصية.";
@@ -160,7 +160,7 @@ eq("بلا موافقة تُرفض", consentProblem(false), "للمتابعة و
 eq("بموافقة تمرّ", consentProblem(true), null);
 const meta = signupMetadata("أستاذ تجريبي", new Date("2026-10-16T13:00:00.000Z"));
 eq("الاسم يُحفظ", meta.full_name, "أستاذ تجريبي");
-eq("نسخة السياسة تُحفظ", meta.privacy_version, "2026-10-22");
+eq("نسخة السياسة تُحفظ", meta.privacy_version, "2026-11-04");
 eq("تاريخ الموافقة بصيغة ISO", meta.privacy_accepted_at, "2026-10-16T13:00:00.000Z");
 
 /* تغيير كلمة السر من داخل الحساب */
