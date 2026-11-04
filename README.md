@@ -213,6 +213,10 @@ NEXT_PUBLIC_SUPABASE_URL=
 NEXT_PUBLIC_SUPABASE_ANON_KEY=
 ```
 
+وبريد الدعم الرسمي `taqwimsupport@gmail.com` يظهر في `/privacy` و`/delete-account`
+وشاشة الدخول، ويأتي من `NEXT_PUBLIC_CONTACT_EMAIL` وحده (لا عنوان مكتوب في الشفرة).
+قيمته في `.env.example`، وفي النشر تُضبط في Vercel ثم يلزم بناء جديد لأنه يُقرأ وقت البناء.
+
 ## قاعدة البيانات
 
 سبعة جداول: `teachers`، `classes`، `students`، `criteria`، `components`،
