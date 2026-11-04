@@ -263,8 +263,13 @@ check("الخصوصية تذكر أن ورقة Excel تُرسل كلها إلى 
 check("سجلّ العمليات: الحذف بطلب الأستاذ يختلف عن حذف المشرف الفوري (بريد مقنَّع وسبب)", () => {
   for (const page of [priv, del]) expect(page.includes("مقنَّعًا") && page.includes("مشرف التطبيق"));
 });
-check("لا ادعاء فوترة لـGemini قبل التحقّق منها (حساب مفوتَر / لا تستعمل المحتوى لتحسين)", () => {
-  expect(!priv.includes("مفوتَر") && !priv.includes("لتحسين منتجاتها"), "أضف الادعاء بعد التحقّق وحدّث هذا الاختبار");
+check("الخصوصية: Gemini المدفوع بلا تضخيم — لا تحسين منتجات، مع استثناءات التسجيل والإفصاح القانوني", () => {
+  expect(priv.includes("الخدمات المدفوعة") && priv.includes("لتحسين منتجاتها"), "ادعاء المستوى المدفوع");
+  expect(priv.includes("لكن لذلك استثناءات") && priv.includes("كشف مخالفات") && priv.includes("قانون"), "الاستثناءات");
+  // عبارات أوسع مما تسمح به شروط Google
+  for (const bad of ["لا تُسجَّل", "لا تسجّل Google", "لا يطّلع", "لا يراها أحد", "تُحذف فورًا", "لا تُخزَّن"]) {
+    expect(!priv.includes(bad), `عبارة أوسع من الشروط: ${bad}`);
+  }
 });
 check("لا عنوان بريد مكتوب في الصفحات العامة: يأتي من NEXT_PUBLIC_CONTACT_EMAIL وحده", () => {
   const login = readFileSync(join(ROOT, "src", "app", "login", "page.tsx"), "utf8");
@@ -273,7 +278,7 @@ check("لا عنوان بريد مكتوب في الصفحات العامة: ي�
   }
   expect(priv.includes("process.env.NEXT_PUBLIC_CONTACT_EMAIL") && del.includes("process.env.NEXT_PUBLIC_CONTACT_EMAIL"));
   const envEx = readFileSync(join(ROOT, ".env.example"), "utf8");
-  expect(/^NEXT_PUBLIC_CONTACT_EMAIL=$/m.test(envEx), "المتغيّر في .env.example فارغ");
+  expect(/^NEXT_PUBLIC_CONTACT_EMAIL=taqwimsupport@gmail\.com$/m.test(envEx), "بريد الدعم الرسمي في .env.example");
 });
 check("عامل الخدمة لا يخبّئ صفحة الحذف", () => expect(!sw.includes("delete-account")));
 

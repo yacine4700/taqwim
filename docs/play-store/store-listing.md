@@ -54,9 +54,10 @@
 
 ## البريد العام للتواصل
 
-**قرارك.** لا أكتب عنوانًا لم تحدّده. في الشفرة متغيّر `NEXT_PUBLIC_CONTACT_EMAIL` (تقرؤه `/privacy`
-و`/delete-account` وشاشة الدخول)، لكني لم أستطع قراءة قيمته في Vercel. البريد يظهر للعامة في صفحة المتجر.
-الأفضل أن يكون البريد نفسه في المتغيّر وفي Play Console.
+**معتمد:** `taqwimsupport@gmail.com` (بريد الدعم الرسمي). يُكتب في Play Console (Developer contact / Store
+settings، ويظهر للعامة في صفحة المتجر) وهو نفسه قيمة `NEXT_PUBLIC_CONTACT_EMAIL` التي تقرؤها `/privacy`
+و`/delete-account` وشاشة الدخول. القيمة موجودة في `.env.example` فقط؛ **ضبطها في Vercel عليك** (Production
+وPreview) ويلزم نشر جديد لأنها تُقرأ وقت البناء. لم أغيّر شيئًا في Vercel.
 
 ## روابط
 
