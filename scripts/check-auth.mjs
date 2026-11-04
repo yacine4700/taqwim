@@ -68,18 +68,27 @@ function confirmMatches(typed, email) {
   return typed.trim().toLowerCase() === want;
 }
 
-const PRIVACY_VERSION = "2026-11-04";
+const PRIVACY_VERSION = "2026-11-04.2";
 
 function consentProblem(accepted) {
-  return accepted ? null : "للمتابعة وافق على سياسة الخصوصية.";
+  return accepted ? null : "للمتابعة أقرّ بأنك أستاذ عمرك 18 سنة أو أكثر ووافق على سياسة الخصوصية وشروط الاستخدام.";
+}
+
+function consentMetadata(now) {
+  return {
+    privacy_version: PRIVACY_VERSION,
+    privacy_accepted_at: now.toISOString(),
+    attested_teacher_18plus: true,
+  };
 }
 
 function signupMetadata(name, now) {
-  return {
-    full_name: name,
-    privacy_version: PRIVACY_VERSION,
-    privacy_accepted_at: now.toISOString(),
-  };
+  return { full_name: name, ...consentMetadata(now) };
+}
+
+function needsConsent(metadata) {
+  const m = metadata ?? {};
+  return m.privacy_version !== PRIVACY_VERSION || m.attested_teacher_18plus !== true;
 }
 
 function changePasswordProblem(current, next, again) {
@@ -155,13 +164,29 @@ eq("فارغ", confirmMatches("", "a@b.com"), false);
 eq("بريد الحساب فارغ لا يُطابق الفارغ", confirmMatches("", ""), false);
 eq("جزء من البريد", confirmMatches("a@b", "a@b.com"), false);
 
-/* الموافقة على الخصوصية عند إنشاء الحساب */
-eq("بلا موافقة تُرفض", consentProblem(false), "للمتابعة وافق على سياسة الخصوصية.");
+/* الموافقة (خصوصية + شروط + إقرار أستاذ بالغ) عند إنشاء الحساب */
+const REFUSAL = "للمتابعة أقرّ بأنك أستاذ عمرك 18 سنة أو أكثر ووافق على سياسة الخصوصية وشروط الاستخدام.";
+eq("بلا موافقة تُرفض", consentProblem(false), REFUSAL);
 eq("بموافقة تمرّ", consentProblem(true), null);
 const meta = signupMetadata("أستاذ تجريبي", new Date("2026-10-16T13:00:00.000Z"));
 eq("الاسم يُحفظ", meta.full_name, "أستاذ تجريبي");
-eq("نسخة السياسة تُحفظ", meta.privacy_version, "2026-11-04");
+eq("نسخة الموافقة تُحفظ", meta.privacy_version, "2026-11-04.2");
 eq("تاريخ الموافقة بصيغة ISO", meta.privacy_accepted_at, "2026-10-16T13:00:00.000Z");
+eq("إقرار الأستاذ البالغ يُحفظ قيمةً منطقية", meta.attested_teacher_18plus, true);
+eq("لا حقل غير هذه الأربعة (لا تاريخ ميلاد ولا هوية)", Object.keys(meta).sort().join(","),
+  "attested_teacher_18plus,full_name,privacy_accepted_at,privacy_version");
+eq("الموافقة وحدها (للحساب القائم) بلا اسم", Object.keys(consentMetadata(new Date(0))).sort().join(","),
+  "attested_teacher_18plus,privacy_accepted_at,privacy_version");
+
+/* من يُطلب منه الموافقة من جديد */
+eq("حساب بلا بيانات موافقة", needsConsent({}), true);
+eq("حساب بلا metadata أصلًا", needsConsent(undefined), true);
+eq("حساب على النسخة القديمة 2026-11-04 (وإن أقرّ)", needsConsent({ privacy_version: "2026-11-04", attested_teacher_18plus: true }), true);
+eq("حساب على نسخة أقدم بلا إقرار", needsConsent({ privacy_version: "2026-10-16", privacy_accepted_at: "2026-10-16T13:00:00.000Z" }), true);
+eq("النسخة الحالية بلا إقرار", needsConsent({ privacy_version: PRIVACY_VERSION }), true);
+eq("النسخة الحالية وإقرار غير منطقي (نصّ)", needsConsent({ privacy_version: PRIVACY_VERSION, attested_teacher_18plus: "true" }), true);
+eq("النسخة الحالية مع الإقرار: لا يُطلب شيء", needsConsent(signupMetadata("س", new Date())), false);
+eq("بعد موافقة الحساب القائم: لا يُطلب شيء", needsConsent({ full_name: "س", ...consentMetadata(new Date()) }), false);
 
 /* تغيير كلمة السر من داخل الحساب */
 eq("جديدة قصيرة", changePasswordProblem("oldpass1", "12345", "12345"), "كلمة السر قصيرة: 6 أحرف على الأقل.");

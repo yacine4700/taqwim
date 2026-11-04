@@ -5,7 +5,7 @@
 
 ## ما يحتاج الدخول
 
-كل شيء. بلا حساب لا يُفتح إلا: صفحة الدخول وإنشاء الحساب، و`/privacy`، و`/delete-account`.
+كل شيء. بلا حساب لا يُفتح إلا: صفحة الدخول وإنشاء الحساب، و`/privacy`، و`/terms`، و`/delete-account`.
 
 ## لماذا لا يكفي أن ينشئ المراجع حسابًا بنفسه
 
@@ -20,11 +20,16 @@
 - مؤسسة وهمية: «ثانوية تجريبية».
 - قسم أو قسمان بأسماء **مخترعة كلها** (لا اسم تلميذ حقيقي)، 10 إلى 15 اسمًا، تُدخل من «اكتبها بيدك».
 - بعض العلامات في الفصل الجاري، ليرى المراجع عدّادات فيها أرقام.
+- **موافقة مُسجَّلة على النسخة الحالية:** ادخل بالحساب بنفسك مرة قبل التقديم، فإن ظهرت شاشة «أوافق وأتابع» (الإقرار
+  بأنك أستاذ عمرك 18+ وسياسة الخصوصية والشروط) فوافق. وكلما رُفع `PRIVACY_VERSION` في `src/lib/auth.ts` عاد الحساب
+  التجريبي يطلبها، فكرّر هذا قبل كل تقديم جديد.
 
 ## نصّ التعليمات للمراجع (يُلصق في Play Console بالإنجليزية)
 
 ```
 1. Open the app. On the sign-in screen enter the email and password provided below and tap "دخول" (Sign in).
+   (If a consent screen appears: tick the box, which confirms the user is a teacher aged 18+ and accepts the
+   privacy policy and terms, then tap "أوافق وأتابع" (Agree and continue).)
 2. The class list opens. Tap a class to see students; tap a student to mark criteria with the +/- counters.
 3. Adding a class (the import sheet) accepts a photo, an Excel file, or typed names. Photo reading is optional.
 4. Settings (الإعدادات) > Account (الحساب) > "حذف…" shows in-app account deletion. Please do not confirm it:
@@ -37,6 +42,7 @@ No OTP, no 2-step verification, no location or payment is required. The interfac
 | العائق | التجاوز |
 | --- | --- |
 | تأكيد البريد | الحساب مؤكَّد مسبقًا |
+| شاشة الموافقة بعد الدخول (نسخة جديدة من الخصوصية/الشروط) | الحساب وافق مسبقًا، والتعليمات تشرحها للمراجع |
 | قفل الفصل (`term_closed`) | العلامات تُدخل في الفصل الجاري؛ بين 18 جويلية و17 أوت لا فصل مفتوح، فلا تُرسل المراجعة في تلك المدة أو اذكر ذلك |
 | حدّ قراءة Gemini (20 في اليوم) | لا يؤثّر على مراجعة واحدة |
 | حذف المراجع للحساب | الحذف مؤجَّل 7 أيام ويُلغى من لوحة المشرف |

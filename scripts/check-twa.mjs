@@ -243,6 +243,8 @@ check("/delete-account لا يحوّلها الوسيط إلى الدخول", ()
   const list = JSON.parse(`[${guarded[1]}]`);
   expect(!list.some((p) => "/delete-account".startsWith(p)), list.join(","));
   expect(!list.some((p) => "/privacy".startsWith(p)));
+  expect(!list.some((p) => "/terms".startsWith(p)), "/terms عامة");
+  expect(list.includes("/consent"), "/consent خلف الجلسة");
 });
 check("صفحة الحذف تسمّي التطبيق وتشير إلى /account و/privacy", () => {
   expect(del.includes("دفتر التقويم") && del.includes('href="/account"') && del.includes('href="/privacy"'));
@@ -275,13 +277,77 @@ check("الخصوصية: Gemini المدفوع بلا تضخيم — لا تحس
 });
 check("لا عنوان بريد مكتوب في الصفحات العامة: يأتي من NEXT_PUBLIC_CONTACT_EMAIL وحده", () => {
   const login = readFileSync(join(ROOT, "src", "app", "login", "page.tsx"), "utf8");
-  for (const [name, text] of [["privacy", priv], ["delete-account", del], ["login", login]]) {
+  for (const [name, text] of [["privacy", priv], ["delete-account", del], ["login", login], ["terms", readFileSync(join(ROOT, "src", "app", "terms", "page.tsx"), "utf8")]]) {
     expect(!/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[a-z]{2,}/.test(text), `بريد مكتوب في ${name}`);
   }
   expect(priv.includes("process.env.NEXT_PUBLIC_CONTACT_EMAIL") && del.includes("process.env.NEXT_PUBLIC_CONTACT_EMAIL"));
   const envEx = readFileSync(join(ROOT, ".env.example"), "utf8");
   expect(/^NEXT_PUBLIC_CONTACT_EMAIL=taqwimsupport@gmail\.com$/m.test(envEx), "بريد الدعم الرسمي في .env.example");
 });
+/* ----- الإقرار والموافقة (أستاذ، 18 سنة فأكثر، خصوصية وشروط) ----- */
+const SRC = (...p) => readFileSync(join(ROOT, "src", ...p), "utf8");
+const authLib = SRC("lib", "auth.ts");
+const loginSrc = SRC("app", "login", "page.tsx");
+const fieldSrc = SRC("app", "ConsentField.tsx");
+const consentPage = SRC("app", "consent", "page.tsx");
+const consentClient = SRC("app", "consent", "ConsentClient.tsx");
+const appPage = SRC("app", "app", "page.tsx");
+const mwSrc = SRC("middleware.ts");
+const termsSrc = SRC("app", "terms", "page.tsx");
+const REQUIRED_TEXT = "أقرّ بأنني أستاذ، وأن عمري 18 سنة أو أكثر، وأوافق على سياسة الخصوصية وشروط استخدام التطبيق";
+/** ما يظهر فعلًا من نصّ JSX: الأسطر تُقصّ وتُلصق بلا فراغ، و{" "} فراغ صريح، والوسوم تسقط. */
+function jsxText(src) {
+  const span = src.slice(src.indexOf("<span>"), src.indexOf("</span>"));
+  return span.split("\n").map((l) => l.trim()).join("").replace(/\{" "\}/g, " ").replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim();
+}
+check("نصّ الإقرار المطلوب حرفيًّا في خانة الموافقة وفي auth.ts", () => {
+  expect(jsxText(fieldSrc) === `${REQUIRED_TEXT}.`, `النصّ الظاهر: ${jsxText(fieldSrc)}`);
+  expect(authLib.includes(`"${REQUIRED_TEXT}"`), "CONSENT_TEXT في auth.ts");
+  expect(/href="\/privacy"/.test(fieldSrc) && /href="\/terms"/.test(fieldSrc), "رابطا الخصوصية والشروط");
+});
+check("الخانة إلزامية: required في HTML، وconsentProblem قبل signUp، وزرّ الإنشاء لا يتجاوزها", () => {
+  expect(/<input[^>]*type="checkbox"[^>]*required|<input[\s\S]{0,200}required/.test(fieldSrc), "required في الخانة");
+  expect(loginSrc.includes("<ConsentField checked={accepted}"), "التسجيل يستعمل الخانة المشتركة");
+  const consentAt = loginSrc.indexOf("consentProblem(accepted)");
+  const signUpAt = loginSrc.indexOf("supabase.auth.signUp");
+  expect(consentAt > 0 && signUpAt > consentAt, "الفحص في الشفرة قبل signUp");
+  expect(/const \[accepted, setAccepted\] = useState\(false\)/.test(loginSrc), "تبدأ غير محدَّدة");
+});
+check("النسخة الجديدة: PRIVACY_VERSION في المصدر والنسخة المرآة في check-auth متطابقتان", () => {
+  const m = /export const PRIVACY_VERSION = "([^"]+)"/.exec(authLib);
+  const mirror = /const PRIVACY_VERSION = "([^"]+)"/.exec(readFileSync(join(ROOT, "scripts", "check-auth.mjs"), "utf8"));
+  expect(m && mirror && m[1] === mirror[1] && m[1] !== "2026-11-04", `المصدر ${m && m[1]} والمرآة ${mirror && mirror[1]}`);
+});
+check("الحساب القائم يُحوَّل إلى /consent بعد فحص مهلة الحذف، و/consent محميّة بالوسيط", () => {
+  const del = appPage.indexOf("pendingPurge(status)");
+  const gate = appPage.indexOf("needsConsent(user.user_metadata)");
+  const open = appPage.indexOf("<AppClient");
+  expect(del > 0 && gate > del && open > gate, "الترتيب: حذف ← موافقة ← التطبيق");
+  expect(appPage.includes('redirect("/consent")'));
+  expect(mwSrc.includes('"/consent"'), "الوسيط");
+  expect(consentPage.includes('redirect("/login")') && consentPage.includes('redirect("/app")') && consentPage.includes("needsConsent("));
+});
+check("حفظ الموافقة: updateUser بـconsentMetadata وبالطريقة نفسها (بيانات المستخدم لا جدول جديد)", () => {
+  expect(consentClient.includes("auth.updateUser({ data: consentMetadata(new Date()) })"));
+  expect(consentClient.includes("consentProblem(accepted)"));
+  expect(!/from\("|\.rpc\(/.test(consentClient), "لا استعلام قاعدة بيانات");
+  expect(loginSrc.includes("signupMetadata(name, new Date())"));
+});
+check("لا جمع لتاريخ ميلاد أو وثيقة هوية في التسجيل ولا الموافقة", () => {
+  for (const [n, t] of [["login", loginSrc], ["consent", consentClient], ["field", fieldSrc]]) {
+    expect(!/birth|ميلاد|passport|جواز|بطاقة التعريف|national_id/i.test(t), `أثر في ${n}`);
+  }
+  expect(!/type="date"/.test(loginSrc + consentClient));
+});
+check("«الخروج» من شاشة الموافقة لا يمحو ما على الجهاز (علامات لم تُرسل)", () => {
+  expect(!/kvDel|clearAppCaches|outbox/.test(consentClient));
+});
+check("صفحة /terms: لا بريد مكتوب، وتذكر 18 سنة وأن لا حسابات للتلاميذ، والخصوصية تربط بها", () => {
+  expect(!/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[a-z]{2,}/.test(termsSrc) && termsSrc.includes("process.env.NEXT_PUBLIC_CONTACT_EMAIL"));
+  expect(termsSrc.includes("18 سنة") && termsSrc.includes("لا حسابات للتلاميذ"));
+  expect(priv.includes('href="/terms"') && priv.includes("18 سنة"));
+});
+check("عامل الخدمة لا يخبّئ /consent ولا /terms", () => expect(!sw.includes("consent") && !sw.includes("terms")));
 check("عامل الخدمة لا يخبّئ صفحة الحذف", () => expect(!sw.includes("delete-account")));
 
 console.log(`\ntwa: ${ok} نجح، ${failed} فشل`);

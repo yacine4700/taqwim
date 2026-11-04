@@ -11,6 +11,7 @@ import {
 } from "@/lib/auth";
 import { BANNED_MESSAGE, isBannedError } from "@/lib/account";
 import { leakedPasswordProblem } from "@/lib/pwned";
+import ConsentField from "../ConsentField";
 
 /** بريد التواصل لصاحب الحساب الموقوف (متغيّر بيئة، كما في صفحة الخصوصية). */
 const CONTACT = process.env.NEXT_PUBLIC_CONTACT_EMAIL;
@@ -328,21 +329,7 @@ export default function LoginPage() {
         )}
 
         {mode === "up" && (
-          <label className="consent">
-            <input
-              type="checkbox"
-              checked={accepted}
-              onChange={(e) => setAccepted(e.target.checked)}
-              required
-            />
-            <span>
-              قرأتُ{" "}
-              <a href="/privacy" target="_blank" rel="noopener">
-                سياسة الخصوصية
-              </a>{" "}
-              وأوافق عليها: أنا مسؤول عن أسماء التلاميذ التي أُدخلها.
-            </span>
-          </label>
+          <ConsentField checked={accepted} onChange={setAccepted} />
         )}
 
         {message && (

@@ -92,23 +92,43 @@ export function confirmMatches(typed: string, email: string): boolean {
 }
 
 /**
- * نسخة سياسة الخصوصية التي يوافق عليها المسجِّل. تُسجَّل مع الموافقة في بيانات
- * المستخدم، فإذا تغيّرت السياسة جوهريًا غُيّر هذا الرقم وعُرف من وافق على أي نسخة.
+ * نسخة الموافقة (سياسة الخصوصية وشروط الاستخدام والإقرار بأنه أستاذ بالغ) التي يقبلها
+ * المسجِّل. تُسجَّل مع الموافقة في بيانات المستخدم، فإذا تغيّر شيء منها جوهريًا غُيّر هذا
+ * الرقم: يُعرف من وافق على أي نسخة، ويُطلب من كل حساب على نسخة أقدم أن يوافق من جديد
+ * (needsConsent، وتفحصه صفحة /app وتحوّل صاحب النسخة القديمة إلى /consent).
  */
-export const PRIVACY_VERSION = "2026-11-04";
+export const PRIVACY_VERSION = "2026-11-04.2";
+
+/** الإقرار الإلزامي كما يُعرض في التسجيل وشاشة /consent (الروابط تُضاف حول عبارتيه الأخيرتين). */
+export const CONSENT_TEXT =
+  "أقرّ بأنني أستاذ، وأن عمري 18 سنة أو أكثر، وأوافق على سياسة الخصوصية وشروط استخدام التطبيق";
 
 /** الموافقة شرط إنشاء الحساب: لا تُملأ عنه، ولا يكفيها وسم HTML وحده. */
 export function consentProblem(accepted: boolean): string | null {
-  return accepted ? null : "للمتابعة وافق على سياسة الخصوصية.";
+  return accepted ? null : "للمتابعة أقرّ بأنك أستاذ عمرك 18 سنة أو أكثر ووافق على سياسة الخصوصية وشروط الاستخدام.";
 }
 
-/** بيانات المستخدم عند إنشاء الحساب: الاسم، وأثر الموافقة (النسخة والتاريخ). */
-export function signupMetadata(name: string, now: Date) {
+/**
+ * أثر الموافقة في بيانات المستخدم: النسخة والتاريخ وإقرار الأستاذ البالغ. لا يُجمع تاريخ
+ * ميلاد ولا وثيقة هوية: الإقرار قيمة صحّ/خطأ لا غير.
+ */
+export function consentMetadata(now: Date) {
   return {
-    full_name: name,
     privacy_version: PRIVACY_VERSION,
     privacy_accepted_at: now.toISOString(),
+    attested_teacher_18plus: true,
   };
+}
+
+/** بيانات المستخدم عند إنشاء الحساب: الاسم، وأثر الموافقة. */
+export function signupMetadata(name: string, now: Date) {
+  return { full_name: name, ...consentMetadata(now) };
+}
+
+/** هل على هذا الحساب أن يوافق من جديد؟ بلا نسخة، أو نسخة أقدم، أو بلا إقرار. */
+export function needsConsent(metadata: unknown): boolean {
+  const m = (metadata ?? {}) as Record<string, unknown>;
+  return m.privacy_version !== PRIVACY_VERSION || m.attested_teacher_18plus !== true;
 }
 
 /** تغيير كلمة السر من داخل الحساب: القصر ثم التطابق ثم ألّا تكون كالقديمة. */

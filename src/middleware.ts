@@ -38,7 +38,7 @@ export async function middleware(request: NextRequest) {
     url.search = "";
     return NextResponse.redirect(url);
   }
-  if (!user && ["/app", "/account"].some((p) => path.startsWith(p))) {
+  if (!user && ["/app", "/account", "/consent"].some((p) => path.startsWith(p))) {
     const url = request.nextUrl.clone();
     url.pathname = "/login";
     return NextResponse.redirect(url);
