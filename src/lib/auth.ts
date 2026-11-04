@@ -97,7 +97,7 @@ export function confirmMatches(typed: string, email: string): boolean {
  * الرقم: يُعرف من وافق على أي نسخة، ويُطلب من كل حساب على نسخة أقدم أن يوافق من جديد
  * (needsConsent، وتفحصه صفحة /app وتحوّل صاحب النسخة القديمة إلى /consent).
  */
-export const PRIVACY_VERSION = "2026-11-04.2";
+export const PRIVACY_VERSION = "2026-11-04.3";
 
 /** الإقرار الإلزامي كما يُعرض في التسجيل وشاشة /consent (الروابط تُضاف حول عبارتيه الأخيرتين). */
 export const CONSENT_TEXT =

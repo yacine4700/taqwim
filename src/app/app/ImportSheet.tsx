@@ -14,20 +14,11 @@ import { countWord } from "@/lib/outbox";
 import { useRef, useState } from "react";
 import { CreateResult, School } from "./types";
 
-/** الملف كما هو، حين يعجز المتصفّح عن فكّ ترميز الصورة (HEIC من آيفون مثلًا). */
-function fileAsBase64(file: File): Promise<{ data: string; mime: string }> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(new Error("read"));
-    reader.onload = () => {
-      const url = String(reader.result ?? "");
-      resolve({ data: url.slice(url.indexOf(",") + 1), mime: file.type || "image/jpeg" });
-    };
-    reader.readAsDataURL(file);
-  });
-}
-
-/** يصغّر الصورة قبل إرسالها: صورة الهاتف 4 ميغا تُبطئ الرفع ولا تزيد دقّة. */
+/**
+ * يصغّر الصورة قبل إرسالها: صورة الهاتف 4 ميغا تُبطئ الرفع ولا تزيد دقّة. وإعادة رسمها
+ * في canvas تُسقط بياناتها الوصفية (EXIF، ومنها الموقع). فإن عجز المتصفّح عن فكّها (HEIC
+ * أحيانًا) لا يُرسل الملف الأصلي بديلًا: يُرفض ويُطلب غيره، فلا يخرج الموقع مع الصورة.
+ */
 async function shrinkImage(file: File): Promise<{ data: string; mime: string }> {
   const bitmap = await createImageBitmap(file);
   const long = Math.max(bitmap.width, bitmap.height);
@@ -88,8 +79,9 @@ type AiSheet = { sheet: string; cls: string; names: string[] };
  * فتظهر بطاقة لكل قسم وُجد، يراجعها ويصحّح ثم ينشئها كلها معًا.
  *
  * القاعدة في قراءة الملفات: الشفرة أولًا (مجانية، ولا تغادر الأسماء الهاتف)،
- * وما عجزت عنه ورقةٌ بعينها يُرسل نصًّا إلى Gemini. الصور تذهب إلى Gemini
- * مباشرة. وفي النهاية الأسماء نصّ قابل للتعديل: لا تُحفظ قراءة خاطئة.
+ * وما عجزت عنه ورقةٌ بعينها يُرسل نصًّا إلى Gemini بعد موافقة صريحة تسمّي الأوراق وتقول
+ * ما يُرسل (الأوراق المخفية لا تُرسل أبدًا). والصور لا تُقرأ إلا بزرّ تحته تنبيه بأنها تذهب
+ * إلى Google. وفي النهاية الأسماء نصّ قابل للتعديل: لا تُحفظ قراءة خاطئة.
  */
 export function ImportSheet({
   onClose, onCreate, onFinish, schools, defaultSchool, onAddSchool, online, existingNames,
@@ -119,6 +111,17 @@ export function ImportSheet({
   const [problem, setProblem] = useState("");
   const [reading, setReading] = useState(false);
   const [busy, setBusy] = useState(false);
+  /**
+   * أوراق Excel لم يفهمها التطبيق، تنتظر موافقة الأستاذ قبل إرسالها إلى Gemini. لا شيء يُرسل
+   * من ملف دون هذه الموافقة: اختيار الملف استيراد، لا موافقة على الإرسال إلى Google.
+   */
+  const [pendingAi, setPendingAi] = useState<{
+    sheets: Array<{ name: string; csv: string }>;
+    unread: string[];
+    hidden: string[];
+    local: number;
+    many: boolean;
+  } | null>(null);
   /** صور الورقة: صفحة أو صفحتان، تُقرآن معًا. */
   const [shots, setShots] = useState<Array<{ url: string; data: string; mime: string }>>([]);
 
@@ -154,15 +157,24 @@ export function ImportSheet({
       return;
     }
     const taken = files.slice(0, room);
-    const ready = await Promise.all(
+    const results = await Promise.all(
       taken.map(async (file) => {
-        const { data, mime } = await shrinkImage(file).catch(() => fileAsBase64(file));
-        return { url: `data:${mime};base64,${data}`, data, mime };
+        try {
+          const { data, mime } = await shrinkImage(file);
+          return { url: `data:${mime};base64,${data}`, data, mime };
+        } catch {
+          return null;
+        }
       }),
     );
+    const ready = results.filter((r): r is { url: string; data: string; mime: string } => r !== null);
     setShots((before) => [...before, ...ready]);
     setReadMsg(
-      files.length > room ? { kind: "warn", text: "صفحتان على الأكثر: أخذتُ الأولى." } : null,
+      ready.length < taken.length
+        ? { kind: "bad", text: "تعذّر فتح الصورة في هذا المتصفّح. صوّرها بالكاميرا، أو احفظها بصيغة JPEG أو PNG ثم أعد اختيارها." }
+        : files.length > room
+          ? { kind: "warn", text: "صفحتان على الأكثر: أخذتُ الأولى." }
+          : null,
     );
   }
 
@@ -225,6 +237,7 @@ export function ImportSheet({
   }
 
   async function readWorkbook(file: File) {
+    setPendingAi(null);
     setReading(true);
     setReadMsg({ kind: "ok", text: "جارٍ قراءة الملف…" });
     try {
@@ -237,7 +250,10 @@ export function ImportSheet({
       const hard: Array<{ name: string; csv: string }> = [];
       const unread: string[] = [];
       const many = book.SheetNames.length > 1;
-      for (const sheetName of book.SheetNames) {
+      /** الأوراق المخفية (Hidden = 1 أو 2): تُقرأ محليًّا إن أمكن، ولا تُرسل إلى Gemini أبدًا. */
+      const hidden: string[] = [];
+      const hiddenFlags = (book.Workbook?.Sheets ?? []).map((meta) => !!meta?.Hidden);
+      for (const [index, sheetName] of book.SheetNames.entries()) {
         const grid = XLSX.utils.sheet_to_json(book.Sheets[sheetName], {
           header: 1,
           raw: false,
@@ -254,6 +270,8 @@ export function ImportSheet({
               origin: many ? sheetName : "",
             }),
           );
+        } else if (hiddenFlags[index]) {
+          hidden.push(sheetName);
         } else if (hard.length < MAX_AI_SHEETS) {
           hard.push({ name: sheetName, csv: gridToCsv(grid) });
         } else {
@@ -263,63 +281,88 @@ export function ImportSheet({
 
       if (local.length) setDrafts((before) => [...before, ...local]);
 
-      let fromAi = 0;
-      let aiError = "";
       if (hard.length) {
-        setReadMsg({
-          kind: "ok",
-          text: local.length
-            ? `قرأتُ ${local.length} من الملف مباشرة، وأقرأ ${hard.length} بالذكاء الاصطناعي…`
-            : `أقرأ ${hard.length} ورقة بالذكاء الاصطناعي…`,
-        });
-        const result = await askAi(hard);
-        if (result.ok) {
-          const fresh: Draft[] = [];
-          for (const item of hard) {
-            const back = result.sheets.find((r) => r.sheet === item.name);
-            if (back && back.names.length) {
-              fresh.push(
-                makeDraft({
-                  how: "ai",
-                  name: back.cls || sheetLabel(item.name),
-                  text: back.names.join("\n"),
-                  origin: many ? item.name : "",
-                }),
-              );
-            } else {
-              unread.push(item.name);
-            }
-          }
-          fromAi = fresh.length;
-          if (fresh.length) setDrafts((before) => [...before, ...fresh]);
-        } else {
-          aiError = result.error;
-          unread.push(...hard.map((h) => h.name));
-        }
-      }
-
-      const total = local.length + fromAi;
-      if (!total) {
-        setReadMsg({
-          kind: "bad",
-          text: aiError
-            ? `لم أجد قوائم أسماء في الملف. ${aiError} اكتب الأسماء أو جرّب ملفًا آخر.`
-            : "لم أجد قوائم أسماء في الملف. اكتب الأسماء أو جرّب ملفًا آخر.",
-        });
+        // لا إرسال قبل الموافقة: تُعرض الأوراق ويقرّر الأستاذ.
+        setPendingAi({ sheets: hard, unread, hidden, local: local.length, many });
+        setReadMsg(null);
         return;
       }
-      const parts = [`وجدتُ ${total} ${total === 1 ? "قسمًا" : total === 2 ? "قسمين" : "أقسام"}`];
-      if (fromAi) parts.push(`${fromAi} منها بالذكاء الاصطناعي، فراجعها`);
-      let text = parts.join(": ");
-      if (unread.length) {
-        text += `. لم أجد أسماء في: ${unread.join("، ")}${aiError ? ` (${aiError})` : ""}`;
-      }
-      setReadMsg({ kind: unread.length ? "warn" : "ok", text: `${text}.` });
+      finishWorkbook(local.length, 0, unread, hidden, "");
     } catch {
       setReadMsg({ kind: "bad", text: "الملف غير مقروء. تأكد أنه Excel (xlsx) أو CSV، أو اكتب الأسماء." });
     } finally {
       setReading(false);
     }
+  }
+
+  /** بعد موافقة الأستاذ: الأوراق المعلّقة تُرسل إلى Gemini. */
+  async function sendPendingAi() {
+    const job = pendingAi;
+    if (!job) return;
+    setPendingAi(null);
+    setReading(true);
+    setReadMsg({ kind: "ok", text: `أقرأ ${job.sheets.length} ورقة بالذكاء الاصطناعي…` });
+    const unread = [...job.unread];
+    let fromAi = 0;
+    let aiError = "";
+    try {
+      const result = await askAi(job.sheets);
+      if (result.ok) {
+        const fresh: Draft[] = [];
+        for (const item of job.sheets) {
+          const back = result.sheets.find((r) => r.sheet === item.name);
+          if (back && back.names.length) {
+            fresh.push(
+              makeDraft({
+                how: "ai",
+                name: back.cls || sheetLabel(item.name),
+                text: back.names.join("\n"),
+                origin: job.many ? item.name : "",
+              }),
+            );
+          } else {
+            unread.push(item.name);
+          }
+        }
+        fromAi = fresh.length;
+        if (fresh.length) setDrafts((before) => [...before, ...fresh]);
+      } else {
+        aiError = result.error;
+        unread.push(...job.sheets.map((h) => h.name));
+      }
+    } finally {
+      setReading(false);
+    }
+    finishWorkbook(job.local, fromAi, unread, job.hidden, aiError);
+  }
+
+  /** رفض الأستاذ الإرسال: لا يخرج شيء، وتبقى الأوراق «غير مقروءة». */
+  function declinePendingAi() {
+    const job = pendingAi;
+    if (!job) return;
+    setPendingAi(null);
+    finishWorkbook(job.local, 0, [...job.unread, ...job.sheets.map((h) => h.name)], job.hidden, "");
+  }
+
+  function finishWorkbook(localCount: number, fromAi: number, unread: string[], hidden: string[], aiError: string) {
+    const total = localCount + fromAi;
+    const hiddenNote = hidden.length ? ` أوراق مخفية لم تُرسل: ${hidden.join("، ")}.` : "";
+    if (!total) {
+      setReadMsg({
+        kind: "bad",
+        text: (aiError
+          ? `لم أجد قوائم أسماء في الملف. ${aiError} اكتب الأسماء أو جرّب ملفًا آخر.`
+          : "لم أجد قوائم أسماء في الملف. اكتب الأسماء أو جرّب ملفًا آخر.") + hiddenNote,
+      });
+      return;
+    }
+    const parts = [`وجدتُ ${total} ${total === 1 ? "قسمًا" : total === 2 ? "قسمين" : "أقسام"}`];
+    if (fromAi) parts.push(`${fromAi} منها بالذكاء الاصطناعي، فراجعها`);
+    let text = parts.join(": ");
+    if (unread.length) {
+      text += `. لم أجد أسماء في: ${unread.join("، ")}${aiError ? ` (${aiError})` : ""}`;
+    }
+    setReadMsg({ kind: unread.length || hidden.length ? "warn" : "ok", text: `${text}.${hiddenNote}` });
   }
 
   function startTyping() {
@@ -570,11 +613,38 @@ export function ImportSheet({
                   ? "جارٍ القراءة…"
                   : `اقرأ الأسماء من ${countWord(shots.length, "الصورة", "الصورتين", "الصور", "الصور")}`}
               </button>
+              <small id="import-ai-notice" className="note" style={{ display: "block", marginBottom: 8 }}>
+                بالضغط تُرسل الصورة، بكل ما يظهر فيها من أسماء وغيرها، إلى Gemini من Google لتُقرأ
+                الأسماء. لا تُحفظ الصورة عندنا. لا تريد ذلك؟ اكتب الأسماء بيدك.
+              </small>
               {shots.length < MAX_SHOTS && <small className="note" style={{ display: "block", marginBottom: 8 }}>الورقة صفحتان؟ أضف الثانية قبل القراءة.</small>}
             </>
           )}
 
           {sourceTiles}
+
+          {pendingAi && (
+            <div id="import-ai-confirm" className="note warn" role="alertdialog" aria-labelledby="import-ai-confirm-title" style={{ marginTop: 10 }}>
+              <strong id="import-ai-confirm-title" style={{ display: "block", marginBottom: 4 }}>
+                {pendingAi.sheets.length === 1 ? "ورقة لم يفهم التطبيق ترتيبها" : `${pendingAi.sheets.length} أوراق لم يفهم التطبيق ترتيبها`}
+                {pendingAi.local ? ` (وقرأ ${pendingAi.local} بنفسه)` : ""}
+              </strong>
+              <div>{pendingAi.sheets.map((sheet) => sheet.name).join("، ")}</div>
+              <p style={{ margin: "6px 0" }}>
+                إن أرسلتها يُرسل نصّ <strong>كل</strong> خلاياها، لا الأسماء وحدها، ومعه اسم الورقة، إلى
+                Gemini من Google ليقرأ الأسماء. فإن كان فيها تواريخ ميلاد أو أرقام تعريف أو ملاحظات
+                أُرسلت معها. لا يُحفظ عندنا إلا الأسماء التي تعتمدها.
+              </p>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <button type="button" className="btn" disabled={reading || !online} onClick={() => void sendPendingAi()}>
+                  أرسلها إلى Gemini
+                </button>
+                <button type="button" className="btn soft" disabled={reading} onClick={declinePendingAi}>
+                  لا، سأكتبها بيدي
+                </button>
+              </div>
+            </div>
+          )}
 
           {readMsg && (
             <div

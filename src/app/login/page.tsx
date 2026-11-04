@@ -393,6 +393,9 @@ export default function LoginPage() {
         <a className="swap" href="/privacy" style={{ fontWeight: 400 }}>
           الخصوصية: أين تُحفظ البيانات ومن يراها
         </a>
+        <a className="swap" href="/terms" style={{ fontWeight: 400 }}>
+          شروط الاستخدام
+        </a>
       </form>
     </div>
   );

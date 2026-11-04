@@ -354,6 +354,13 @@ export function SettingsView({
         </div>
         <div className="srow2">
           <div className="k">
+            شروط الاستخدام
+            <small>ما يطلبه التطبيق منك وما يفعله</small>
+          </div>
+          <a className="btn ghost" href="/terms">اقرأ</a>
+        </div>
+        <div className="srow2">
+          <div className="k">
             حذف الحساب
             <small>يمحو كل أقسامك وعلاماتك نهائيًا</small>
           </div>

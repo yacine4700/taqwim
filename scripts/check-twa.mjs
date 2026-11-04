@@ -258,7 +258,8 @@ check("لا وعد مطلق بمهلة الحذف ولا بمدة النسخ: ص
   for (const page of [priv, del]) {
     expect(!page.includes("أقصاه 14"), "مهلة 14 يومًا ليست مضمونة");
     expect(!page.includes("12 شهرًا على الأكثر"), "12 شهرًا على الأكثر ليست مضمونة");
-    expect(page.includes("عادةً خلال 14 يومًا") && page.includes("نحو 12 شهرًا"));
+    expect(page.includes("عادةً خلال 14 يومًا") && page.includes("نحو 13 شهرًا بعد الحذف"));
+    expect(!page.includes("نحو 12 شهرًا"), "المدة الصحيحة نحو 13 شهرًا بعد الحذف (12 + سلة Drive)");
   }
 });
 check("الخصوصية تذكر أن ورقة Excel تُرسل كلها إلى Gemini لا الأسماء وحدها", () => expect(priv.includes("كل</strong>") || priv.includes("<strong>كل</strong>")));
@@ -269,7 +270,7 @@ check("الخصوصية: Gemini المدفوع بلا تضخيم — لا تحس
   expect(priv.includes("الخدمات المدفوعة") && priv.includes("لتحسين منتجاتها"), "ادعاء المستوى المدفوع");
   expect(priv.includes("لكن لذلك استثناءات") && priv.includes("كشف مخالفات") && priv.includes("قانون"), "الاستثناءات");
   expect(priv.includes("للأساتذة وحدهم") && priv.includes("لا حسابات للتلاميذ"), "التطبيق للأساتذة وحدهم");
-  expect(priv.includes("أسماء التلاميذ وكل ما في الصورة أو الملف") && priv.includes("أي بلد"), "إفصاح بيانات التلاميذ ضمن طلب الأستاذ وبلد التخزين");
+  expect(priv.includes("بكل ما يظهر فيها من أسماء وغيرها") && priv.includes("أي بلد"), "إفصاح بيانات التلاميذ ضمن طلب الأستاذ وبلد التخزين");
   // عبارات أوسع مما تسمح به شروط Google
   for (const bad of ["لا تُسجَّل", "لا تسجّل Google", "لا يطّلع", "لا يراها أحد", "تُحذف فورًا", "لا تُخزَّن"]) {
     expect(!priv.includes(bad), `عبارة أوسع من الشروط: ${bad}`);
@@ -348,6 +349,55 @@ check("صفحة /terms: لا بريد مكتوب، وتذكر 18 سنة وأن �
   expect(priv.includes('href="/terms"') && priv.includes("18 سنة"));
 });
 check("عامل الخدمة لا يخبّئ /consent ولا /terms", () => expect(!sw.includes("consent") && !sw.includes("terms")));
+/* ----- مراجعة 4 نوفمبر: مطابقة النصوص للشفرة ----- */
+const importSrc = SRC("app", "app", "ImportSheet.tsx");
+const termsPage = readFileSync(join(ROOT, "src", "app", "terms", "page.tsx"), "utf8");
+check("Excel: لا إرسال إلى Gemini قبل موافقة صريحة تسمّي الأوراق", () => {
+  const read = importSrc.slice(importSrc.indexOf("async function readWorkbook"), importSrc.indexOf("async function sendPendingAi"));
+  expect(read.length > 0 && !read.includes("askAi("), "readWorkbook لا ينادي askAi");
+  expect(read.includes("setPendingAi({ sheets: hard"), "الأوراق تنتظر الموافقة");
+  expect(importSrc.includes("أرسلها إلى Gemini") && importSrc.includes("لا، سأكتبها بيدي"));
+  expect(importSrc.includes("onClick={() => void sendPendingAi()}") && importSrc.includes("onClick={declinePendingAi}"));
+});
+check("Excel: الأوراق المخفية لا تُرسل أبدًا", () => {
+  const hiddenAt = importSrc.indexOf("} else if (hiddenFlags[index]) {");
+  const aiAt = importSrc.indexOf("} else if (hard.length < MAX_AI_SHEETS) {");
+  expect(hiddenAt > 0 && aiAt > hiddenAt, "فحص Hidden قبل الإضافة إلى ما يُرسل");
+  expect(importSrc.includes("book.Workbook?.Sheets"));
+});
+check("الصورة: لا يُرسل الملف الأصلي (EXIF) إن تعذّر التصغير، وتنبيه Google تحت زرّ القراءة", () => {
+  expect(!importSrc.includes("fileAsBase64"), "لا بديل يرسل الأصل");
+  expect(importSrc.includes('id="import-ai-notice"') && /إلى Gemini من Google/.test(importSrc));
+});
+check("الخصوصية والحذف: مصطلحات صحيحة (تجزئة لا تشفير، SHA-1، معرّف داخلي)", () => {
+  for (const page of [priv, del]) {
+    expect(!page.includes("مُشفَّرةً بطريقة") && !page.includes("المحفوظة مُشفَّرة"), "كلمة السر تجزئة");
+    expect(!page.includes("معرّف رقمي"), "المعرّف UUID");
+  }
+  expect(priv.includes("bcrypt") && priv.includes("SHA-1") && !priv.includes("بصمتها المشفّرة"));
+});
+check("الخصوصية: النسخ لا «تُشفَّر قبل أن تغادر الخادم»، وخوادم GitHub تعالجها صريحة", () => {
+  expect(!priv.includes("قبل أن تغادر الخادم"));
+  expect(priv.includes("خوادم GitHub تعالج البيانات غير") && priv.includes("مشفّرة دقائق"));
+});
+check("منطقة الخادم: vercel.json على fra1، والخصوصية تقول فرانكفورت وخارج الجزائر", () => {
+  const vj = JSON.parse(readFileSync(join(ROOT, "vercel.json"), "utf8"));
+  expect(JSON.stringify(vj.regions) === '["fra1"]', "regions");
+  expect(priv.includes("خارج الجزائر") && priv.includes("ومعالجته في فرانكفورت"));
+});
+check("الخصوصية: المشرف، والسجلّ ومدته، والاستعادة، وغير المؤكَّد، والجهاز، والحقوق", () => {
+  for (const t of ["لوحة الإشراف", "سنة واحدة", "استعادته من نسخة", "لم يُؤكَّد بريده", "لا تمسحها", "السلطة الوطنية لحماية", "خانة الغياب"]) {
+    expect(priv.includes(t), t);
+  }
+  expect(!priv.includes("هي لك وحدك"));
+});
+check("الروابط: /terms من الدخول والإعدادات والحذف والخصوصية", () => {
+  expect(loginSrc.includes('href="/terms"') && SRC("app", "app", "SettingsView.tsx").includes('href="/terms"'));
+  expect(del.includes('href="/terms"') && priv.includes('href="/terms"') && termsPage.includes('href="/privacy"'));
+});
+check("الشروط والخصوصية: صفة المشغّل بلا اسم شخصي", () => {
+  for (const t of [priv, termsPage]) expect(t.includes("أستاذٌ في التعليم الثانوي بالجزائر، بصفته الفردية"));
+});
 check("عامل الخدمة لا يخبّئ صفحة الحذف", () => expect(!sw.includes("delete-account")));
 
 console.log(`\ntwa: ${ok} نجح، ${failed} فشل`);

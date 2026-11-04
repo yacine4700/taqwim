@@ -68,7 +68,7 @@ function confirmMatches(typed, email) {
   return typed.trim().toLowerCase() === want;
 }
 
-const PRIVACY_VERSION = "2026-11-04.2";
+const PRIVACY_VERSION = "2026-11-04.3";
 
 function consentProblem(accepted) {
   return accepted ? null : "للمتابعة أقرّ بأنك أستاذ عمرك 18 سنة أو أكثر ووافق على سياسة الخصوصية وشروط الاستخدام.";
@@ -170,7 +170,7 @@ eq("بلا موافقة تُرفض", consentProblem(false), REFUSAL);
 eq("بموافقة تمرّ", consentProblem(true), null);
 const meta = signupMetadata("أستاذ تجريبي", new Date("2026-10-16T13:00:00.000Z"));
 eq("الاسم يُحفظ", meta.full_name, "أستاذ تجريبي");
-eq("نسخة الموافقة تُحفظ", meta.privacy_version, "2026-11-04.2");
+eq("نسخة الموافقة تُحفظ", meta.privacy_version, "2026-11-04.3");
 eq("تاريخ الموافقة بصيغة ISO", meta.privacy_accepted_at, "2026-10-16T13:00:00.000Z");
 eq("إقرار الأستاذ البالغ يُحفظ قيمةً منطقية", meta.attested_teacher_18plus, true);
 eq("لا حقل غير هذه الأربعة (لا تاريخ ميلاد ولا هوية)", Object.keys(meta).sort().join(","),
