@@ -390,6 +390,10 @@ check("الخصوصية: المشرف، والسجلّ ومدته، والاست
     expect(priv.includes(t), t);
   }
   expect(!priv.includes("هي لك وحدك"));
+  // استثناءات trim_audit_log في ترحيل 20261104190000: النصّ يطابق الدالة
+  const mig = readFileSync(join(ROOT, "supabase", "migrations", "20261104190000_audit_log_retention.sql"), "utf8");
+  expect(mig.includes("interval '1 year'") && mig.includes("private.audit_hold") && mig.includes("deletion_requests") && mig.includes("banned_until"));
+  for (const t of ["ما زال موقوفًا", "طلب حذف لم يُنفَّذ", "محجوز مؤقتًا لتحقيق"]) expect(priv.includes(t), t);
 });
 check("الروابط: /terms من الدخول والإعدادات والحذف والخصوصية", () => {
   expect(loginSrc.includes('href="/terms"') && SRC("app", "app", "SettingsView.tsx").includes('href="/terms"'));
