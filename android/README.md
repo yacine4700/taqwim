@@ -222,6 +222,6 @@ node android/make-assetlinks.mjs io.github.yacine4700.taqwim "SHA256: <بصمة 
 ويحتاج المتجر أيضًا: رابط حذف الحساب العام (`https://<النطاق>/delete-account`)، ورابط الخصوصية
 (`https://<النطاق>/privacy`)، وحسابًا تجريبيًّا للمراجعين. الإجابات المقترحة كلها في `docs/play-store/`.
 
-> **اسم الحزمة الفعلي:** `public/.well-known/assetlinks.json` فيه الحزمة `app.vercel.taqwim_theta.twa`
-> (الاسم الذي يقترحه Bubblewrap من النطاق)، لا `io.github.yacine4700.taqwim` المقترح أعلاه. اسم الحزمة لا
-> يتغيّر بعد أول رفع إلى Play، فقرّره قبله (انظر `docs/play-store/README.md`).
+> **اسم الحزمة المعتمد (4 نوفمبر 2026):** `io.github.yacine4700.taqwim`. أما `app.vercel.taqwim_theta.twa` فكان
+> لـAPK تجريبي وحده، ومدخلته باقية في `public/.well-known/assetlinks.json` حتى يزول من الأجهزة. التوقيع: Play App
+> Signing بمفتاح تولّده Google، ومفتاحك الحالي مفتاح رفع. التفاصيل والمخاطر في `docs/play-store/README.md`.

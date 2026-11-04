@@ -9,6 +9,7 @@
  * يقرأ twa-manifest.json وapp/build.gradle من مجلد المشروع، وassetlinks.json من هذا المستودع.
  * --aab / --apk: يقرأ بصمة شهادة الموقِّع بـ `keytool -printcert -jarfile` (شهادة عامة، لا سرّ فيها،
  *                ولا يُطلب ولا يُقرأ ملف المفتاح ولا كلمة مروره).
+ * --assetlinks:  ملف assetlinks.json آخر بدل الذي في المستودع (للاختبار).
  * --live:        يجلب https://<host>/.well-known/assetlinks.json ويقارنه بما في المستودع.
  *
  * لا يكتب شيئًا ولا يعدّل شيئًا. يخرج برمز 1 إن وُجد خطأ يمنع الرفع.
@@ -18,11 +19,11 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { checkProject, compareLive, fingerprintsFromKeytool, parseGradle } from "./twa-check.mjs";
+import { DECIDED_PACKAGE, checkProject, compareLive, fingerprintsFromKeytool, parseGradle } from "./twa-check.mjs";
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const USAGE =
-  "الاستعمال: node android/preflight.mjs --project <مجلد Bubblewrap> [--host <النطاق>] [--aab <ملف> | --apk <ملف>] [--live]";
+  "الاستعمال: node android/preflight.mjs --project <مجلد Bubblewrap> [--host <النطاق>] [--aab <ملف> | --apk <ملف>] [--live] [--assetlinks <ملف>]";
 
 function fail(msg) {
   console.error(`خطأ: ${msg}`);
@@ -30,7 +31,7 @@ function fail(msg) {
 }
 
 function parse(argv) {
-  const o = { project: null, host: null, aab: null, apk: null, live: false };
+  const o = { project: null, host: null, aab: null, apk: null, assetlinks: null, live: false };
   const a = [...argv];
   while (a.length) {
     const k = a.shift();
@@ -38,7 +39,7 @@ function parse(argv) {
     else if (k === "-h" || k === "--help") {
       console.log(USAGE);
       process.exit(0);
-    } else if (["--project", "--host", "--aab", "--apk"].includes(k)) {
+    } else if (["--project", "--host", "--aab", "--apk", "--assetlinks"].includes(k)) {
       const v = a.shift();
       if (!v) fail(`${k} بلا قيمة.\n${USAGE}`);
       o[k.slice(2)] = v;
@@ -63,7 +64,7 @@ const twaPath = resolve(project, "twa-manifest.json");
 const gradlePath = resolve(project, "app", "build.gradle");
 const twa = existsSync(twaPath) ? readJson(twaPath) : null;
 const gradle = existsSync(gradlePath) ? parseGradle(readFileSync(gradlePath, "utf8")) : null;
-const linksPath = resolve(REPO, "public", ".well-known", "assetlinks.json");
+const linksPath = opts.assetlinks ? resolve(opts.assetlinks) : resolve(REPO, "public", ".well-known", "assetlinks.json");
 const assetlinks = existsSync(linksPath) ? readJson(linksPath) : [];
 const host = opts.host ?? twa?.host ?? null;
 
@@ -90,6 +91,7 @@ const results = checkProject({
   repoRoot: REPO,
   signerPrints,
   forPlay: !opts.apk,
+  expectedPackage: DECIDED_PACKAGE,
 });
 
 if (opts.live && host && twa?.packageId) {

@@ -18,6 +18,13 @@ import { normalizeFingerprint, RELATION } from "./assetlinks.mjs";
 /** شرط Google Play للتطبيقات الجديدة وتحديثاتها منذ 31 أوت 2026 (Android 16). يرتفع كل سنة. */
 export const PLAY_MIN_TARGET_SDK = 36;
 
+/**
+ * اسم الحزمة المعتمد (4 نوفمبر 2026). لا يتغيّر بعد أول رفع إلى Play، ولا يُعاد استعماله ولو حُذف التطبيق.
+ * الحزمة السابقة app.vercel.taqwim_theta.twa كانت لـAPK تجريبي وحده، وتبقى في assetlinks.json حتى
+ * يزول ذاك الـAPK من الأجهزة.
+ */
+export const DECIDED_PACKAGE = "io.github.yacine4700.taqwim";
+
 /** القيم التي يُبنى عليها الغلاف: من public/manifest.webmanifest والوسيط. */
 export const EXPECTED = {
   startUrl: "/app",
@@ -98,7 +105,7 @@ export function insideRepo(absPath, repoRoot) {
  * - signerPrints: بصمات موقِّع الحزمة المبنية (من keytool)، أو null إن لم تُعطَ حزمة
  * - forPlay: الحزمة للرفع إلى Play (فبصمتها بصمة مفتاح الرفع، لا ما في assetlinks بالضرورة)
  */
-export function checkProject({ twa, gradle, assetlinks, host, signingKeyAbs, repoRoot, signerPrints = null, forPlay = true }) {
+export function checkProject({ twa, gradle, assetlinks, host, signingKeyAbs, repoRoot, signerPrints = null, forPlay = true, expectedPackage = null }) {
   const out = [];
   const ok = (msg) => out.push({ level: "ok", msg });
   const warn = (msg) => out.push({ level: "warn", msg });
@@ -111,7 +118,9 @@ export function checkProject({ twa, gradle, assetlinks, host, signingKeyAbs, rep
 
   const pkg = twa.packageId;
   if (!pkg) error("twa-manifest.json بلا packageId.");
-  else ok(`اسم الحزمة: ${pkg} (لا يتغيّر بعد أول رفع إلى Play)`);
+  else if (expectedPackage && pkg !== expectedPackage) {
+    error(`packageId = ${pkg}، والمعتمد ${expectedPackage}. غيّره في twa-manifest.json ثم \`bubblewrap update\` (والمفتاح لا يتغيّر).`);
+  } else ok(`اسم الحزمة: ${pkg} (لا يتغيّر بعد أول رفع إلى Play)`);
 
   if (!twa.host) warn("twa-manifest.json بلا host.");
   else if (host && twa.host !== host) error(`النطاق في الغلاف ${twa.host} غير النطاق المقصود ${host}.`);
@@ -156,7 +165,14 @@ export function checkProject({ twa, gradle, assetlinks, host, signingKeyAbs, rep
   // assetlinks
   const linked = pkg ? assetLinkPrints(assetlinks, pkg) : [];
   if (pkg && !linked.length) {
-    error(`الحزمة ${pkg} ليست في public/.well-known/assetlinks.json: سيفتح التطبيق بشريط عنوان.`);
+    if (forPlay) {
+      warn(
+        `الحزمة ${pkg} ليست بعد في public/.well-known/assetlinks.json. متوقَّع قبل إنشاء التطبيق في Play Console: ` +
+          "تُضاف بصمة «مفتاح توقيع التطبيق» من Play (make-assetlinks.mjs). قبل ذلك يفتح التطبيق بشريط عنوان.",
+      );
+    } else {
+      error(`الحزمة ${pkg} ليست في public/.well-known/assetlinks.json: سيفتح هذا الـAPK بشريط عنوان.`);
+    }
   } else if (pkg) {
     ok(`assetlinks.json فيه ${linked.length} بصمة للحزمة ${pkg}`);
   }

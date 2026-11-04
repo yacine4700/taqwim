@@ -10,8 +10,9 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { buildAssetLinks } from "../android/assetlinks.mjs";
+import { buildAssetLinks, checkPackage } from "../android/assetlinks.mjs";
 import {
+  DECIDED_PACKAGE,
   PLAY_MIN_TARGET_SDK,
   assetLinkPrints,
   checkProject,
@@ -113,9 +114,26 @@ check("targetSdk 35 خطأ ويذكر Bubblewrap 1.25.0", () => {
   const r = checkProject({ ...BASE, gradle: parseGradle(GRADLE.replace("targetSdkVersion 36", "targetSdkVersion 35")) });
   expect(levels(r).some((m) => m.includes("1.25.0")), JSON.stringify(r));
 });
-check("الحزمة ليست في assetlinks: خطأ", () => {
-  const r = checkProject({ ...BASE, assetlinks: buildAssetLinks("other.pkg.app", [A]) });
+check("APK مباشر: الحزمة ليست في assetlinks خطأ", () => {
+  const r = checkProject({ ...BASE, forPlay: false, assetlinks: buildAssetLinks("other.pkg.app", [A]) });
   expect(levels(r).some((m) => m.includes("assetlinks")));
+});
+check("AAB لـPlay: الحزمة ليست بعد في assetlinks تنبيه لا خطأ (تنتظر بصمة Play)", () => {
+  const r = checkProject({ ...BASE, forPlay: true, assetlinks: buildAssetLinks("other.pkg.app", [A]) });
+  expect(!levels(r).length && warns(r).some((m) => m.includes("Play")), JSON.stringify(r));
+});
+check("اسم الحزمة المعتمد: يطابق فيمرّ", () => {
+  const r = checkProject({ ...BASE, expectedPackage: PKG });
+  expect(!levels(r).length);
+});
+check("اسم حزمة غير المعتمد (الاسم القديم مثلًا): خطأ يذكر bubblewrap update", () => {
+  const r = checkProject({ ...BASE, expectedPackage: DECIDED_PACKAGE });
+  expect(levels(r).some((m) => m.includes(DECIDED_PACKAGE) && m.includes("bubblewrap update")), JSON.stringify(r));
+});
+check("الاسم المعتمد صالح ولا يحمل اسم المنصّة", () => {
+  checkPackage(DECIDED_PACKAGE);
+  expect(DECIDED_PACKAGE === "io.github.yacine4700.taqwim");
+  expect(!/vercel|theta/.test(DECIDED_PACKAGE));
 });
 check("نطاق غير المقصود: خطأ", () =>
   expect(levels(checkProject({ ...BASE, host: "taqwim-theta.vercel.app" })).length === 1));
@@ -181,12 +199,13 @@ const tmp = mkdtempSync(join(tmpdir(), "taqwim-twa-"));
 try {
   const proj = join(tmp, "taqwim-android");
   mkdirSync(join(proj, "app"), { recursive: true });
-  // الحزمة الوحيدة في assetlinks.json الحقيقي في المستودع، ليمرّ فحص الحزمة
-  const real = JSON.parse(readFileSync(join(ROOT, "public", ".well-known", "assetlinks.json"), "utf8"));
-  const realPkg = real[0].target.package_name;
+  // assetlinks مؤقّت فيه الحزمة المعتمدة: الملف الحقيقي في المستودع لا يضمّها قبل بصمة Play
+  const realPkg = DECIDED_PACKAGE;
+  const linksFile = join(tmp, "assetlinks.json");
+  writeFileSync(linksFile, JSON.stringify(buildAssetLinks(realPkg, [A])));
   writeFileSync(join(proj, "twa-manifest.json"), JSON.stringify({ ...TWA, packageId: realPkg, signingKey: { path: "./k.keystore", alias: "taqwim" } }));
   writeFileSync(join(proj, "app", "build.gradle"), GRADLE.replace(`"${PKG}"`, `"${realPkg}"`));
-  const run = (args) => spawnSync(process.execPath, [join(ROOT, "android", "preflight.mjs"), ...args], { encoding: "utf8" });
+  const run = (args) => spawnSync(process.execPath, [join(ROOT, "android", "preflight.mjs"), ...args, "--assetlinks", linksFile], { encoding: "utf8" });
 
   check("مشروع سليم: رمز 0", () => {
     const r = run(["--project", proj]);
@@ -199,6 +218,12 @@ try {
     expect(r.status === 1, r.stdout);
   });
   check("مجلد بلا مشروع: رمز 1", () => expect(run(["--project", tmp]).status === 1));
+  check("packageId القديم في twa-manifest: رمز 1", () => {
+    writeFileSync(join(proj, "app", "build.gradle"), GRADLE.replace(`"${PKG}"`, `"${realPkg}"`));
+    writeFileSync(join(proj, "twa-manifest.json"), JSON.stringify({ ...TWA, packageId: "app.vercel.taqwim_theta.twa", signingKey: { path: "./k.keystore", alias: "taqwim" } }));
+    const r = run(["--project", proj]);
+    expect(r.status === 1 && r.stdout.includes(DECIDED_PACKAGE), r.stdout);
+  });
   check("بلا --project: رمز 1 ورسالة الاستعمال", () => {
     const r = run([]);
     expect(r.status === 1 && r.stderr.includes("--project"));
@@ -227,6 +252,29 @@ check("سياسة الخصوصية تشير إلى صفحة الحذف ولقس�
   expect(priv.includes('href="/delete-account"') && priv.includes('id="delete"')));
 check("سياسة الخصوصية تذكر Gemini لملفات Excel لا للصور وحدها", () => expect(priv.includes("Excel") && priv.includes("Gemini")));
 check("سياسة الخصوصية لا تقول «كل ليلة» عن النسخ (صار أسبوعيًّا)", () => expect(!priv.includes("كل ليلة")));
+check("لا وعد مطلق بمهلة الحذف ولا بمدة النسخ: صيغتا «عادةً» و«نحو»", () => {
+  for (const page of [priv, del]) {
+    expect(!page.includes("أقصاه 14"), "مهلة 14 يومًا ليست مضمونة");
+    expect(!page.includes("12 شهرًا على الأكثر"), "12 شهرًا على الأكثر ليست مضمونة");
+    expect(page.includes("عادةً خلال 14 يومًا") && page.includes("نحو 12 شهرًا"));
+  }
+});
+check("الخصوصية تذكر أن ورقة Excel تُرسل كلها إلى Gemini لا الأسماء وحدها", () => expect(priv.includes("كل</strong>") || priv.includes("<strong>كل</strong>")));
+check("سجلّ العمليات: الحذف بطلب الأستاذ يختلف عن حذف المشرف الفوري (بريد مقنَّع وسبب)", () => {
+  for (const page of [priv, del]) expect(page.includes("مقنَّعًا") && page.includes("مشرف التطبيق"));
+});
+check("لا ادعاء فوترة لـGemini قبل التحقّق منها (حساب مفوتَر / لا تستعمل المحتوى لتحسين)", () => {
+  expect(!priv.includes("مفوتَر") && !priv.includes("لتحسين منتجاتها"), "أضف الادعاء بعد التحقّق وحدّث هذا الاختبار");
+});
+check("لا عنوان بريد مكتوب في الصفحات العامة: يأتي من NEXT_PUBLIC_CONTACT_EMAIL وحده", () => {
+  const login = readFileSync(join(ROOT, "src", "app", "login", "page.tsx"), "utf8");
+  for (const [name, text] of [["privacy", priv], ["delete-account", del], ["login", login]]) {
+    expect(!/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[a-z]{2,}/.test(text), `بريد مكتوب في ${name}`);
+  }
+  expect(priv.includes("process.env.NEXT_PUBLIC_CONTACT_EMAIL") && del.includes("process.env.NEXT_PUBLIC_CONTACT_EMAIL"));
+  const envEx = readFileSync(join(ROOT, ".env.example"), "utf8");
+  expect(/^NEXT_PUBLIC_CONTACT_EMAIL=$/m.test(envEx), "المتغيّر في .env.example فارغ");
+});
 check("عامل الخدمة لا يخبّئ صفحة الحذف", () => expect(!sw.includes("delete-account")));
 
 console.log(`\ntwa: ${ok} نجح، ${failed} فشل`);
