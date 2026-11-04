@@ -38,7 +38,7 @@ jobs:
           echo "$out" | grep -q "PostgreSQL) 17\." || { echo "::error::لم يعمل على 17"; exit 1; }
           echo "$out" | grep -q " 0 failed" || { echo "::error::فشل اختبار"; exit 1; }
 
-      - name: مدة سجلّ العمليات (سنة): الترحيل والاختبارات والتراجع
+      - name: مدة سجلّ العمليات (سنة) - الترحيل والاختبارات والتراجع
         run: |
           out=$(sudo PG_BIN=/usr/lib/postgresql/17/bin scripts/check-audit-retention.sh 2>&1) || { echo "$out"; exit 1; }
           echo "$out" | grep -E "^Postgres:|^==|^ok |passed|FAIL"
