@@ -9,10 +9,14 @@ import { useBackLayers } from "@/lib/useBackLayers";
 import { clearAppCaches } from "@/lib/appCache";
 import {
   algiersToday,
+  parseYearNotice,
   termName,
   termNotice,
   termView,
+  YEAR_CLOSED_SAY,
+  yearBanner,
   type TermRow,
+  type YearNotice,
 } from "@/lib/terms";
 import { nextPositions } from "@/lib/roster";
 import { groupBySchool } from "@/lib/schools";
@@ -78,6 +82,7 @@ import { PendingSheet, SyncBadge, since } from "./sync";
 import { StudentSheet } from "./StudentSheet";
 import { ImportSheet } from "./ImportSheet";
 import { BackupSheet, backupJson, downloadBlob } from "./BackupSheet";
+import { MoveRosterSheet, YearBannerCard } from "./YearParts";
 import { Tabs } from "./parts";
 
 /** رسالة تقول للأستاذ ما حدث وما يفعل، لا «تعذّر» وحدها. */
@@ -102,6 +107,8 @@ export default function AppClient({
   const [calendar, setCalendar] = useState<TermRow[]>([]);
   /** وصلت الرزنامة من نسخة الجهاز أو الخادم، فيُفتح الفصل الجاري مرة واحدة. */
   const [calendarKnown, setCalendarKnown] = useState(false);
+  /** أقسام السنوات المنتهية (my_year_notice). null = لا قفل ولا لافتة. */
+  const [yearNotice, setYearNotice] = useState<YearNotice | null>(null);
   /** اليوم بتوقيت الجزائر؛ يتجدد إذا بقي التطبيق مفتوحًا عبر منتصف الليل. */
   const [todayIso, setTodayIso] = useState(() => algiersToday());
   const [classes, setClasses] = useState<Klass[]>([]);
@@ -160,6 +167,8 @@ export default function AppClient({
   /* الخروج العادي (لا شيء في الطابور) يسبقه سؤال أيضًا */
   const [confirmLogout, setConfirmLogout] = useState(false);
   const [backupOpen, setBackupOpen] = useState(false);
+  /** نقل أسماء قسم مقفل إلى قسم جديد: معرّف القسم القديم، أو null إن لم تُفتح الورقة. */
+  const [movingFrom, setMovingFrom] = useState<string | null>(null);
   /** بصمات العمليات المعلّقة التي ضمّها آخر ملف «نسختي» نُزِّل: بوّابة الخروج. */
   const [exportedOps, setExportedOps] = useState<ReadonlySet<string>>(() => new Set());
   const [persistence, setPersistence] = useState<Persistence | null>(null);
@@ -316,6 +325,10 @@ export default function AppClient({
       .from("term_calendar")
       .select("school_year,term,starts_on,ends_on,grace_days")
       .order("starts_on");
+    /* إشعار السنة الدراسية كالرزنامة: غياب الدالة (ترحيل لم يُطبَّق) أو انقطاع لا يُقفل شيئًا
+       ولا يمحو ما حُفظ على الجهاز. */
+    const yn = await supabase.rpc("my_year_notice");
+    const yearRead = yn.error ? null : parseYearNotice(yn.data);
     const calendarRows: TermRow[] | null = cal.error
       ? null
       : ((cal.data ?? []) as TermRow[]).map((r) => ({
@@ -367,6 +380,7 @@ export default function AppClient({
         : [],
       tpReady: ready,
       calendar: calendarRows ?? undefined,
+      yearNotice: yearRead ?? undefined,
       criteria: (cr.data ?? []) as Criterion[],
       components: (cp.data ?? []) as Component[],
       records: applyRecords((r.data ?? []) as RecordRow[], landed),
@@ -391,6 +405,8 @@ export default function AppClient({
       setCalendar(calendarRows);
       setCalendarKnown(true);
     }
+    // قراءة فاشلة أو غير مفهومة تُبقي ما حُفظ؛ ونجاحها يستبدل ولو بقائمة فارغة.
+    if (yearRead) setYearNotice(yearRead);
     setCachedAt(null);
     setLoading(false);
     void kvSet(snapKey, snapshot);
@@ -426,6 +442,7 @@ export default function AppClient({
         setCalendar(saved.calendar);
         setCalendarKnown(true);
       }
+      if (saved.yearNotice) setYearNotice(saved.yearNotice);
       setProfile(saved.profile ?? NO_PROFILE);
       setCachedAt(saved.savedAt ?? 0);
       setLoading(false);
@@ -501,11 +518,32 @@ export default function AppClient({
 
   const view = useMemo(() => termView(calendar, todayIso), [calendar, todayIso]);
   /** الفصل المعروض مقفل: يُعرض ويُطبع ويُصدَّر، ولا يُنقَّط. القاعدة تحرس هذا أيضًا. */
-  const locked = !view.terms[term as 1 | 2 | 3]?.open;
-  const lockedSay = useCallback(
-    () => say(`${termName(term)} مغلق: للاطلاع فقط.`),
-    [say, term],
+  const termLocked = !view.terms[term as 1 | 2 | 3]?.open;
+  /** أقسام السنوات المنتهية: لا تنقيط فيها، ويبقى الاطلاع والتصدير وإضافة التلاميذ. */
+  const yearClosedIds = useMemo(
+    () => new Set((yearNotice?.closed ?? []).map((c) => c.classId)),
+    [yearNotice],
   );
+  /** القسم الذي تجري فيه الكتابة الآن: قسم التلميذ المفتوح، وإلا القسم المفتوح. */
+  const activeClass = openStudent?.class_id ?? openClass;
+  const yearLocked = activeClass !== null && yearClosedIds.has(activeClass);
+  const locked = termLocked || yearLocked;
+  const lockedSay = useCallback(
+    () => say(yearLocked ? YEAR_CLOSED_SAY : `${termName(term)} مغلق: للاطلاع فقط.`),
+    [say, term, yearLocked],
+  );
+  /** كتابة في حصة أو علامتها: قفل قسمها (لا القسم المفتوح)، ثم قفل فصلها. */
+  const sessionWriteBlocked = (classId: string, sessionTerm: number): boolean => {
+    if (yearClosedIds.has(classId)) {
+      say(YEAR_CLOSED_SAY);
+      return true;
+    }
+    if (!view.terms[sessionTerm as 1 | 2 | 3]?.open) {
+      lockedSay();
+      return true;
+    }
+    return false;
+  };
 
   /* يُفتح التطبيق عند الدخول على الفصل الجاري بالتاريخ، مرة واحدة لا كلما تغيّر شيء. */
   const landedRef = useRef(false);
@@ -864,8 +902,9 @@ export default function AppClient({
     title: string | null;
   }): string {
     // الواجهة لا تعرض «حصة جديدة» في فصل مقفل؛ هذا حارس أخير. القاعدة ترفض أيضًا.
-    if (locked) {
-      lockedSay();
+    if (locked || yearClosedIds.has(input.class_id)) {
+      if (yearClosedIds.has(input.class_id)) say(YEAR_CLOSED_SAY);
+      else lockedSay();
       return "";
     }
     const session: TpSession = { id: uid(), term, ...input };
@@ -876,13 +915,13 @@ export default function AppClient({
   function editTpSession(id: string, patch: { held_on?: string; title?: string | null }) {
     const current = sessions.find((s) => s.id === id);
     if (!current) return;
-    if (!view.terms[current.term as 1 | 2 | 3]?.open) return lockedSay();
+    if (sessionWriteBlocked(current.class_id, current.term)) return;
     outbox.push(newOp("tp-session", { session: { ...current, ...patch } }));
   }
 
   /** حذف حصة وعلاماتها: يحتاج الخادم، وما لم يُرسل منها يُسقَط من الطابور أولًا. */
   async function deleteTpSession(session: TpSession) {
-    if (!view.terms[session.term as 1 | 2 | 3]?.open) return lockedSay();
+    if (sessionWriteBlocked(session.class_id, session.term)) return;
     if (!needsNetwork()) return;
     for (const op of queue) {
       if (opSessionId(op) === session.id) outbox.discard(op.id);
@@ -900,8 +939,9 @@ export default function AppClient({
 
   /** علامة تلميذ في حصة. بلا علامة ولا غياب = مسح: يعود «لم يُقيَّم» لا صفرًا. */
   function setTpMark(sessionId: string, studentId: string, score: number | null, absent: boolean) {
-    const sessionTerm = sessions.find((s) => s.id === sessionId)?.term ?? term;
-    if (!view.terms[sessionTerm as 1 | 2 | 3]?.open) return lockedSay();
+    const session = sessions.find((s) => s.id === sessionId);
+    const sessionTerm = session?.term ?? term;
+    if (sessionWriteBlocked(session?.class_id ?? activeClass ?? "", sessionTerm)) return;
     outbox.push(
       newOp("tp-mark", { session_id: sessionId, student_id: studentId, score, absent }),
     );
@@ -1219,6 +1259,30 @@ export default function AppClient({
     return { ok: true, id: created.id, students: names.length };
   }
 
+  /**
+   * نقل أسماء قسم مقفل إلى قسم جديد (الأسماء وترتيبها فقط، لا علامات ولا ملاحظات).
+   * القسم الجديد من السنة الجارية فلا يُقفل. وأصله يبقى إلى موعد حذفه.
+   */
+  async function moveRoster(classId: string, name: string): Promise<CreateResult> {
+    const old = classes.find((c) => c.id === classId);
+    const schoolId = old?.school_id ?? schools[0]?.id;
+    if (!old || !schoolId) return { ok: false, error: "أضف مؤسسة أولًا ثم أعد المحاولة." };
+    const names = studentsOf(classId)
+      .slice()
+      .sort((a, b) => a.position - b.position)
+      .map((s) => s.full_name);
+    if (names.length === 0) return { ok: false, error: "لا تلاميذ في هذا القسم." };
+    const result = await createClassWithStudents(name, names, schoolId);
+    if (result.ok) {
+      setMovingFrom(null);
+      await load();
+      setOpenClass(result.id);
+      setTab("classes");
+      say(`نُقلت أسماء ${names.length} تلميذًا إلى «${name}». لم تُنقل علاماتهم.`);
+    }
+    return result;
+  }
+
   /** بعد دفعة إنشاء: يحمّل الأقسام، ويفتح أولها، ولا يغلق الورقة إلا إن نجح كل شيء. */
   async function finishImport(firstId: string | null, made: number, students: number, allDone: boolean) {
     await load();
@@ -1387,6 +1451,7 @@ export default function AppClient({
   const layerStack: Array<[boolean, () => void]> = [
     [confirmLogout, () => setConfirmLogout(false)],
     [confirmSignOut, () => setConfirmSignOut(false)],
+    [movingFrom !== null, () => setMovingFrom(null)],
     [backupOpen, () => setBackupOpen(false)],
     [showPending, () => setShowPending(false)],
     [
@@ -1495,7 +1560,31 @@ export default function AppClient({
 
           {/* التنبيه حيث تُكتب العلامات: مهلة الفصل المنتهي، أو فصل مقفل للاطلاع فقط.
               ويقترح الفصل الجاري. القاعدة هي الحَكَم، وهذا تنبيه قبل أن يُرفض شيء. */}
-          {tab === "classes" && openClass && (() => {
+          {/* لافتة الحذف السنوي في قائمة الأقسام، من 1 سبتمبر. */}
+          {tab === "classes" && !openClass && (() => {
+            const banner = yearBanner(yearNotice, todayIso);
+            if (!banner) return null;
+            const firstClosed = classes.find((c) => yearClosedIds.has(c.id));
+            return (
+              <YearBannerCard
+                banner={banner}
+                onBackup={() => setBackupOpen(true)}
+                onMove={() => firstClosed && setMovingFrom(firstClosed.id)}
+              />
+            );
+          })()}
+
+          {/* قسم من سنة منتهية: للاطلاع والتصدير وإضافة التلاميذ، ومنه يُنقل الأسماء. */}
+          {tab === "classes" && openClass && yearLocked && (
+            <div className="note warn termnote" role="status">
+              <span>{YEAR_CLOSED_SAY}</span>
+              <button className="clearb" onClick={() => setMovingFrom(openClass)}>
+                نقل الأسماء إلى قسم جديد
+              </button>
+            </div>
+          )}
+
+          {tab === "classes" && openClass && !yearLocked && (() => {
             const notice = termNotice(term, view);
             if (!notice) return null;
             return (
@@ -1833,6 +1922,16 @@ export default function AppClient({
           onFlush={outbox.flush}
           onRetry={outbox.retry}
           onDiscard={outbox.discard}
+        />
+      )}
+
+      {movingFrom !== null && (
+        <MoveRosterSheet
+          closed={classes.filter((c) => yearClosedIds.has(c.id))}
+          initialId={movingFrom}
+          count={(id) => studentsOf(id).length}
+          onCancel={() => setMovingFrom(null)}
+          onMove={moveRoster}
         />
       )}
 

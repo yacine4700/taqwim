@@ -1,5 +1,5 @@
 import { type Group } from "@/lib/groups";
-import { type TermRow } from "@/lib/terms";
+import { type TermRow, type YearNotice } from "@/lib/terms";
 import {
   type Component,
   type Criterion,
@@ -76,6 +76,8 @@ export type Snapshot = {
   tpReady?: boolean;
   /** رزنامة الفصول: غائبة من نسخة أقدم من هذا الإصدار، فلا يُقفل شيء حتى تصل. */
   calendar?: TermRow[];
+  /** أقسام السنوات المنتهية وتاريخ حذفها (my_year_notice). غائب = لا قفل ولا لافتة. */
+  yearNotice?: YearNotice | null;
   savedAt: number;
 };
 

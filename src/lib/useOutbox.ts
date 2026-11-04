@@ -18,7 +18,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { createClient } from "@/lib/supabase/client";
 import { kvGet, kvSet } from "@/lib/localdb";
-import { closedTermOf, termName } from "@/lib/terms";
+import { closedTermOf, isClassYearClosed, termName, YEAR_CLOSED_SAY } from "@/lib/terms";
 import { afterFailure, classifyFailure, enqueue, mayFailSilently, writesBlocked, type Op } from "@/lib/outbox";
 import { DEFAULT_READING_CODE } from "@/lib/scoring";
 
@@ -351,9 +351,11 @@ export function useOutbox(
               ? "انتهت الجلسة: تُرسل بعد الدخول من جديد"
               : kind === "frozen"
                 ? "الحساب مجدول للحذف أو موقوف: تُرسل بعد الإلغاء"
-                : closedTermOf(result.message) !== null
-                  ? `${termName(closedTermOf(result.message)!)} أُغلق، فرفض الخادم هذه العلامة. تجاهلها من هنا.`
-                  : result.message;
+                : isClassYearClosed(result.message)
+                  ? `${YEAR_CLOSED_SAY} فرفض الخادم هذه العلامة. تجاهلها من هنا.`
+                  : closedTermOf(result.message) !== null
+                    ? `${termName(closedTermOf(result.message)!)} أُغلق، فرفض الخادم هذه العلامة. تجاهلها من هنا.`
+                    : result.message;
           let outcome: ReturnType<typeof afterFailure> | null = null;
           setQ((q) =>
             q.map((op) => {

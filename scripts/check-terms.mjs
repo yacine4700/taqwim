@@ -3,6 +3,7 @@
    يحتاج Node 22.6 فأحدث مع --experimental-strip-types. */
 import {
   currentTerm, termView, termNotice, closedTermOf, algiersToday, addDays, daysBetween,
+  isClassYearClosed, parseYearNotice, yearBanner, dateAr, YEAR_CLOSED_SAY,
 } from "../src/lib/terms.ts";
 
 let pass = 0, fail = 0;
@@ -80,6 +81,65 @@ console.log("— رسالة الخادم");
 t("term_closed:2", closedTermOf("term_closed:2"), 2);
 t("رسالة أخرى", closedTermOf("duplicate key"), null);
 t("فارغة", closedTermOf(null), null);
+
+console.log("— السنة الدراسية: رسالة الخادم وقراءة الإشعار");
+t("class_year_closed", isClassYearClosed("class_year_closed"), true);
+t("رسالة PostgREST تحوي الاسم", isClassYearClosed('{"message":"class_year_closed"}'), true);
+t("رسالة الفصل ليست رسالة السنة", isClassYearClosed("term_closed:2"), false);
+t("فارغة", isClassYearClosed(null), false);
+t("نص القفل المتفق عليه", YEAR_CLOSED_SAY, "التنقيط مغلق لهذا القسم، ويمكنك الاطلاع والتصدير وإضافة التلاميذ.");
+const NOTICE = { year_start: 2027, closed: [
+  { class_id: "a", purge_on: "2027-11-07" }, { class_id: "b", purge_on: "2027-11-07" } ] };
+t("ردّ سليم", parseYearNotice(NOTICE), { yearStart: 2027, closed: [
+  { classId: "a", purgeOn: "2027-11-07" }, { classId: "b", purgeOn: "2027-11-07" } ] });
+t("لا أقسام مقفلة", parseYearNotice({ year_start: 2027, closed: [] })?.closed.length, 0);
+t("null", parseYearNotice(null), null);
+t("نصّ لا كائن", parseYearNotice("x"), null);
+t("closed ليست مصفوفة", parseYearNotice({ closed: 1 }), null);
+t("تاريخ بصيغة غريبة", parseYearNotice({ closed: [{ class_id: "a", purge_on: "7/11/2027" }] }), null);
+t("معرّف ليس نصًّا", parseYearNotice({ closed: [{ class_id: 5, purge_on: "2027-11-07" }] }), null);
+t("year_start مفقود لا يُسقط الباقي", parseYearNotice({ closed: [] })?.yearStart, null);
+
+console.log("— السنة الدراسية: اللافتة");
+const YN = parseYearNotice(NOTICE);
+t("تاريخ بالجزائرية", dateAr("2027-11-07"), "7 نوفمبر 2027");
+t("جوان وجانفي", `${dateAr("2027-06-01")}|${dateAr("2027-01-31")}`, "1 جوان 2027|31 جانفي 2027");
+t("31 أوت 2027: لا لافتة قبل 1 سبتمبر", yearBanner(YN, "2027-08-31"), null);
+t("1 سبتمبر 2027: لافتة info", yearBanner(YN, "2027-09-01")?.tone, "info");
+t("نصّ الإعلان", yearBanner(YN, "2027-09-01")?.text,
+  "بيانات السنة الدراسية السابقة (قسمان) مغلقة للتنقيط، وتُحذف نهائيًّا ابتداءً من 7 نوفمبر 2027. نزّل «نسختي» قبل ذلك، أو انقل أسماء تلاميذك إلى قسم جديد.");
+t("قبل 15 يومًا: info", yearBanner(YN, "2027-10-23")?.tone, "info");
+t("قبل 14 يومًا: warn", yearBanner(YN, "2027-10-24")?.tone, "warn");
+t("قبل 14 يومًا: daysLeft", yearBanner(YN, "2027-10-24")?.daysLeft, 14);
+t("قبل 4 أيام: warn", yearBanner(YN, "2027-11-03")?.tone, "warn");
+t("قبل 3 أيام: bad", yearBanner(YN, "2027-11-04")?.tone, "bad");
+t("نصّ آخر 3 أيام", yearBanner(YN, "2027-11-04")?.text.startsWith("تُحذف بيانات السنة الدراسية السابقة (قسمان) نهائيًّا بعد 3 أيام (7 نوفمبر 2027)."), true);
+t("غدًا", yearBanner(YN, "2027-11-06")?.text.includes("نهائيًّا غدًا"), true);
+t("يوم الحذف", yearBanner(YN, "2027-11-07")?.text.includes("نهائيًّا اليوم"), true);
+t("بعد الموعد ولم يُنفَّذ: bad وdaysLeft سالب", [yearBanner(YN, "2027-11-09")?.tone, yearBanner(YN, "2027-11-09")?.daysLeft], ["bad", -2]);
+t("بعد الموعد: تقول حلّ الموعد", yearBanner(YN, "2027-11-09")?.text.startsWith("حلّ موعد حذف بيانات السنة الدراسية السابقة (قسمان) في 7 نوفمبر 2027"), true);
+t("قسم واحد", yearBanner(parseYearNotice({ closed: [{ class_id: "a", purge_on: "2027-11-07" }] }), "2027-09-02")?.text.startsWith("بيانات السنة الدراسية السابقة (قسم واحد) مغلقة"), true);
+t("بلا أقسام مقفلة: لا لافتة", yearBanner(parseYearNotice({ closed: [] }), "2027-10-30"), null);
+t("بلا إشعار (دالة غائبة): لا لافتة", yearBanner(null, "2027-10-30"), null);
+t("أقدم تاريخ حذف هو المعتمد وعدد أقسامه فقط", [
+  yearBanner(parseYearNotice({ closed: [
+    { class_id: "a", purge_on: "2027-11-07" }, { class_id: "o", purge_on: "2026-11-07" }, { class_id: "p", purge_on: "2026-11-07" } ] }), "2027-09-02")?.purgeOn,
+  yearBanner(parseYearNotice({ closed: [
+    { class_id: "a", purge_on: "2027-11-07" }, { class_id: "o", purge_on: "2026-11-07" }, { class_id: "p", purge_on: "2026-11-07" } ] }), "2027-09-02")?.count,
+], ["2026-11-07", 2]);
+
+console.log("— السنة الدراسية: ربط الواجهة (فحص نصّي للمصدر؛ لا بيئة React هنا)");
+import { readFileSync } from "node:fs";
+const app = readFileSync(new URL("../src/app/app/AppClient.tsx", import.meta.url), "utf8");
+const outboxHook = readFileSync(new URL("../src/lib/useOutbox.ts", import.meta.url), "utf8");
+t("القفل العام يجمع الفصل والسنة", /const locked = termLocked \|\| yearLocked;/.test(app), true);
+t("قسم التلميذ المفتوح أولًا ثم القسم المفتوح", /const activeClass = openStudent\?\.class_id \?\? openClass;/.test(app), true);
+t("حصة جديدة تتحقّق من قفل قسمها", /yearClosedIds\.has\(input\.class_id\)/.test(app), true);
+t("تعديل الحصة وحذفها وعلامتها تمرّ بحارس القسم والفصل", (app.match(/sessionWriteBlocked\(/g) ?? []).length, 3); // تعديل وحذف وعلامة
+t("لا بقاء للحارس القديم بالفصل وحده في الحصص", /view\.terms\[(current|session)\.term as 1 \| 2 \| 3\]\?\.open\) return lockedSay/.test(app), false);
+t("قراءة الإشعار لا تُفشل التحميل", /supabase\.rpc\("my_year_notice"\)/.test(app) && /yn\.error \? null/.test(app), true);
+t("رسالة الطابور لرفض السنة", /isClassYearClosed\(result\.message\)/.test(outboxHook), true);
+t("إضافة التلاميذ غير محجوبة بالقفل", /async function addStudents[\s\S]{0,400}?locked/.test(app), false);
 
 console.log("— التواريخ");
 t("اليوم بتوقيت الجزائر قبيل منتصف الليل بتوقيت UTC", algiersToday(new Date("2026-12-17T23:30:00Z")), "2026-12-18");

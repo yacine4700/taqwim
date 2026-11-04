@@ -619,6 +619,7 @@ a.btn, a.swap { text-decoration: none; }
 .delta.down { color: var(--danger); }
 .termnote { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
 .termnote span { flex: 1 1 160px; }
+.yearacts { display: flex; gap: 6px; flex-wrap: wrap; flex: 0 1 auto !important; }
 /* fieldset معطَّل لفصل مقفل: بلا إطار المتصفح، ويُرى معطَّلًا */
 .rofield { border: 0; margin: 0; padding: 0; min-width: 0; }
 .rofield:disabled { opacity: 0.55; }

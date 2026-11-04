@@ -195,3 +195,108 @@ export function termNotice(
   }
   return null;
 }
+
+/* ------------------------------------------------------------------------
+ * السنة الدراسية: قفل أقسام السنوات المنتهية وإشعار الحذف السنوي.
+ *
+ * الحَكَم هو القاعدة (trg_guard_year_write ترفض الكتابة برمز 23514 ونصّ
+ * class_year_closed، وpublic.my_year_notice تعيد معرّفات الأقسام المقفلة وتاريخ
+ * حذفها فقط). وهذا للواجهة: تعطّل الأزرار وتكتب التنبيه قبل أن يُرفض شيء.
+ * وغياب الدالة (ترحيل لم يُطبَّق) أو تعذّر قراءتها لا يقفل شيئًا.
+ * ------------------------------------------------------------------------ */
+
+/** ما يُقال حين تُرفض كتابة (أو تُمنع) في قسم من سنة منتهية. */
+export const YEAR_CLOSED_SAY = "التنقيط مغلق لهذا القسم، ويمكنك الاطلاع والتصدير وإضافة التلاميذ.";
+
+/** نصّ الخطأ الذي يرفض به الخادم الكتابة في قسم سنة منتهية: class_year_closed. */
+export function isClassYearClosed(message: string | null | undefined): boolean {
+  return /class_year_closed/.test(message ?? "");
+}
+
+export type YearNotice = {
+  /** سنة بداية العام الدراسي الجاري (2026 للعام 2026/2027)، أو null. */
+  yearStart: number | null;
+  /** الأقسام المقفلة وتاريخ حذف كلٍّ منها (YYYY-MM-DD). */
+  closed: Array<{ classId: string; purgeOn: string }>;
+};
+
+const ISO = /^\d{4}-\d{2}-\d{2}$/;
+
+/** يقرأ ردّ my_year_notice. أي شكل غير متوقَّع = null (لا قفل ولا لافتة). */
+export function parseYearNotice(data: unknown): YearNotice | null {
+  if (!data || typeof data !== "object" || Array.isArray(data)) return null;
+  const raw = data as Record<string, unknown>;
+  if (!Array.isArray(raw.closed)) return null;
+  const closed: YearNotice["closed"] = [];
+  for (const item of raw.closed) {
+    if (!item || typeof item !== "object") return null;
+    const row = item as Record<string, unknown>;
+    if (typeof row.class_id !== "string" || typeof row.purge_on !== "string" || !ISO.test(row.purge_on)) {
+      return null;
+    }
+    closed.push({ classId: row.class_id, purgeOn: row.purge_on });
+  }
+  const start = Number(raw.year_start);
+  return { yearStart: Number.isInteger(start) ? start : null, closed };
+}
+
+const MONTHS_AR = [
+  "جانفي", "فيفري", "مارس", "أفريل", "ماي", "جوان",
+  "جويلية", "أوت", "سبتمبر", "أكتوبر", "نوفمبر", "ديسمبر",
+];
+
+/** 2027-11-07 ← «7 نوفمبر 2027». */
+export function dateAr(iso: string): string {
+  const [y, m, d] = iso.split("-").map(Number);
+  return `${d} ${MONTHS_AR[m - 1]} ${y}`;
+}
+
+export type YearBanner = {
+  tone: "info" | "warn" | "bad";
+  text: string;
+  /** أقرب تاريخ حذف بين الأقسام المقفلة. */
+  purgeOn: string;
+  /** الأيام إلى الحذف؛ سالب إن حلّ الموعد ولم يُنفَّذ بعد. */
+  daysLeft: number;
+  /** أقسام مقفلة تاريخ حذفها هو الأقرب. */
+  count: number;
+};
+
+/**
+ * لافتة الحذف: من 1 سبتمبر من سنة الحذف، لا قبله (في أوت يكتفي القسم بتنبيهه المقفل).
+ * تنبيه هادئ، ثم "warn" في آخر 14 يومًا، و"bad" في آخر 3 أيام وبعد حلول الموعد.
+ * تاريخ الحذف نفسه إعلان لا وعد: تنفيذه مشروط بنسخة احتياطية سليمة، فقد يتأخّر.
+ */
+export function yearBanner(notice: YearNotice | null, today: string): YearBanner | null {
+  if (!notice || notice.closed.length === 0) return null;
+  const purgeOn = notice.closed.reduce((m, c) => (c.purgeOn < m ? c.purgeOn : m), notice.closed[0].purgeOn);
+  const startsShowing = `${purgeOn.slice(0, 4)}-09-01`;
+  if (today < startsShowing) return null;
+  const count = notice.closed.filter((c) => c.purgeOn === purgeOn).length;
+  const daysLeft = daysBetween(today, purgeOn);
+  const classesWord =
+    count === 1 ? "قسم واحد" : count === 2 ? "قسمان" : count <= 10 ? `${count} أقسام` : `${count} قسمًا`;
+  const what = `بيانات السنة الدراسية السابقة (${classesWord})`;
+  const todo = "نزّل «نسختي» قبل ذلك، أو انقل أسماء تلاميذك إلى قسم جديد.";
+  if (daysLeft < 0) {
+    return {
+      tone: "bad",
+      purgeOn,
+      daysLeft,
+      count,
+      text: `حلّ موعد حذف ${what} في ${dateAr(purgeOn)}، وقد يُنفَّذ في أي ليلة. ${todo}`,
+    };
+  }
+  const left =
+    daysLeft === 0 ? "اليوم" : daysLeft === 1 ? "غدًا" : `بعد ${DAYS_AR(daysLeft)}`;
+  return {
+    tone: daysLeft <= 3 ? "bad" : daysLeft <= 14 ? "warn" : "info",
+    purgeOn,
+    daysLeft,
+    count,
+    text:
+      daysLeft <= 14
+        ? `تُحذف ${what} نهائيًّا ${left} (${dateAr(purgeOn)}). ${todo}`
+        : `${what} مغلقة للتنقيط، وتُحذف نهائيًّا ابتداءً من ${dateAr(purgeOn)}. ${todo}`,
+  };
+}
