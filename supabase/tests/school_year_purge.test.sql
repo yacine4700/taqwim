@@ -61,7 +61,7 @@ select tests.yr_mkclass(:B, 'جارٍ ب', now(), 2) as c_b \gset
 select id as st_o from public.students where class_id = :'c_old1' order by full_name limit 1 \gset
 select id as st_o2 from public.students where class_id = :'c_old1' order by full_name offset 1 limit 1 \gset
 select id as st_cur from public.students where class_id = :'c_a' order by full_name limit 1 \gset
-select id as ses1 from public.tp_sessions where class_id = :'c_old1' order by id limit 1 \gset
+select session_id as ses1 from public.tp_marks where student_id = :'st_o' \gset
 select id as ses2 from public.tp_sessions where class_id = :'c_old1' and id <> :'ses1' limit 1 \gset
 select m.id as mk_o from public.tp_marks m where m.session_id = :'ses1' and m.student_id = :'st_o' \gset
 select id as rd_o from public.readings where student_id = :'st_o' \gset
