@@ -200,7 +200,10 @@ select tests.ok('الإشعار: لا يظهر قسم جارٍ', not ((:'notice_
 select tests.ok('الإشعار: لا يظهر قسم أستاذ آخر', not ((:'notice_a'::jsonb)::text like '%' || :'c_old2' || '%'));
 select tests.ok('الإشعار: B يرى قسمه المقفل فقط', (select count(*) = 1 from jsonb_array_elements((:'notice_b'::jsonb) -> 'closed'))
   and (:'notice_b'::jsonb)::text like '%' || :'c_old2' || '%' and not ((:'notice_b'::jsonb)::text like '%' || :'c_old1' || '%'));
-select tests.ok('الإشعار: لا أسماء تلاميذ', not ((:'notice_a'::jsonb)::text like '%قديم%'));
+select tests.ok('الإشعار: معرّف القسم وتاريخ الحذف فقط (مفتاحان لكل قسم، ولا عدد ولا اسم)',
+  (select bool_and((select array_agg(k order by k) from jsonb_object_keys(e) k) = array['class_id', 'purge_on'])
+   from jsonb_array_elements((:'notice_a'::jsonb) -> 'closed') e)
+  and not ((:'notice_a'::jsonb)::text like '%قديم%'));
 select set_config('request.jwt.claims', '', false);
 
 -- ============================================================

@@ -206,7 +206,7 @@ revoke all on function private.purge_old_school_years(bigint, integer)
 grant execute on function private.purge_old_school_years(bigint, integer) to taqwim_purger;
 
 -- ---------------------------------------------------------------------------
--- 5) إشعار الأستاذ: معرّفات أقسامه المقفلة وتاريخ حذفها وعدد تلاميذها فقط
+-- 5) إشعار الأستاذ: معرّفات أقسامه المقفلة وتاريخ حذفها فقط
 -- ---------------------------------------------------------------------------
 create function public.my_year_notice()
 returns jsonb
@@ -219,8 +219,7 @@ as $$
     'year_start', private.school_year_of((now() at time zone 'Africa/Algiers')::date),
     'closed', coalesce(jsonb_agg(jsonb_build_object(
         'class_id', c.id,
-        'purge_on', make_date(private.school_year_of((c.created_at at time zone 'Africa/Algiers')::date) + 1, 11, 7),
-        'students', (select count(*) from public.students s where s.class_id = c.id))
+        'purge_on', make_date(private.school_year_of((c.created_at at time zone 'Africa/Algiers')::date) + 1, 11, 7))
       order by c.created_at, c.id), '[]'::jsonb))
   from public.classes c
   where c.teacher_id = (select auth.uid())
