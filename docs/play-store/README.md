@@ -105,7 +105,7 @@ node ~/<مسار>/taqwim/android/preflight.mjs --project . --aab app-release-bun
 ## خطواتك في Play Console بالترتيب
 
 1. حساب مطوّر (شخصي أو مؤسسة) والتحقق من الهوية.
-2. **Create app**: الاسم «دفتر التقويم المستمر»، اللغة الافتراضية العربية، App (لا Game)، Free. الإقرارات.
+2. **Create app**: الاسم «دفتر التقويم»، اللغة الافتراضية العربية، App (لا Game)، Free. الإقرارات.
 3. **App content** (يمكن قبل أي بناء):
    Privacy policy ← `https://<النطاق>/privacy` · App access ← `app-access.md` · Ads ← No ·
    Content rating ← `declarations.md` · Target audience ← 18+ · Data safety ← `data-safety.md` (ورابط الحذف

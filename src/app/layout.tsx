@@ -2,7 +2,7 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "دفتر التقويم المستمر",
+  title: "دفتر التقويم",
   description: "تنقيط التقويم المستمر لأساتذة التعليم الثانوي",
   manifest: "/manifest.webmanifest",
   applicationName: "دفتر التقويم",

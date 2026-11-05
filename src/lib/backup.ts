@@ -338,7 +338,7 @@ export function parseBackup(text: string): ParseResult {
     } catch {
       throw new Bad("هذا ليس ملف «نسختي»: محتواه ليس JSON صالحًا.");
     }
-    need(isObj(raw) && raw.format === BACKUP_FORMAT, "هذا ليس ملف «نسختي» من دفتر التقويم المستمر.");
+    need(isObj(raw) && raw.format === BACKUP_FORMAT, "هذا ليس ملف «نسختي» من دفتر التقويم.");
     need(Number.isInteger(raw.version) && (raw.version as number) >= 1, "رقم إصدار الملف غير صالح.");
     need(
       (raw.version as number) <= BACKUP_VERSION,
@@ -1129,7 +1129,7 @@ export function backupSheets(backup: Backup, groupName: (g: BGroup, index: numbe
   const readme: SheetRows = {
     name: sheetName("اقرأني"),
     rows: [
-      ["دفتر التقويم المستمر — نسختي"],
+      ["دفتر التقويم — نسختي"],
       ["تاريخ التصدير", backup.exported_at.slice(0, 16).replace("T", " ")],
       ["الأستاذ", backup.teacher.full_name || backup.teacher.email],
       ["المصدر", backup.source === "server" ? "الخادم" : "نسخة الجهاز (دون اتصال)"],

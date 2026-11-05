@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
-  title: "شروط الاستخدام — دفتر التقويم المستمر",
+  title: "شروط الاستخدام — دفتر التقويم",
 };
 
 /**
@@ -22,7 +22,7 @@ export default function TermsPage() {
         ← رجوع
       </a>
       <h1>شروط الاستخدام</h1>
-      <p className="meta">دفتر التقويم المستمر — آخر تحديث: 4 نوفمبر 2026</p>
+      <p className="meta">دفتر التقويم — آخر تحديث: 4 نوفمبر 2026</p>
 
       <p>
         باستعمالك «دفتر التقويم» توافق على هذه الشروط وعلى <a href="/privacy">سياسة الخصوصية</a>.

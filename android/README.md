@@ -53,7 +53,7 @@ bubblewrap init --manifest=https://<النطاق>/manifest.webmanifest
 | --- | --- |
 | Domain / host | `<النطاق>` (انظر الخطوة 0) |
 | Start URL | `/app` |
-| Application name | `دفتر التقويم المستمر` |
+| Application name | `دفتر التقويم` |
 | Short name | `دفتر التقويم` |
 | Application ID (package) | `io.github.yacine4700.taqwim` — **لا يتغيّر بعد التوزيع** |
 | Display / orientation | `standalone` / `portrait` |
