@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
-import { ensurePersistence, kvDel, kvGet, kvSet, type Persistence } from "@/lib/localdb";
+import { ensurePersistence, kvDel, kvGet, kvSet, kvSetDurable, type Persistence } from "@/lib/localdb";
 import { backupFileName, buildBackup, normalizeData, type Backup } from "@/lib/backup";
 import { exportFromServer } from "@/lib/backupDb";
 import { useBackLayers } from "@/lib/useBackLayers";
@@ -84,7 +84,7 @@ import { StudentSheet } from "./StudentSheet";
 import { ImportSheet } from "./ImportSheet";
 import { BackupSheet, backupJson, downloadBlob } from "./BackupSheet";
 import { MoveRosterSheet, YearBannerCard, YearUnconfirmedNote } from "./YearParts";
-import { newAttempt, runMove, type MoveAttempt, type MoveDb } from "@/lib/moveRoster";
+import { runMove, type MoveDb, type MoveStore } from "@/lib/moveRoster";
 import { Tabs } from "./parts";
 
 /** رسالة تقول للأستاذ ما حدث وما يفعل، لا «تعذّر» وحدها. */
@@ -175,8 +175,6 @@ export default function AppClient({
   const [backupOpen, setBackupOpen] = useState(false);
   /** نقل أسماء قسم مقفل إلى قسم جديد: معرّف القسم القديم، أو null إن لم تُفتح الورقة. */
   const [movingFrom, setMovingFrom] = useState<string | null>(null);
-  /** محاولات النقل غير المكتملة لكل قسم قديم: معرّفاتها ثابتة فتكون إعادة المحاولة آمنة من التكرار. */
-  const moveAttempts = useRef(new Map<string, MoveAttempt>());
   /** بصمات العمليات المعلّقة التي ضمّها آخر ملف «نسختي» نُزِّل: بوّابة الخروج. */
   const [exportedOps, setExportedOps] = useState<ReadonlySet<string>>(() => new Set());
   const [persistence, setPersistence] = useState<Persistence | null>(null);
@@ -1276,28 +1274,26 @@ export default function AppClient({
 
   /**
    * نقل أسماء قسم مقفل إلى قسم جديد (الأسماء وترتيبها فقط، لا علامات ولا ملاحظات).
-   * المحاولة تُحفظ بمعرّفاتها حتى تنجح: إعادتها (بعد ضياع الردّ أو فشل جزئي) تُكمل
-   * القسم نفسه دون قسم ثانٍ ودون تلميذ مكرر، ولا حذف تعويضي (انظر lib/moveRoster).
+   * محاولة النقل محفوظة على الجهاز بمعرّفات فقط، فيُستكمل النقل نفسه بعد إعادة تحميل
+   * الصفحة أو قتل التطبيق دون تكرار قسم أو تلميذ، ولا حذف ولا كتابة فوق موجود
+   * (انظر lib/moveRoster).
    */
   async function moveRoster(classId: string, name: string): Promise<CreateResult> {
     if (!outbox.online) return { ok: false, error: "لا اتصال بالإنترنت. أعد المحاولة حين يعود." };
     const old = classes.find((c) => c.id === classId);
     const schoolId = old?.school_id ?? schools[0]?.id;
     if (!old || !schoolId) return { ok: false, error: "أضف مؤسسة أولًا ثم أعد المحاولة." };
-    let attempt = moveAttempts.current.get(classId);
-    if (!attempt) {
-      const names = studentsOf(classId)
-        .slice()
-        .sort((a, b) => a.position - b.position)
-        .map((s) => s.full_name);
-      if (names.length === 0) return { ok: false, error: "لا تلاميذ في هذا القسم." };
-      const position = Math.max(classes.length, lastClassPosition.current) + 1;
-      attempt = newAttempt({ sourceId: classId, names, schoolId, position, uuid: uid });
-      moveAttempts.current.set(classId, attempt);
-    }
+    const key = `move:v1:${teacherId}:${classId}`;
+    const store: MoveStore = {
+      load: () => kvGet<unknown>(key),
+      save: (record) => kvSetDurable(key, record),
+      remove: () => kvDel(key),
+    };
     const db: MoveDb = {
-      upsertClass: async (row) => {
-        const { error } = await supabase.from("classes").upsert(row, { onConflict: "id" });
+      insertClassIgnoringDuplicates: async (row) => {
+        const { error } = await supabase
+          .from("classes")
+          .upsert(row, { onConflict: "id", ignoreDuplicates: true });
         return { error };
       },
       insertStudentsIgnoringDuplicates: async (rows) => {
@@ -1306,16 +1302,31 @@ export default function AppClient({
           .upsert(rows, { onConflict: "id", ignoreDuplicates: true });
         return { error };
       },
+      classExists: async (id) => {
+        const { data, error } = await supabase.from("classes").select("id").eq("id", id);
+        return { error, exists: (data ?? []).length > 0 };
+      },
+      studentsPresent: async (ids) => {
+        const { data, error } = await supabase.from("students").select("id").in("id", ids);
+        return { error, present: (data ?? []).map((r) => r.id as string) };
+      },
     };
-    const result = await runMove(db, attempt, { teacherId, name });
+    const result = await runMove(
+      { db, store, uuid: uid, teacherId },
+      {
+        name,
+        schoolId,
+        position: Math.max(classes.length, lastClassPosition.current) + 1,
+        students: studentsOf(classId),
+      },
+    );
     if (!result.ok) return result;
-    moveAttempts.current.delete(classId);
-    lastClassPosition.current = attempt.position;
+    lastClassPosition.current = Math.max(classes.length, lastClassPosition.current) + 1;
     setMovingFrom(null);
     await load();
     setOpenClass(result.id);
     setTab("classes");
-    say(`نُقلت أسماء ${result.students} تلميذًا إلى «${name}». لم تُنقل علاماتهم.`);
+    say(`نُقلت أسماء ${result.students} تلميذًا إلى قسم جديد. لم تُنقل علاماتهم.`);
     return { ok: true, id: result.id, students: result.students };
   }
 

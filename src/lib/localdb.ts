@@ -118,6 +118,19 @@ export async function kvSet(key: string, value: unknown): Promise<void> {
   await run("readwrite", (store) => store.put(copy, key));
 }
 
+/**
+ * كـ kvSet لكنه يقول الحقيقة: true فقط إن كُتبت القيمة فعلًا في IndexedDB. kvSet يكتب في
+ * الذاكرة أولًا ويبتلع فشل التخزين، فلا يصلح لما يجب أن يصمد بعد قتل الصفحة (مثل محاولة
+ * النقل). false = لا تخزين دائمًا (نافذة خاصة، أو منع، أو خطأ في الكتابة).
+ */
+export async function kvSetDurable(key: string, value: unknown): Promise<boolean> {
+  const copy = JSON.parse(JSON.stringify(value)) as unknown;
+  const written = await run("readwrite", (store) => store.put(copy, key));
+  if (written === null) return false;
+  memory.set(key, value);
+  return true;
+}
+
 export async function kvDel(key: string): Promise<void> {
   memory.delete(key);
   await run("readwrite", (store) => store.delete(key));
