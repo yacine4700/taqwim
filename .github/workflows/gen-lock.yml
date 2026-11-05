@@ -1,0 +1,34 @@
+# مؤقت: يولّد package-lock.json مرة واحدة من package.json (الاعتماديات المباشرة مثبَّتة بإصدارات
+# حرفية، فلا يُرفع منها شيء) ثم يُحذف هذا الملف في الإيداع التالي. لا أسرار ولا متغيّرات.
+name: توليد القفل (مؤقت)
+
+on:
+  push:
+    branches: [year-purge-ui]
+    paths:
+      - ".github/workflows/gen-lock.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  lock:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: توليد القفل دون تنفيذ سكربتات
+        run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+      - name: إيداع القفل
+        run: |
+          if git diff --quiet -- package-lock.json && [ -f package-lock.json ] && git ls-files --error-unmatch package-lock.json >/dev/null 2>&1; then
+            echo "لا تغيير"; exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package-lock.json
+          git commit -m "package-lock.json: قفل الاعتماديات (مولَّد من package.json دون رفع إصدارات المباشرة)"
+          git push
