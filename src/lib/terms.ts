@@ -254,9 +254,11 @@ export function dateAr(iso: string): string {
 export type YearBanner = {
   tone: "info" | "warn" | "bad";
   text: string;
-  /** أقرب تاريخ حذف بين الأقسام المقفلة. */
+  /** أقرب تاريخ يبدأ منه الحذف بين الأقسام المقفلة. وليس موعدًا مضمونًا: قد يتأخر. */
   purgeOn: string;
-  /** الأيام إلى الحذف؛ سالب إن حلّ الموعد ولم يُنفَّذ بعد. */
+  /** آخر يوم آمن لتصدير البيانات: اليوم السابق لتاريخ الحذف المعلن. */
+  lastSafeOn: string;
+  /** الأيام إلى تاريخ الحذف المعلن؛ سالب أو صفر إن حلّ ولم يُعرف إن نُفِّذ. */
   daysLeft: number;
   /** أقسام مقفلة تاريخ حذفها هو الأقرب. */
   count: number;
@@ -264,8 +266,12 @@ export type YearBanner = {
 
 /**
  * لافتة الحذف: من 1 سبتمبر من سنة الحذف، لا قبله (في أوت يكتفي القسم بتنبيهه المقفل).
- * تنبيه هادئ، ثم "warn" في آخر 14 يومًا، و"bad" في آخر 3 أيام وبعد حلول الموعد.
- * تاريخ الحذف نفسه إعلان لا وعد: تنفيذه مشروط بنسخة احتياطية سليمة، فقد يتأخّر.
+ * "info" هادئة، "warn" في آخر 14 يومًا، "bad" حين يقترب آخر يوم آمن أو يمرّ.
+ *
+ * الصياغة لا تعد بيوم: الحذف «يبدأ ابتداءً من» التاريخ، بعد نجاح نسخة احتياطية، وقد
+ * يتأخر. والمهمة الليلية تعمل فجرًا، فقد تُحذف البيانات في اليوم نفسه قبل أن يفتح
+ * الأستاذ التطبيق؛ لذلك يُعلَن «آخر يوم آمن للتصدير» وهو اليوم السابق للتاريخ.
+ * ولا تُستعمل «اليوم» ولا «غدًا» في أي نص منها.
  */
 export function yearBanner(notice: YearNotice | null, today: string): YearBanner | null {
   if (!notice || notice.closed.length === 0) return null;
@@ -274,29 +280,79 @@ export function yearBanner(notice: YearNotice | null, today: string): YearBanner
   if (today < startsShowing) return null;
   const count = notice.closed.filter((c) => c.purgeOn === purgeOn).length;
   const daysLeft = daysBetween(today, purgeOn);
+  const lastSafeOn = addDays(purgeOn, -1);
   const classesWord =
     count === 1 ? "قسم واحد" : count === 2 ? "قسمان" : count <= 10 ? `${count} أقسام` : `${count} قسمًا`;
   const what = `بيانات السنة الدراسية السابقة (${classesWord})`;
-  const todo = "نزّل «نسختي» قبل ذلك، أو انقل أسماء تلاميذك إلى قسم جديد.";
-  if (daysLeft < 0) {
+  const todo = "نزّل «نسختي»، أو انقل أسماء تلاميذك إلى قسم جديد.";
+  const base = `${what} مغلقة للتنقيط. يبدأ حذفها نهائيًّا ابتداءً من ${dateAr(purgeOn)}، بعد نجاح النسخة الاحتياطية، وقد يتأخر عن ذلك.`;
+
+  // مرّ آخر يوم آمن (تاريخ الحذف نفسه أو بعده): قد تكون حُذفت أو تُحذف في أي ليلة نسخ ناجحة.
+  if (daysLeft <= 0) {
     return {
       tone: "bad",
       purgeOn,
+      lastSafeOn,
       daysLeft,
       count,
-      text: `حلّ موعد حذف ${what} في ${dateAr(purgeOn)}، وقد يُنفَّذ في أي ليلة. ${todo}`,
+      text: `${base} مرّ آخر يوم آمن للتصدير (${dateAr(lastSafeOn)})، فقد تُحذف في أي ليلة. ${todo}`,
     };
   }
   const left =
-    daysLeft === 0 ? "اليوم" : daysLeft === 1 ? "غدًا" : `بعد ${DAYS_AR(daysLeft)}`;
+    daysLeft >= 2 && daysLeft <= 14 ? ` يبقى ${DAYS_AR(daysLeft - 1)} على ذلك.` : "";
   return {
     tone: daysLeft <= 3 ? "bad" : daysLeft <= 14 ? "warn" : "info",
     purgeOn,
+    lastSafeOn,
     daysLeft,
     count,
-    text:
-      daysLeft <= 14
-        ? `تُحذف ${what} نهائيًّا ${left} (${dateAr(purgeOn)}). ${todo}`
-        : `${what} مغلقة للتنقيط، وتُحذف نهائيًّا ابتداءً من ${dateAr(purgeOn)}. ${todo}`,
+    text: `${base} آخر يوم آمن للتصدير: ${dateAr(lastSafeOn)}.${left} ${todo}`,
   };
+}
+
+/* ------------------------------------------------------------------------
+ * قراءة إشعار السنة من الخادم: ما يُعرض، وما يُحفظ، وهل الحالة مؤكدة.
+ * ------------------------------------------------------------------------ */
+
+/** رمز غياب الدالة في الخادم (الترحيل لم يُطبَّق بعد): ميزة غير منشورة لا عطل. */
+const FUNCTION_MISSING = new Set(["PGRST202", "42883"]);
+
+export type YearRead = {
+  data: unknown;
+  error: { code?: string | null; message?: string } | null;
+};
+
+/**
+ * - نجاح: الإشعار الجديد، والحالة مؤكدة.
+ * - الدالة غير موجودة: لا أقسام مقفلة ولا تنبيه (الميزة لم تُنشر بعد).
+ * - أي فشل آخر أو ردّ غير مفهوم: آخر إشعار سليم يبقى كما هو (ولا يُمحى من الجهاز)،
+ *   والحالة غير مؤكدة فتُقال للأستاذ، دون الإيحاء بأن قسمًا مفتوح أو مقفل.
+ */
+export function resolveYearNotice(
+  read: YearRead,
+  last: YearNotice | null,
+): { notice: YearNotice | null; unconfirmed: boolean } {
+  if (read.error) {
+    if (read.error.code && FUNCTION_MISSING.has(read.error.code)) {
+      return { notice: null, unconfirmed: false };
+    }
+    return { notice: last, unconfirmed: true };
+  }
+  const parsed = parseYearNotice(read.data);
+  return parsed ? { notice: parsed, unconfirmed: false } : { notice: last, unconfirmed: true };
+}
+
+/** الأقسام المقفلة المحمَّلة، الأقرب حذفًا أولًا ثم بترتيب الأقسام. */
+export function orderClosedClasses<K extends { id: string; position: number }>(
+  notice: YearNotice | null,
+  classes: readonly K[],
+): K[] {
+  if (!notice) return [];
+  const due = new Map(notice.closed.map((c) => [c.classId, c.purgeOn]));
+  return classes
+    .filter((k) => due.has(k.id))
+    .sort((a, b) => {
+      const da = due.get(a.id)!, db = due.get(b.id)!;
+      return da < db ? -1 : da > db ? 1 : a.position - b.position;
+    });
 }

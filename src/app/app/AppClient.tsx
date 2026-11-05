@@ -9,7 +9,8 @@ import { useBackLayers } from "@/lib/useBackLayers";
 import { clearAppCaches } from "@/lib/appCache";
 import {
   algiersToday,
-  parseYearNotice,
+  orderClosedClasses,
+  resolveYearNotice,
   termName,
   termNotice,
   termView,
@@ -82,7 +83,8 @@ import { PendingSheet, SyncBadge, since } from "./sync";
 import { StudentSheet } from "./StudentSheet";
 import { ImportSheet } from "./ImportSheet";
 import { BackupSheet, backupJson, downloadBlob } from "./BackupSheet";
-import { MoveRosterSheet, YearBannerCard } from "./YearParts";
+import { MoveRosterSheet, YearBannerCard, YearUnconfirmedNote } from "./YearParts";
+import { newAttempt, runMove, type MoveAttempt, type MoveDb } from "@/lib/moveRoster";
 import { Tabs } from "./parts";
 
 /** رسالة تقول للأستاذ ما حدث وما يفعل، لا «تعذّر» وحدها. */
@@ -109,6 +111,10 @@ export default function AppClient({
   const [calendarKnown, setCalendarKnown] = useState(false);
   /** أقسام السنوات المنتهية (my_year_notice). null = لا قفل ولا لافتة. */
   const [yearNotice, setYearNotice] = useState<YearNotice | null>(null);
+  /** آخر إشعار سليم (للمقارنة والحفظ): قراءة فاشلة لا تمحوه من الذاكرة ولا من الجهاز. */
+  const lastYearNotice = useRef<YearNotice | null>(null);
+  /** تعذّرت قراءة حالة السنة: تُقال للأستاذ صراحةً ولا يُفترض قسم مفتوحًا أو مقفلًا. */
+  const [yearUnconfirmed, setYearUnconfirmed] = useState(false);
   /** اليوم بتوقيت الجزائر؛ يتجدد إذا بقي التطبيق مفتوحًا عبر منتصف الليل. */
   const [todayIso, setTodayIso] = useState(() => algiersToday());
   const [classes, setClasses] = useState<Klass[]>([]);
@@ -169,6 +175,8 @@ export default function AppClient({
   const [backupOpen, setBackupOpen] = useState(false);
   /** نقل أسماء قسم مقفل إلى قسم جديد: معرّف القسم القديم، أو null إن لم تُفتح الورقة. */
   const [movingFrom, setMovingFrom] = useState<string | null>(null);
+  /** محاولات النقل غير المكتملة لكل قسم قديم: معرّفاتها ثابتة فتكون إعادة المحاولة آمنة من التكرار. */
+  const moveAttempts = useRef(new Map<string, MoveAttempt>());
   /** بصمات العمليات المعلّقة التي ضمّها آخر ملف «نسختي» نُزِّل: بوّابة الخروج. */
   const [exportedOps, setExportedOps] = useState<ReadonlySet<string>>(() => new Set());
   const [persistence, setPersistence] = useState<Persistence | null>(null);
@@ -327,8 +335,10 @@ export default function AppClient({
       .order("starts_on");
     /* إشعار السنة الدراسية كالرزنامة: غياب الدالة (ترحيل لم يُطبَّق) أو انقطاع لا يُقفل شيئًا
        ولا يمحو ما حُفظ على الجهاز. */
-    const yn = await supabase.rpc("my_year_notice");
-    const yearRead = yn.error ? null : parseYearNotice(yn.data);
+    const yearResolved = resolveYearNotice(
+      await supabase.rpc("my_year_notice"),
+      lastYearNotice.current,
+    );
     const calendarRows: TermRow[] | null = cal.error
       ? null
       : ((cal.data ?? []) as TermRow[]).map((r) => ({
@@ -380,7 +390,8 @@ export default function AppClient({
         : [],
       tpReady: ready,
       calendar: calendarRows ?? undefined,
-      yearNotice: yearRead ?? undefined,
+      // آخر سليم عند الفشل، فلا تُستبدل لقطة الجهاز بفراغ.
+      yearNotice: yearResolved.notice ?? undefined,
       criteria: (cr.data ?? []) as Criterion[],
       components: (cp.data ?? []) as Component[],
       records: applyRecords((r.data ?? []) as RecordRow[], landed),
@@ -405,8 +416,9 @@ export default function AppClient({
       setCalendar(calendarRows);
       setCalendarKnown(true);
     }
-    // قراءة فاشلة أو غير مفهومة تُبقي ما حُفظ؛ ونجاحها يستبدل ولو بقائمة فارغة.
-    if (yearRead) setYearNotice(yearRead);
+    lastYearNotice.current = yearResolved.notice;
+    setYearNotice(yearResolved.notice);
+    setYearUnconfirmed(yearResolved.unconfirmed);
     setCachedAt(null);
     setLoading(false);
     void kvSet(snapKey, snapshot);
@@ -442,7 +454,10 @@ export default function AppClient({
         setCalendar(saved.calendar);
         setCalendarKnown(true);
       }
-      if (saved.yearNotice) setYearNotice(saved.yearNotice);
+      if (saved.yearNotice) {
+        lastYearNotice.current = saved.yearNotice;
+        setYearNotice(saved.yearNotice);
+      }
       setProfile(saved.profile ?? NO_PROFILE);
       setCachedAt(saved.savedAt ?? 0);
       setLoading(false);
@@ -1261,26 +1276,47 @@ export default function AppClient({
 
   /**
    * نقل أسماء قسم مقفل إلى قسم جديد (الأسماء وترتيبها فقط، لا علامات ولا ملاحظات).
-   * القسم الجديد من السنة الجارية فلا يُقفل. وأصله يبقى إلى موعد حذفه.
+   * المحاولة تُحفظ بمعرّفاتها حتى تنجح: إعادتها (بعد ضياع الردّ أو فشل جزئي) تُكمل
+   * القسم نفسه دون قسم ثانٍ ودون تلميذ مكرر، ولا حذف تعويضي (انظر lib/moveRoster).
    */
   async function moveRoster(classId: string, name: string): Promise<CreateResult> {
+    if (!outbox.online) return { ok: false, error: "لا اتصال بالإنترنت. أعد المحاولة حين يعود." };
     const old = classes.find((c) => c.id === classId);
     const schoolId = old?.school_id ?? schools[0]?.id;
     if (!old || !schoolId) return { ok: false, error: "أضف مؤسسة أولًا ثم أعد المحاولة." };
-    const names = studentsOf(classId)
-      .slice()
-      .sort((a, b) => a.position - b.position)
-      .map((s) => s.full_name);
-    if (names.length === 0) return { ok: false, error: "لا تلاميذ في هذا القسم." };
-    const result = await createClassWithStudents(name, names, schoolId);
-    if (result.ok) {
-      setMovingFrom(null);
-      await load();
-      setOpenClass(result.id);
-      setTab("classes");
-      say(`نُقلت أسماء ${names.length} تلميذًا إلى «${name}». لم تُنقل علاماتهم.`);
+    let attempt = moveAttempts.current.get(classId);
+    if (!attempt) {
+      const names = studentsOf(classId)
+        .slice()
+        .sort((a, b) => a.position - b.position)
+        .map((s) => s.full_name);
+      if (names.length === 0) return { ok: false, error: "لا تلاميذ في هذا القسم." };
+      const position = Math.max(classes.length, lastClassPosition.current) + 1;
+      attempt = newAttempt({ sourceId: classId, names, schoolId, position, uuid: uid });
+      moveAttempts.current.set(classId, attempt);
     }
-    return result;
+    const db: MoveDb = {
+      upsertClass: async (row) => {
+        const { error } = await supabase.from("classes").upsert(row, { onConflict: "id" });
+        return { error };
+      },
+      insertStudentsIgnoringDuplicates: async (rows) => {
+        const { error } = await supabase
+          .from("students")
+          .upsert(rows, { onConflict: "id", ignoreDuplicates: true });
+        return { error };
+      },
+    };
+    const result = await runMove(db, attempt, { teacherId, name });
+    if (!result.ok) return result;
+    moveAttempts.current.delete(classId);
+    lastClassPosition.current = attempt.position;
+    setMovingFrom(null);
+    await load();
+    setOpenClass(result.id);
+    setTab("classes");
+    say(`نُقلت أسماء ${result.students} تلميذًا إلى «${name}». لم تُنقل علاماتهم.`);
+    return { ok: true, id: result.id, students: result.students };
   }
 
   /** بعد دفعة إنشاء: يحمّل الأقسام، ويفتح أولها، ولا يغلق الورقة إلا إن نجح كل شيء. */
@@ -1560,16 +1596,20 @@ export default function AppClient({
 
           {/* التنبيه حيث تُكتب العلامات: مهلة الفصل المنتهي، أو فصل مقفل للاطلاع فقط.
               ويقترح الفصل الجاري. القاعدة هي الحَكَم، وهذا تنبيه قبل أن يُرفض شيء. */}
+          {/* حالة السنة غير مؤكدة: تُقال صراحةً، دون افتراض قسم مفتوح أو مقفل. */}
+          {tab === "classes" && yearUnconfirmed && outbox.online && (
+            <YearUnconfirmedNote onRetry={() => void load()} />
+          )}
+
           {/* لافتة الحذف السنوي في قائمة الأقسام، من 1 سبتمبر. */}
           {tab === "classes" && !openClass && (() => {
             const banner = yearBanner(yearNotice, todayIso);
             if (!banner) return null;
-            const firstClosed = classes.find((c) => yearClosedIds.has(c.id));
             return (
               <YearBannerCard
                 banner={banner}
                 onBackup={() => setBackupOpen(true)}
-                onMove={() => firstClosed && setMovingFrom(firstClosed.id)}
+                onMove={() => setMovingFrom("")}
               />
             );
           })()}
@@ -1927,10 +1967,12 @@ export default function AppClient({
 
       {movingFrom !== null && (
         <MoveRosterSheet
-          closed={classes.filter((c) => yearClosedIds.has(c.id))}
+          closed={orderClosedClasses(yearNotice, classes)}
           initialId={movingFrom}
+          loading={loading}
           count={(id) => studentsOf(id).length}
           onCancel={() => setMovingFrom(null)}
+          onReload={() => void load()}
           onMove={moveRoster}
         />
       )}
