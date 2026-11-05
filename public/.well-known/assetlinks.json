@@ -10,5 +10,17 @@
         "B7:6C:A3:2F:76:74:3B:AF:2C:46:0E:9A:09:B1:AD:F6:42:76:E2:0D:86:56:34:41:FB:E4:3A:06:F1:63:0F:2A"
       ]
     }
+  },
+  {
+    "relation": [
+      "delegate_permission/common.handle_all_urls"
+    ],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "io.github.yacine4700.taqwim",
+      "sha256_cert_fingerprints": [
+        "A3:64:E6:B8:5F:B9:54:3A:D8:E4:13:D7:82:2C:82:DF:44:35:10:3A:C0:08:C3:A6:F6:BD:31:F0:46:A4:92:73"
+      ]
+    }
   }
 ]
