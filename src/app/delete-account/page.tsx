@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
-  title: "حذف الحساب — دفتر التقويم المستمر",
+  title: "حذف الحساب — دفتر التقويم",
 };
 
 /**
@@ -26,7 +26,7 @@ export default function DeleteAccountPage() {
       <a className="back" href="/">
         ← رجوع
       </a>
-      <h1>حذف حسابك في «دفتر التقويم المستمر»</h1>
+      <h1>حذف حسابك في «دفتر التقويم»</h1>
       <p className="meta">تطبيق «دفتر التقويم» لتنقيط التقويم المستمر — آخر تحديث: 4 نوفمبر 2026</p>
 
       <p>

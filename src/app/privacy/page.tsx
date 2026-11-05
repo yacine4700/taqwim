@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
-  title: "الخصوصية — دفتر التقويم المستمر",
+  title: "الخصوصية — دفتر التقويم",
 };
 
 /**
