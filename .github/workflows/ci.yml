@@ -1,0 +1,45 @@
+# فحص التطبيق: تثبيت من القفل، ثم فحوص المشروع، ثم TypeScript، ثم بناء Next.
+# لا أسرار: متغيّرات البناء العامة قيم وهمية (لا اتصال بأي خدمة أثناء البناء).
+name: فحص التطبيق
+
+on:
+  push:
+    branches: [year-purge-ui, main, play-store-prep]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  app:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: تثبيت الاعتماديات من القفل
+        run: npm ci --no-audit --no-fund
+
+      - name: فحوص المشروع
+        run: npm run check
+
+      - name: فحص TypeScript الكامل
+        run: npx tsc --noEmit
+
+      - name: بناء Next
+        run: npm run build
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: https://placeholder.invalid
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: placeholder-not-a-secret
+          NEXT_PUBLIC_CONTACT_EMAIL: placeholder@example.invalid
+          NEXT_TELEMETRY_DISABLED: "1"
