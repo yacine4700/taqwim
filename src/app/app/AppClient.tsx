@@ -162,6 +162,8 @@ export default function AppClient({
   /** القسم الذي تُعرض بطاقته. */
   const [cardOf, setCardOf] = useState<string | null>(null);
   const [confirmCriterion, setConfirmCriterion] = useState<Criterion | null>(null);
+  /** نافذة «كيف تعمل معايير التقويم؟» في الإعدادات. */
+  const [criteriaHelp, setCriteriaHelp] = useState(false);
   /** تغيير نوع معيار أو سقفه ينتظر موافقة، وعدّاد يُعيد خانات الإعدادات إلى قيمها إن رُفض. */
   const [criterionChange, setCriterionChange] = useState<
     { criterion: Criterion; patch: Partial<Criterion>; marked: number } | null
@@ -968,7 +970,11 @@ export default function AppClient({
   async function updateCriterion(id: string, patch: Partial<Criterion>) {
     const before = criteria.find((c) => c.id === id);
     if (!before) return;
-    if (!needsNetwork()) return;
+    if (!needsNetwork()) {
+      // الخانة تعرض ما كُتب فيها: بلا هذا تبقى تعرض رقمًا لم يُحفظ.
+      setSettingsTick((n) => n + 1);
+      return;
+    }
     const next: Criterion = { ...before, ...patch };
     if (next.kind === "deduct") next.base = Number(next.ceiling);
     else if (next.kind === "add" || next.kind === "auto") next.base = 0;
@@ -1011,7 +1017,7 @@ export default function AppClient({
       return;
     }
     if (demoted.length) {
-      say(`${demoted[0].label}: صار معيارًا يدويًا`);
+      say(`«بالسحب في الحصة» لمعيار واحد فقط: ${demoted[0].label} صار معيارًا يدويًا`);
       return;
     }
     // تغيير النوع يغيّر معنى العلامات المسجَّلة: ما كان إضافةً صار خصمًا.
@@ -1070,7 +1076,7 @@ export default function AppClient({
       return;
     }
     setCriteria((cs) => [...cs, data as Criterion]);
-    say("أُضيف معيار — سمِّه واضبط سقفه");
+    say("أُضيف معيار — سمِّه وحدّد علامته القصوى");
   }
 
   async function deleteCriterion(c: Criterion) {
@@ -1509,6 +1515,7 @@ export default function AppClient({
       },
     ],
     [confirmCriterion !== null, () => setConfirmCriterion(null)],
+    [criteriaHelp && tab === "settings", () => setCriteriaHelp(false)],
     [confirmStudent !== null, () => setConfirmStudent(null)],
     [confirmDelete !== null, () => setConfirmDelete(null)],
     [cardOf !== null, () => setCardOf(null)],
@@ -1766,6 +1773,8 @@ export default function AppClient({
               email={email}
               onCriterion={requestCriterionChange}
               resetTick={settingsTick}
+              helpOpen={criteriaHelp}
+              onHelp={setCriteriaHelp}
               onAddCriterion={addCriterion}
               onDeleteCriterion={setConfirmCriterion}
               onComponent={saveComponent}
@@ -1791,6 +1800,7 @@ export default function AppClient({
           /* من تبويب آخر إلى «الأقسام»: القسم يبقى مفتوحًا بعموده وقائمته؛
              والنقر على «الأقسام» وهو فيها يُغلقه إلى القائمة */
           setOpenClass((open) => openClassAfterTab(tab, t, open));
+          setCriteriaHelp(false);
           setTab(t);
         }}
       />

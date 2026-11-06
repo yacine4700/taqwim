@@ -276,6 +276,81 @@ textarea.inp { width: 100%; min-height: 150px; resize: vertical; line-height: 1.
 .pill.ok { background: var(--primary-soft); color: var(--primary); }
 .pill.warn { background: var(--sand-soft); color: var(--sand); }
 
+/* ما يخصّ بطاقتَي «التقويم» في الإعدادات فقط (.scoringcard): كان يُكتب على القواعد
+   العامة فيتسرّب إلى شاشة التصدير والطباعة والحقول المشتركة. القواعد العامة في
+   هذا الملف كما كانت في main حرفيًّا. */
+.scoringcard .crit { padding: 10px 13px 4px; gap: 6px; }
+.scoringcard .critop.stackrow { align-items: flex-end; }
+.scoringcard .critop.stackrow .sw { margin-bottom: 10px; }
+.scoringcard .cname { min-height: 44px; }
+.scoringcard .crit .icbtn { width: 44px; height: 44px; }
+.scoringcard .critop .k small { display: block; color: var(--faint); font-size: 11px; line-height: 1.5; }
+.scoringcard .kinds button { min-height: 40px; display: inline-flex; align-items: center; gap: 5px; }
+.scoringcard .sw { position: relative; }
+.scoringcard .sw::after { content: ""; position: absolute; inset: -11px -3px; }
+.scoringcard .btn.full { min-height: 44px; }
+.segmented.touch button { min-height: 44px; }
+
+/* تبويب «التقويم» في الإعدادات: العلامة القصوى فوق خانتها، ورمز يميّز طريقة
+   الاحتساب، ومعنى الخانة الفارغة في سطر هادئ بخطّ أخضر جانبي لا تنبيه رملي. */
+.cceil.stack { flex-direction: column; align-items: stretch; gap: 2px; text-align: center; }
+.cceil.stack span { font-size: 10.5px; line-height: 1.2; white-space: nowrap; }
+.cceil.stack input { width: 64px; min-height: 44px; padding-block: 6px; font-size: 15px; font-weight: 600; text-align: center; }
+.kglyph { width: 14px; height: 14px; flex: none; }
+/* الطرق الثلاث في سطر واحد بثلاثة أعمدة متساوية: كانت تلتفّ على سطرين فتطول
+   البطاقة، والنصّ الآن يلتفّ داخل الزرّ لا الأزرار في البطاقة. */
+.kinds.kgrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.kinds.kgrid button {
+  border-radius: var(--radius-sm); min-height: 44px; padding: 5px 6px;
+  justify-content: center; text-align: center; line-height: 1.35; font-size: 11.5px;
+  gap: 4px;
+}
+/* في هاتف أضيق من 360 يصعد الرمز فوق النصّ، فيبقى النصّ في سطرين لا ثلاثة. */
+@media (max-width: 359px) { .kinds.kgrid button { flex-direction: column; gap: 1px; } }
+.infoic { width: 15px; height: 15px; flex: none; }
+.rule {
+  display: flex; align-items: flex-start; gap: 6px; width: 100%; text-align: start;
+  min-height: 44px; padding: 4px 0; margin-block: -3px -4px; font-size: 12px; line-height: 1.55; color: var(--ink); align-items: center;
+}
+.rule .infoic { color: var(--primary); margin-top: 2px; }
+.rule > span { flex: 1; min-width: 0; }
+.rule small { display: block; color: var(--muted); font-size: 11.5px; margin-top: 2px; font-variant-numeric: tabular-nums; }
+.rule > i { flex: none; font-style: normal; font-size: 11px; font-weight: 600; color: var(--primary); padding-top: 1px; }
+/* سطر التأكيد تحت الخانة: يظهر ما دامت في التركيز أو فيها مسودة لم تُحفظ، وزرّ «تم»
+   فيه 44px على الأقل ولا يقف خلف لوحة المفاتيح. تحت الصف لا فيه: إضافة زرّ إلى
+   الصف تُضيّق اسم المعيار في 320px وتُزيح الخانة عند التركيز. */
+.scoringcard .cconfirm {
+  display: flex; align-items: center; gap: 10px; padding: 4px 4px 4px 8px;
+  background: var(--primary-soft); border-radius: var(--radius-sm);
+}
+.scoringcard .cconfirm > span { flex: 1; min-width: 0; font-size: 11.5px; line-height: 1.5; color: var(--ink); text-wrap: balance; }
+.scoringcard .cdone { flex: none; min-width: 72px; min-height: 44px; background: var(--primary); color: var(--on-primary); }
+.cerr { color: var(--danger); font-size: 11.5px; line-height: 1.6; text-wrap: balance; }
+.srow2 .k .helpq {
+  display: inline-flex; align-items: center; gap: 5px; margin-top: 2px;
+  min-height: 44px; padding: 4px 0; margin-block: -2px -12px; font-size: 12px; font-weight: 600; color: var(--primary);
+}
+.helpsteps { margin: 0; padding: 4px 0 0; list-style: none; counter-reset: hs; }
+.helpsteps > li { counter-increment: hs; position: relative; padding: 12px 0 12px; padding-inline-start: 34px; border-bottom: 1px solid var(--line); }
+.helpsteps > li:last-child { border-bottom: 0; }
+.helpsteps > li::before {
+  content: counter(hs); position: absolute; inset-inline-start: 0; top: 11px;
+  width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center;
+  background: var(--primary-soft); color: var(--primary); font-size: 12px; font-weight: 700;
+}
+.helpsteps b { font-size: 14px; }
+.helpsteps p { margin: 4px 0 0; font-size: 13px; line-height: 1.75; color: var(--muted); }
+.nobreak { white-space: nowrap; }
+.helpsteps small { display: block; margin-top: 4px; font-size: 12px; line-height: 1.7; color: var(--ink); font-variant-numeric: tabular-nums; }
+.helpkind { margin-top: 10px; padding: 9px 10px; background: var(--surface-2); border-radius: var(--radius-sm); }
+.helpkind .hk { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; color: var(--primary); }
+.helpkind p { margin-top: 2px; }
+.btn.full.helpdone { width: 100%; min-height: 44px; margin: 6px 0 4px; }
+.helpsheet .icbtn { width: 44px; height: 44px; }
+/* نافذة المساعدة أطول من شاشة الهاتف: تتمرّر داخلها، ولا يتمرّر ما خلفها معها.
+   dvh يحسب الشاشة المرئية فعلًا حين يظهر شريط المتصفّح أو لوحة المفاتيح. */
+.helpsheet { max-height: 88%; max-height: 88dvh; overflow-y: auto; overscroll-behavior: contain; }
+
 @media (prefers-reduced-motion: reduce) {
   .sw i { transition: none; }
 }

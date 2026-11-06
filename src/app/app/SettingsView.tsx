@@ -1,9 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Persistence } from "@/lib/localdb";
 import { countWord } from "@/lib/outbox";
-import { checkTotal, type Component, type Criterion } from "@/lib/scoring";
+import { checkTotal, type Component, type Criterion, type CriterionKind } from "@/lib/scoring";
+import { explainKind, KIND_NAME, WALKTHROUGH } from "@/lib/criteriaHelp";
+import { attachCeilingInput, CEILING_MAX, showCeiling, type CeilingController, type CeilingEditState } from "@/lib/ceilingInput";
 import { Klass, Profile, School } from "./types";
 import { ChangePasswordSheet } from "./RosterSheets";
 import { ThemeButton } from "./parts";
@@ -19,7 +21,7 @@ const TP_PRESETS = ["الأعمال التطبيقية", "التعبير الش�
  */
 export function SettingsView({
   criteria, components, email, profile, schools, classes,
-  onCriterion, resetTick, onAddCriterion, onDeleteCriterion, onComponent, onProfile,
+  onCriterion, resetTick, helpOpen, onHelp, onAddCriterion, onDeleteCriterion, onComponent, onProfile,
   onAddSchool, onRenameSchool, onDeleteSchool, onSignOut, onBackup, persistence, onPersist,
 }: {
   criteria: Criterion[];
@@ -31,6 +33,9 @@ export function SettingsView({
   onCriterion: (id: string, patch: Partial<Criterion>) => void;
   /** يزيد حين يُرفض تغيير معلَّق، فتعود خانة السقف إلى قيمتها المحفوظة. */
   resetTick: number;
+  /** نافذة «كيف تعمل؟»: حالتها في AppClient لتكون طبقة يغلقها زرّ الرجوع. */
+  helpOpen: boolean;
+  onHelp: (open: boolean) => void;
   onAddCriterion: () => void;
   onDeleteCriterion: (c: Criterion) => void;
   onComponent: (id: string, patch: Partial<Component>) => void;
@@ -56,7 +61,7 @@ export function SettingsView({
         </div>
       </div>
 
-      <div className="segmented" role="group" aria-label="أبواب الإعدادات">
+      <div className="segmented touch" role="group" aria-label="أبواب الإعدادات">
         <button aria-pressed={part === "scoring"} onClick={() => setPart("scoring")}>
           التقويم
         </button>
@@ -70,14 +75,20 @@ export function SettingsView({
 
       {part === "scoring" && (
       <>
-      <div className="note">
-        المعايير والمركّبات تسري على كل الأقسام والفصول الثلاثة.
+      <div className="note" style={{ textWrap: "pretty" }}>
+        المعايير والمركّبات تسري على كل الأقسام والفصول الثلاثة. وطريقة «بالسحب
+        في الحصة» لمعيار واحد فقط.
       </div>
 
-      <div className="card">
+      <div className="card scoringcard">
         <div className="srow2">
-          <b>معايير التقويم المستمر</b>
-          <div className="hspace" />
+          <div className="k">
+            <b>معايير التقويم المستمر</b>
+            <button className="helpq" onClick={() => onHelp(true)}>
+              <InfoIcon />
+              كيف تعمل معايير التقويم؟
+            </button>
+          </div>
           <span className={check.exact ? "pill ok" : "pill warn"}>
             المجموع {Number(check.total.toFixed(2))} / 20
           </span>
@@ -86,82 +97,19 @@ export function SettingsView({
         {check.warning && <div className="note warn">{check.warning}</div>}
 
         {criteria.map((c) => (
-          <div key={c.id} className="crit">
-            <div className="critop">
-              <input
-                className="cname"
-                id={`label-${c.code}`}
-                defaultValue={c.label}
-                aria-label="تسمية المعيار"
-                onBlur={(e) => {
-                  const text = e.target.value.trim();
-                  if (text && text !== c.label) onCriterion(c.id, { label: text });
-                  else e.target.value = c.label;
-                }}
-              />
-              <label className="cceil">
-                <span>السقف</span>
-                <input
-                  key={`${c.id}-${c.ceiling}-${resetTick}`}
-                  id={`ceiling-${c.code}`}
-                  type="number"
-                  min={0.5}
-                  max={20}
-                  step={0.5}
-                  defaultValue={Number(c.ceiling)}
-                  onBlur={(e) => {
-                    const value = Number(e.target.value);
-                    if (value > 0 && value <= 20) {
-                      if (value !== Number(c.ceiling)) onCriterion(c.id, { ceiling: value });
-                    } else e.target.value = String(Number(c.ceiling));
-                  }}
-                />
-              </label>
-              <button
-                className="icbtn danger"
-                aria-label={`حذف ${c.label}`}
-                onClick={() => onDeleteCriterion(c)}
-              >
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
-                  <path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13" />
-                </svg>
-              </button>
-            </div>
-
-            <div className="kinds" role="group" aria-label="نقطة الانطلاق">
-              <button
-                aria-pressed={c.kind === "deduct"}
-                onClick={() => onCriterion(c.id, { kind: "deduct" })}
-              >
-                يبدأ كاملًا ({Number(c.ceiling)}) ويُخصم منه
-              </button>
-              <button
-                aria-pressed={c.kind === "add"}
-                onClick={() => onCriterion(c.id, { kind: "add" })}
-              >
-                يبدأ من 0 ويُضاف إليه
-              </button>
-              <button
-                aria-pressed={c.kind === "auto"}
-                onClick={() => onCriterion(c.id, { kind: "auto" })}
-              >
-                بالسحب في الحصة
-              </button>
-            </div>
-            <small className="chint">
-              {c.kind === "deduct"
-                ? "يُحسب لكل تلميذ دائمًا: الخانة الفارغة تعني العلامة الكاملة."
-                : c.kind === "auto"
-                  ? "نقطة محسوبة من متوسط محاولات السحب في الحصة لهذا المعيار وحده، لا تُدخلها بيدك."
-                  : "لا يُحسب حتى تُنقّطه: الخانة الفارغة تخرج من القسمة ولا تُحسب صفرًا."}
-            </small>
-          </div>
+          <CriterionRow
+            key={c.id}
+            c={c}
+            resetTick={resetTick}
+            onCriterion={onCriterion}
+            onDelete={onDeleteCriterion}
+          />
         ))}
 
         <button className="btn soft full" onClick={onAddCriterion}>+ معيار</button>
       </div>
 
-      <div className="card">
+      <div className="card scoringcard">
         <div className="srow2">
           <b>مركّبات معدل المادة</b>
         </div>
@@ -173,7 +121,7 @@ export function SettingsView({
           const fixed = c.code === "cc";
           return (
             <div key={c.id} className={c.active || fixed ? "crit" : "crit off"}>
-              <div className="critop">
+              <div className="critop stackrow">
                 {fixed ? (
                   <div className="k" style={{ flex: 1 }}>
                     {c.label}
@@ -192,7 +140,7 @@ export function SettingsView({
                     }}
                   />
                 )}
-                <label className="cceil">
+                <label className="cceil stack">
                   <span>المعامل</span>
                   <input
                     id={`weight-${c.code}`}
@@ -369,8 +317,277 @@ export function SettingsView({
       </div>
       </>
       )}
+      {helpOpen && <CriteriaHelpSheet onClose={() => onHelp(false)} />}
       {pwdOpen && <ChangePasswordSheet email={email} onClose={() => setPwdOpen(false)} />}
     </section>
+  );
+}
+
+const KINDS: CriterionKind[] = ["deduct", "add", "auto"];
+
+/** رمز يميّز الطريقة بالنظر قبل القراءة: ناقص للخصم، زائد للإضافة، يد للسحب. */
+function KindGlyph({ kind }: { kind: CriterionKind }) {
+  return (
+    <svg className="kglyph" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+      {kind === "deduct" && <path d="M4 8h8" />}
+      {kind === "add" && <path d="M4 8h8M8 4v8" />}
+      {kind === "auto" && (
+        <>
+          <rect x="2.5" y="2.5" width="11" height="11" rx="2.5" />
+          <circle cx="6" cy="6" r="0.6" fill="currentColor" />
+          <circle cx="10" cy="10" r="0.6" fill="currentColor" />
+          <circle cx="10" cy="6" r="0.6" fill="currentColor" />
+          <circle cx="6" cy="10" r="0.6" fill="currentColor" />
+        </>
+      )}
+    </svg>
+  );
+}
+
+function InfoIcon() {
+  return (
+    <svg className="infoic" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+      <circle cx="8" cy="8" r="6.3" />
+      <path d="M8 7.2v4M8 4.9v.1" />
+    </svg>
+  );
+}
+
+/**
+ * بطاقة معيار: الاسم والعلامة القصوى والحذف في سطر، ثم الطريقة، ثم معنى
+ * الخانة الفارغة في هذه الطريقة. المعنى ظاهر دائمًا لأنه ما يُساء فهمه؛
+ * والمثال الرقمي يُفتح بلمسة على السطر نفسه فلا يطيل البطاقة.
+ *
+ * لا شيء هنا يغيّر الحفظ: الخانات والأزرار تنادي onCriterion كما كانت.
+ */
+function CriterionRow({
+  c, resetTick, onCriterion, onDelete,
+}: {
+  c: Criterion;
+  resetTick: number;
+  onCriterion: (id: string, patch: Partial<Criterion>) => void;
+  onDelete: (c: Criterion) => void;
+}) {
+  const [example, setExample] = useState(false);
+  const [ceilingNotice, setCeilingNotice] = useState<CeilingNotice>(null);
+  const ceilingCtl = useRef<CeilingController | null>(null);
+  const [ceilingEdit, setCeilingEdit] = useState<CeilingEditState>({ focused: false, dirty: false });
+  const explain = explainKind(c.kind, Number(c.ceiling));
+  return (
+    <div className="crit">
+      <div className="critop stackrow">
+        <input
+          className="cname"
+          id={`label-${c.code}`}
+          defaultValue={c.label}
+          aria-label="اسم المعيار"
+          enterKeyHint="done"
+          onKeyDown={(e) => {
+            if (e.key === "Enter") e.currentTarget.blur();
+          }}
+          onBlur={(e) => {
+            const text = e.target.value.trim();
+            if (text && text !== c.label) onCriterion(c.id, { label: text });
+            else e.target.value = c.label;
+          }}
+        />
+        <CeilingField
+          key={`${c.id}-${c.ceiling}-${resetTick}`}
+          c={c}
+          onCriterion={onCriterion}
+          onNotice={setCeilingNotice}
+          ctl={ceilingCtl}
+          onState={setCeilingEdit}
+        />
+        <button
+          className="icbtn danger"
+          aria-label={`حذف معيار ${c.label}`}
+          title="حذف المعيار"
+          onClick={() => onDelete(c)}
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+            <path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13" />
+          </svg>
+        </button>
+      </div>
+      {(ceilingEdit.focused || ceilingEdit.dirty) && (
+        <div className="cconfirm">
+          <span role="status">
+            {ceilingEdit.dirty
+              ? "لم تُحفظ العلامة القصوى بعد: اضغط «تم» لحفظها."
+              : "اكتب العلامة القصوى ثم اضغط «تم»."}
+          </span>
+          <button
+            type="button"
+            className="btn cdone"
+            aria-label={`تم: حفظ العلامة القصوى لمعيار ${c.label}`}
+            onClick={() => ceilingCtl.current?.confirm()}
+          >
+            تم
+          </button>
+        </div>
+      )}
+      {ceilingNotice && (
+        <small className="cerr" role="alert">
+          {`العلامة القصوى رقم أكبر من 0 وحتى\u00A0${CEILING_MAX}. لم تُحفظ، والقيمة الحالية\u00A0${Number(c.ceiling)}.`}
+        </small>
+      )}
+
+      <div className="kinds kgrid" role="group" aria-label={`طريقة احتساب ${c.label}`}>
+        {KINDS.map((kind) => (
+          <button
+            key={kind}
+            title={kind === "auto" ? "لمعيار واحد فقط" : undefined}
+            aria-pressed={c.kind === kind}
+            onClick={() => onCriterion(c.id, { kind })}
+          >
+            <KindGlyph kind={kind} />
+            <span>{kind === "deduct" ? `يبدأ كاملًا (${Number(c.ceiling)}) ويُخصم منه` : KIND_NAME[kind]}</span>
+          </button>
+        ))}
+      </div>
+
+      <button
+        className="rule"
+        aria-expanded={example}
+        onClick={() => setExample((v) => !v)}
+      >
+        <InfoIcon />
+        <span>
+          {explain.short}
+          {example && <small>{explain.example}</small>}
+        </span>
+        <i aria-hidden="true">{example ? "إخفاء" : "مثال"}</i>
+      </button>
+    </div>
+  );
+}
+
+/** تنبيه الخانة: ما أُكِّد لا يصحّ فلم يُحفظ. */
+type CeilingNotice = "invalid" | null;
+
+/**
+ * خانة العلامة القصوى. غير متحكَّم بها عمدًا: قواعد الحفظ والإلغاء وفقد التركيز
+ * وإغلاق لوحة المفاتيح في src/lib/ceilingInput.ts وتُختبر هناك. الحفظ بـ«تم» أو Enter،
+ * وزرّ «تم» في CriterionRow بجانب الخانة لا يعتمد على مفتاح في لوحة المفاتيح. المحفوظ يُقرأ من
+ * `latest` عند كل تأكيد، والمفتاح (key) يعيد تركيب الخانة حين يتغيّر المحفوظ
+ * أو يُرفض تغيير معلَّق فتعود إلى قيمتها.
+ */
+function CeilingField({
+  c, onCriterion, onNotice, ctl, onState,
+}: {
+  c: Criterion;
+  onCriterion: (id: string, patch: Partial<Criterion>) => void;
+  onNotice: (notice: CeilingNotice) => void;
+  /** يُسلَّم منها المتحكّم ليضغط زرّ «تم» (خارج الحقل) التأكيدَ نفسه. */
+  ctl: { current: CeilingController | null };
+  onState: (state: CeilingEditState) => void;
+}) {
+  const ref = useRef<HTMLInputElement>(null);
+  const latest = useRef({ c, onCriterion, onNotice, onState });
+  latest.current = { c, onCriterion, onNotice, onState };
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const controller = attachCeilingInput(el, {
+      getSaved: () => Number(latest.current.c.ceiling),
+      onSave: (value) => {
+        latest.current.onNotice(null);
+        latest.current.onCriterion(latest.current.c.id, { ceiling: value });
+      },
+      onInvalid: () => latest.current.onNotice("invalid"),
+      onEdit: () => latest.current.onNotice(null),
+      onState: (state) => latest.current.onState(state),
+    });
+    ctl.current = controller;
+    return () => {
+      controller.detach();
+      if (ctl.current === controller) ctl.current = null;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  return (
+    <label className="cceil stack">
+      <span>العلامة القصوى</span>
+      <input
+        ref={ref}
+        id={`ceiling-${c.code}`}
+        type="text"
+        inputMode="decimal"
+        enterKeyHint="done"
+        autoComplete="off"
+        dir="ltr"
+        aria-label={`العلامة القصوى لمعيار ${c.label}`}
+        defaultValue={showCeiling(Number(c.ceiling))}
+      />
+    </label>
+  );
+}
+
+/**
+ * «كيف تعمل معايير التقويم؟»: ورقة قصيرة تُفتح عند الطلب ولا تظهر وحدها.
+ * الأمثلة من criteriaHelp.ts، فتُحسب بدوال الحساب نفسها.
+ */
+function CriteriaHelpSheet({ onClose }: { onClose: () => void }) {
+  const closeRef = useRef<HTMLButtonElement>(null);
+  const closeNow = useRef(onClose);
+  closeNow.current = onClose;
+  useEffect(() => {
+    // التركيز على زرّ الإغلاق: لوحة المفاتيح الخارجية تغلقها Escape، ومن يستعمل
+    // قارئ الشاشة يبدأ من داخل النافذة لا من خلفها.
+    closeRef.current?.focus({ preventScroll: true });
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") closeNow.current();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, []);
+  return (
+    <>
+      <div className="scrim" onClick={onClose} />
+      <div className="sheet helpsheet" role="dialog" aria-modal="true" aria-labelledby="crit-help-title">
+        <div className="shead">
+          <h3 id="crit-help-title">كيف تعمل معايير التقويم؟</h3>
+          <button ref={closeRef} className="icbtn" aria-label="إغلاق" onClick={onClose}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+              <path d="M6 6l12 12M18 6L6 18" />
+            </svg>
+          </button>
+        </div>
+        <ol className="helpsteps">
+          <li>
+            <b>أضف معيارًا</b>
+            <p>اضغط «+ معيار» أسفل القائمة، ثم اكتب اسمه مكان «معيار جديد».</p>
+          </li>
+          <li>
+            <b>حدّد علامته القصوى</b>
+            <p>
+              أعلى ما يناله التلميذ فيه، مثل: الانضباط من 4. يُستحسن أن يكون مجموع
+              المعايير 20؛ وإن اختلف حوّل التطبيق النقطة إلى 20 وحده.
+            </p>
+          </li>
+          <li>
+            <b>اختر طريقة الاحتساب</b>
+            {KINDS.map((kind) => (
+              <div key={kind} className="helpkind">
+                <span className="hk"><KindGlyph kind={kind} />{KIND_NAME[kind]}</span>
+                <p>{explainKind(kind, 4).rule}</p>
+                <small>{explainKind(kind, 4).example}</small>
+              </div>
+            ))}
+          </li>
+          <li>
+            <b>الخانة الفارغة ليست صفرًا</b>
+            <p>
+              في معيار الخصم تعني العلامة الكاملة، وفي غيره تعني «لم يُقيَّم بعد»
+              فتخرج من الحساب. هكذا لا يظهر التلميذ في منتصف الفصل أضعف مما هو.
+            </p>
+            <small>{WALKTHROUGH.lead} <span className="nobreak"><bdi dir="ltr">{WALKTHROUGH.expr}</bdi> من 20.</span></small>
+          </li>
+        </ol>
+        <button className="btn full helpdone" onClick={onClose}>فهمت</button>
+      </div>
+    </>
   );
 }
 

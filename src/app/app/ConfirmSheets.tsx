@@ -39,7 +39,7 @@ export function ConfirmStudentSheet({
 const KIND_LABEL: Record<Criterion["kind"], string> = {
   deduct: "يبدأ كاملًا ويُخصم منه",
   add: "يبدأ من 0 ويُضاف إليه",
-  auto: "من محاولات القراءة",
+  auto: "بالسحب في الحصة",
 };
 
 /**
@@ -70,7 +70,7 @@ export function ConfirmCriterionChangeSheet({
           {kindChanged && patch.kind
             ? `النوع: «${KIND_LABEL[criterion.kind]}» ← «${KIND_LABEL[patch.kind]}». `
             : ""}
-          {ceilingChanged ? `السقف: ${Number(criterion.ceiling)} ← ${Number(patch.ceiling)}. ` : ""}
+          {ceilingChanged ? `العلامة القصوى: ${Number(criterion.ceiling)} ← ${Number(patch.ceiling)}. ` : ""}
           في هذا المعيار {marked} علامة مسجَّلة في كل الأقسام والفصول. تبقى
           أرقامها كما هي، لكن معناها يتغيّر فيتغيّر التقويم المستمر لأصحابها.
         </p>
