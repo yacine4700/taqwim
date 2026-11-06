@@ -387,7 +387,7 @@ export default function LoginPage() {
             setUnconfirmed(false);
           }}
         >
-          {mode === "in" ? "ليس لي حساب بعد" : mode === "up" ? "لي حساب، أريد الدخول" : "رجوع إلى الدخول"}
+          {mode === "in" ? "إنشاء حساب جديد" : mode === "up" ? "لي حساب، أريد الدخول" : "رجوع إلى الدخول"}
         </button>
 
         <a className="swap" href="/privacy" style={{ fontWeight: 400 }}>
