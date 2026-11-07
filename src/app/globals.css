@@ -152,9 +152,7 @@ select, .inp { background: var(--surface); border: 1px solid var(--line); border
 .scorerow { display: flex; gap: 6px; flex-wrap: wrap; }
 .scorerow button { flex: 1 0 48px; padding: 12px 0; border-radius: var(--radius-sm); background: var(--surface-2); font-weight: 700; font-variant-numeric: tabular-nums; font-size: 16px; border: 1px solid transparent; }
 .scorerow button[aria-pressed="true"] { background: var(--primary); color: var(--on-primary); border-color: var(--primary); }
-.scorerow button.skip { flex: 1 0 62px; font-size: 13px; font-weight: 600; color: var(--muted); }
 .pcard .pn .clearb { flex: none; }
-.scorerow button.skip[aria-pressed="true"] { background: var(--surface-2); color: var(--ink); border-color: var(--line); }
 
 .scrim { position: fixed; inset: 0; background: rgba(8, 18, 14, 0.5); z-index: 40; }
 .sheet {

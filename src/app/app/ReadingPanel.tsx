@@ -4,6 +4,7 @@ import { useState } from "react";
 import { optionsFor, type Criterion } from "@/lib/scoring";
 import {
   draftEntries,
+  emptyDraft,
   pickDraft,
   setDraftScore,
   swapInDraft,
@@ -31,8 +32,11 @@ export function ReadingPanel({
   onSave: (entries: Array<{ studentId: string; score: number }>) => Promise<boolean>;
 }) {
   const [saving, setSaving] = useState(false);
+  const [confirmCancel, setConfirmCancel] = useState(false);
   const chosen = draftEntries(draft).length;
   // سلّم التنقيط من سقف معيار القراءة نفسه، فلو رفعه الأستاذ إلى 6 ظهرت 6.
+  // يسقط السؤال وحده إن حُفظت النقاط أو مُسحت وهو معروض.
+  const asking = confirmCancel && chosen > 0;
   const scale = reading ? optionsFor({ ...reading, kind: "add" }) : [0, 1, 2, 3, 4];
 
   return (
@@ -65,8 +69,35 @@ export function ReadingPanel({
         >
           {draft.picked.length ? `أعِد اختيار ${count}` : `اختر ${count}`}
         </button>
+        {/* الإلغاء يمحو القائمة دون حفظ. بلا نقاط يمحو فورًا؛ وفيها نقاط يطلب
+            لمسة ثانية، فلا تضيع قراءة استُمع إليها بلمسة خاطئة. */}
+        {draft.picked.length > 0 && !asking && (
+          <button
+            className="btn ghost"
+            onClick={() => (chosen > 0 ? setConfirmCancel(true) : onDraft(emptyDraft()))}
+          >
+            إلغاء
+          </button>
+        )}
         <small className="chint">الأقل محاولات أولًا، والعشوائية بين المتساوين. والمتطوّع بـ«+» أمام اسمه.</small>
       </div>
+
+      {asking && (
+        <div className="note warn">
+          <div>{chosen === 1 ? "نقطة واحدة لم تُحفظ" : chosen === 2 ? "نقطتان لم تُحفظا" : chosen <= 10 ? `${chosen} نقاط لم تُحفظ` : `${chosen} نقطة لم تُحفظ`}. ألغِ القائمة وامحُها؟</div>
+          <div className="pickbar" style={{ marginTop: 8 }}>
+            <button
+              className="btn warn sm"
+              onClick={() => { setConfirmCancel(false); onDraft(emptyDraft()); }}
+            >
+              نعم، امحُها
+            </button>
+            <button className="btn ghost sm" onClick={() => setConfirmCancel(false)}>
+              تراجع
+            </button>
+          </div>
+        </div>
+      )}
 
       {draft.picked.map((student) => (
         <div key={student.id} className="card pcard">
@@ -75,9 +106,12 @@ export function ReadingPanel({
             <span className="pill">
               {attemptsOf(student.id) ? `${attemptsOf(student.id)} محاولات` : "أول محاولة"}
             </span>
-            {/* الاسم يخرج والقائمة لا تُعاد: الغائب لا يُنقص الحصة واحدًا */}
+            {/* للغائب: الاسم يخرج والقائمة لا تُعاد، فلا يُنقص الحصة واحدًا.
+                كان بجانبه زرّ «غائب» لا يفعل شيئًا ظاهرًا (يعلّم الاسم ولا يُحفظ له
+                شيء)، فحُذف: «بدّله» هو ما يحتاجه الأستاذ مع الغائب. */}
             <button
               className="clearb"
+              aria-label={`بدّل ${student.full_name} (غائب)`}
               onClick={() => onDraft(swapInDraft(draft, student.id, students, attemptsOf))}
             >
               بدّله
@@ -93,13 +127,6 @@ export function ReadingPanel({
                 {n}
               </button>
             ))}
-            <button
-              className="skip"
-              aria-pressed={draft.scores[student.id] === "skip"}
-              onClick={() => onDraft(setDraftScore(draft, student.id, "skip"))}
-            >
-              غائب
-            </button>
           </div>
         </div>
       ))}
