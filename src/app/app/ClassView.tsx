@@ -33,7 +33,7 @@ import { ReadingPanel } from "./ReadingPanel";
 
 export function ClassView({
   klass, students, term, readOnly, criteria, components, recordOf,
-  averageOf, readingCount, recentReaders, stats, tp, onGroups,
+  averageOf, readingCount, recentReaders, examSeason, stats, tp, onGroups,
   onBack, onPick, onCard, onAddStudents, onCriterion, onMark,
   column, onColumn, readCount, onReadCount, draftOf, onDraft, onSaveReadings,
 }: {
@@ -46,6 +46,8 @@ export function ClassView({
   components: Component[];
   recordOf: (id: string) => RecordRow | undefined;
   averageOf: (id: string) => number | null;
+  /** فترة الاختبارات: علامات الفصل تظهر في صف ثانٍ دائمًا بدل أن تختبئ خلف زرّ. */
+  examSeason: boolean;
   /** عدد محاولات تلميذ في معيار؛ بلا كود: كل محاولاته. */
   readingCount: (id: string, code?: string) => number;
   /** آخر من قرؤوا في معيار من هذا القسم، الأحدث أولًا: لا يُختارون حتى يقرأ ثمانية بعدهم. */
@@ -81,6 +83,8 @@ export function ClassView({
   const setColumn = onColumn;
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<"all" | "todo" | "low">("all");
+  /** الصف الثاني (علامات الفصل) مفتوح بزرّه خارج فترة الاختبارات. */
+  const [marksExpanded, setMarksExpanded] = useState(false);
 
   const ranked = students
     .map((s) => ({ student: s, average: averageOf(s.id) }))
@@ -96,16 +100,22 @@ export function ClassView({
   // لكل معيار من نوع «السحب في الحصة» عموده. وإن لم يبقَ للأستاذ معيار منها بقي عمود
   // «قراءة» ليجد تنبيه إضافة معيار بدل أن يختفي الوضع.
   const draws = autoCriteria(criteria);
-  const columns = [
+  // معايير التقويم هي عمل كل حصة، فتبقى وحدها في صف الأعمدة. وعلامات الفصل (الفرض
+  // والاختبار والأعمال التطبيقية) يحتاجها الأستاذ مرة في الفصل تقريبًا: زرّ يفتح
+  // صفًّا ثانيًا، وتظهر دائمًا في فترة الاختبارات.
+  const criteriaColumns = [
     ...(draws.length
       ? draws.map((c) => ({ key: readingColumnKey(c.code), label: c.label }))
       : [{ key: READING_COLUMN, label: "قراءة" }]),
     ...criteria.filter((c) => c.kind !== "auto").map((c) => ({ key: `c:${c.code}`, label: c.label })),
-    ...components
-      .filter((c) => c.code !== "cc" && c.active)
-      .map((c) => ({ key: `m:${c.code}`, label: c.label })),
   ];
+  const markColumns = components
+    .filter((c) => c.code !== "cc" && c.active)
+    .map((c) => ({ key: `m:${c.code}`, label: c.label }));
+  const columns = [...criteriaColumns, ...markColumns];
   const open = readOnly ? null : (columns.find((c) => c.key === column) ?? null);
+  const markOpen = open?.key.startsWith("m:") ?? false;
+  const showMarks = markColumns.length > 0 && (examSeason || marksExpanded || markOpen);
   const drawCode = drawCodeOf(open?.key);
   const isReading = drawCode !== null;
   const drawKey = drawCode ?? "";
@@ -200,34 +210,81 @@ export function ClassView({
       {/* الواجب يُصحَّح للقسم كله مرة واحدة، لا تلميذًا تلميذًا: يُختار العمود
           مرة ثم يُنزَل على الأسماء بعدّاد لكل سطر. */}
       {students.length > 0 && !readOnly && (
-        <div className="colbar">
-          <span className="collab">عرض:</span>
-          <div className="chips">
-            {/* العودة إلى الحالة العامة بزرّ ظاهر: إعادة النقر على العمود المختار
-                تُلغيه، لكن أحدًا لا يخمّن ذلك. */}
-            <button
-              aria-pressed={column === null}
-              onClick={() => {
-                setColumn(null);
-                setFilter("all");
-              }}
-            >
-              الكل
-            </button>
-            {columns.map((c) => (
+        <>
+          <div className="colbar">
+            <span className="collab">عرض:</span>
+            <div className="chips">
+              {/* العودة إلى الحالة العامة بزرّ ظاهر: إعادة النقر على العمود المختار
+                  تُلغيه، لكن أحدًا لا يخمّن ذلك. */}
               <button
-                key={c.key}
-                aria-pressed={column === c.key}
+                aria-pressed={column === null}
                 onClick={() => {
-                  setColumn(column === c.key ? null : c.key);
+                  setColumn(null);
                   setFilter("all");
+                  setMarksExpanded(false);
                 }}
               >
-                {c.label}
+                الكل
               </button>
-            ))}
+              {criteriaColumns.map((c) => (
+                <button
+                  key={c.key}
+                  aria-pressed={column === c.key}
+                  onClick={() => {
+                    setColumn(column === c.key ? null : c.key);
+                    setFilter("all");
+                    setMarksExpanded(false);
+                  }}
+                >
+                  {c.label}
+                </button>
+              ))}
+            </div>
+            {/* خارج فترة الاختبارات تختبئ علامات الفصل خلف زرّ واحد، خارج الشريط
+                القابل للتمرير حتى لا يختفي وراء الحافة. إن كانت إحداها مفتوحة حمل
+                الزرّ اسمها، ولمسته تعيد الجدول العام. */}
+            {markColumns.length > 0 && !examSeason && (
+              <div className="chips fixed">
+                <button
+                  className="more"
+                  aria-pressed={markOpen}
+                  aria-expanded={showMarks}
+                  onClick={() => {
+                    if (markOpen) {
+                      setColumn(null);
+                      setFilter("all");
+                      setMarksExpanded(false);
+                    } else {
+                      setMarksExpanded(!marksExpanded);
+                    }
+                  }}
+                >
+                  {markOpen && open ? open.label : "علامات الفصل"} {showMarks ? "▴" : "▾"}
+                </button>
+              </div>
+            )}
           </div>
-        </div>
+          {showMarks && (
+            <div className="colbar marks">
+              <span className="collab">علامات الفصل:</span>
+              <div className="chips">
+                {markColumns.map((c) => (
+                  <button
+                    key={c.key}
+                    aria-pressed={column === c.key}
+                    onClick={() => {
+                      setColumn(column === c.key ? null : c.key);
+                      setFilter("all");
+                    }}
+                  >
+                    {c.label}
+                    {c.key === "m:tp" && tp.target === TP_COMPONENT ? " 🔒" : ""}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </>
       )}
 
       {isReading && students.length > 0 && (

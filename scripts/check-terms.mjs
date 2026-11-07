@@ -1,10 +1,11 @@
 /* اختبار الفصول (src/lib/terms.ts): الرزنامة والمهلة والقفل، ثم الحساب بالشهر احتياطًا.
    يجب أن يتطابق مع private.term_open في supabase/migrations/20261030090000.
    يحتاج Node 22.6 فأحدث مع --experimental-strip-types. */
+import { EXAMS_DEFAULT_DAYS_BEFORE_END as ADMIN_DEFAULT } from "../src/lib/adminBackup.ts";
 import {
   currentTerm, termView, termNotice, closedTermOf, algiersToday, addDays, daysBetween,
   isClassYearClosed, parseYearNotice, yearBanner, dateAr, YEAR_CLOSED_SAY,
-  resolveYearNotice, orderClosedClasses,
+  resolveYearNotice, orderClosedClasses, examSeason, EXAMS_DEFAULT_DAYS_BEFORE_END,
 } from "../src/lib/terms.ts";
 
 let pass = 0, fail = 0;
@@ -197,6 +198,24 @@ t("16 جوان", currentTerm(at(6, 16)), null);
 t("أوت", currentTerm(at(8, 31)), null);
 t("بلا رزنامة يُفتح على الفصل بالشهر", termView([], "2027-02-10").landing, 2);
 t("بلا رزنامة في العطلة يُفتح على ف3", termView([], "2027-07-20").landing, 3);
+
+
+console.log("— فترة الاختبارات (تُظهر علامات الفصل في صف الأعمدة)");
+t("الافتراضي هو نفسه في adminBackup", EXAMS_DEFAULT_DAYS_BEFORE_END, ADMIN_DEFAULT);
+// ف1 تنتهي 17 ديسمبر والمهلة 10: الافتراضي 14 يومًا قبل النهاية = من 3 ديسمبر.
+t("ف1 قبل الاختبارات: لا", examSeason(CAL, 1, "2026-12-02"), false);
+t("ف1 أول يوم اختبارات افتراضي (3 ديسمبر): نعم", examSeason(CAL, 1, "2026-12-03"), true);
+t("ف1 آخر يوم قبل العطلة: نعم", examSeason(CAL, 1, "2026-12-17"), true);
+t("ف1 في مهلتها (27 ديسمبر آخر يوم): نعم", examSeason(CAL, 1, "2026-12-27"), true);
+t("ف1 بعد مهلتها: لا (الفصل مقفل)", examSeason(CAL, 1, "2026-12-28"), false);
+t("ف1 في مهلتها وقد بدأ ف2: ف2 لا", examSeason(CAL, 2, "2026-12-20"), false);
+t("ف2 في مهلتها في الفصل الجاري: لا", examSeason(CAL, 2, "2027-01-15"), false);
+const CAL_EX = CAL.map((r) => (r.term === 1 ? { ...r, exams_from: "2026-12-10" } : r));
+t("تاريخ كتبه المشرف يحلّ محل الافتراضي: قبله لا", examSeason(CAL_EX, 1, "2026-12-09"), false);
+t("وبعده نعم", examSeason(CAL_EX, 1, "2026-12-10"), true);
+t("exams_from فارغ (null) = الافتراضي", examSeason(CAL.map((r) => ({ ...r, exams_from: null })), 1, "2026-12-03"), true);
+t("بلا رزنامة: لا", examSeason([], 1, "2026-12-10"), false);
+t("خارج كل الفصول: لا", examSeason(CAL, 3, "2026-10-10"), false);
 
 console.log(`\n${pass} ok, ${fail} failed`);
 process.exit(fail ? 1 : 0);

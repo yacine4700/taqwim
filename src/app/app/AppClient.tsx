@@ -9,6 +9,7 @@ import { useBackLayers } from "@/lib/useBackLayers";
 import { clearAppCaches } from "@/lib/appCache";
 import {
   algiersToday,
+  examSeason,
   orderClosedClasses,
   resolveYearNotice,
   termName,
@@ -332,7 +333,7 @@ export default function AppClient({
     /* الرزنامة كالأفواج: غيابها (جدول لم يُرحَّل بعد، أو انقطاع) لا يحجب العلامات ولا يُقفل شيئًا. */
     const cal = await supabase
       .from("term_calendar")
-      .select("school_year,term,starts_on,ends_on,grace_days")
+      .select("school_year,term,starts_on,ends_on,grace_days,exams_from")
       .order("starts_on");
     /* إشعار السنة الدراسية كالرزنامة: غياب الدالة (ترحيل لم يُطبَّق) أو انقطاع لا يُقفل شيئًا
        ولا يمحو ما حُفظ على الجهاز. */
@@ -1701,6 +1702,7 @@ export default function AppClient({
                 components={components}
                 recordOf={effectiveRecordOf}
                 averageOf={averageOf}
+                examSeason={examSeason(calendar, term, todayIso)}
                 readingCount={(id, code) =>
                   (code === undefined ? readingsOf(id) : readingsFor(readingsOf(id), code)).length
                 }

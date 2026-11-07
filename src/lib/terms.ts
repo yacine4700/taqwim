@@ -25,7 +25,18 @@ export type TermRow = {
   starts_on: string;
   ends_on: string;
   grace_days: number;
+  /**
+   * بداية فترة الاختبارات. فارغ = قبل نهاية الفصل بـ EXAMS_DEFAULT_DAYS_BEFORE_END يومًا.
+   * غائب في رزنامة محفوظة من نسخة أقدم، فيُطبَّق الافتراضي.
+   */
+  exams_from?: string | null;
 };
+
+/**
+ * الأيام التي تسبق نهاية الفصل حين لا يُكتب تاريخ الاختبارات. توأمها في
+ * adminBackup.ts (EXAMS_DEFAULT_DAYS_BEFORE_END) وفي القاعدة، ويفحص check-terms تطابقها.
+ */
+export const EXAMS_DEFAULT_DAYS_BEFORE_END = 14;
 
 /**
  * الحساب بالشهر، احتياطًا حين لا رزنامة:
@@ -100,6 +111,18 @@ const TERMS: TermNo[] = [1, 2, 3];
 /** آخر يوم يُنقَّط فيه الفصل. */
 export function closesOn(row: TermRow): string {
   return addDays(row.ends_on, row.grace_days);
+}
+
+/**
+ * هل الفصل في فترة اختباراته؟ من بداية الاختبارات حتى آخر يوم تنقيط (نهاية الفصل + المهلة).
+ * وقتها يحتاج الأستاذ الفرض والاختبار كل يوم، فتظهر أعمدتها في صف الأعمدة دائمًا.
+ * بلا رزنامة أو خارج نافذة الفصل: لا.
+ */
+export function examSeason(rows: readonly TermRow[], term: number, today: string): boolean {
+  const row = rows.find((r) => r.term === term && today >= r.starts_on && today <= closesOn(r));
+  if (!row) return false;
+  const from = row.exams_from ?? addDays(row.ends_on, -EXAMS_DEFAULT_DAYS_BEFORE_END);
+  return today >= from;
 }
 
 export function termView(rows: readonly TermRow[], today: string): TermView {
