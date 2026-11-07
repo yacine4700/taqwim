@@ -18,10 +18,12 @@ import { Student } from "./types";
  * قسم الحصة، فلا اختيار مؤسسة ولا قسم.
  */
 export function ReadingPanel({
-  students, attemptsOf, reading, count, onCount, draft, onDraft, onSave,
+  students, attemptsOf, recent, reading, count, onCount, draft, onDraft, onSave,
 }: {
   students: Student[];
   attemptsOf: (id: string) => number;
+  /** آخر من قرؤوا، الأحدث أولًا. */
+  recent: string[];
   /** معيار السحب الذي تُسجَّل له المحاولات، إن بقي في معايير الأستاذ. */
   reading: Criterion | undefined;
   count: number;
@@ -65,7 +67,7 @@ export function ReadingPanel({
           className={draft.picked.length ? "btn soft" : "btn"}
           disabled={chosen > 0}
           title={chosen > 0 ? "احفظ النقاط أولًا" : undefined}
-          onClick={() => onDraft(pickDraft(students, attemptsOf, count))}
+          onClick={() => onDraft(pickDraft(students, attemptsOf, count, recent))}
         >
           {draft.picked.length ? `أعِد اختيار ${count}` : `اختر ${count}`}
         </button>
@@ -79,7 +81,7 @@ export function ReadingPanel({
             إلغاء
           </button>
         )}
-        <small className="chint">الأقل محاولات أولًا، والعشوائية بين المتساوين. والمتطوّع بـ«+» أمام اسمه.</small>
+        <small className="chint">بالقرعة، ومن قرأ أقل حظّه أكبر. من قرأ لا يعود قبل أن يقرأ 8 بعده. والمتطوّع بـ«+» أمام اسمه.</small>
       </div>
 
       {asking && (
@@ -112,7 +114,7 @@ export function ReadingPanel({
             <button
               className="clearb"
               aria-label={`بدّل ${student.full_name} (غائب)`}
-              onClick={() => onDraft(swapInDraft(draft, student.id, students, attemptsOf))}
+              onClick={() => onDraft(swapInDraft(draft, student.id, students, attemptsOf, recent))}
             >
               بدّله
             </button>

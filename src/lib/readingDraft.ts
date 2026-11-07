@@ -45,17 +45,22 @@ export function emptyDraft<S extends { id: string }>(): ReadingDraft<S> {
   return { picked: [], scores: {} };
 }
 
-/** اختيار جديد بالعدل: الأقل محاولات أولًا، والعشوائية بين المتساوين فقط. */
+/**
+ * اختيار جديد: من قرأ في آخر ثمانية لا يُختار، والباقون بالقرعة مع ترجيح الأقل
+ * محاولات (انظر pickForSession). `recent` آخر من قرؤوا، الأحدث أولًا.
+ */
 export function pickDraft<S extends { id: string }>(
   list: S[],
   attemptsOf: (id: string) => number,
   count: number,
+  recent: string[] = [],
+  random: () => number = Math.random,
 ): ReadingDraft<S> {
-  return { picked: pickForSession(list, attemptsOf, count), scores: {} };
+  return { picked: pickForSession(list, attemptsOf, count, recent, random), scores: {} };
 }
 
 /**
- * يُخرج تلميذًا ويُدخل التالي في العدل ممّن ليسوا في القائمة.
+ * يُخرج تلميذًا ويُدخل غيره ممّن ليسوا في القائمة، بقاعدة الاختيار نفسها.
  * الغائب لا يُنقص الحصة واحدًا. إن لم يبقَ أحد يُخرَج ولا يُعوَّض.
  */
 export function swapInDraft<S extends { id: string }>(
@@ -63,9 +68,13 @@ export function swapInDraft<S extends { id: string }>(
   studentId: string,
   list: S[],
   attemptsOf: (id: string) => number,
+  recent: string[] = [],
+  random: () => number = Math.random,
 ): ReadingDraft<S> {
   const already = new Set(draft.picked.map((p) => p.id));
-  const [next] = pickForSession(list.filter((s) => !already.has(s.id)), attemptsOf, 1);
+  const [next] = pickForSession(
+    list.filter((s) => !already.has(s.id)), attemptsOf, 1, recent, random,
+  );
   const scores = { ...draft.scores };
   delete scores[studentId];
   const picked = next

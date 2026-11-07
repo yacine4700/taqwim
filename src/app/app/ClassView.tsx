@@ -33,7 +33,7 @@ import { ReadingPanel } from "./ReadingPanel";
 
 export function ClassView({
   klass, students, term, readOnly, criteria, components, recordOf,
-  averageOf, readingCount, stats, tp, onGroups,
+  averageOf, readingCount, recentReaders, stats, tp, onGroups,
   onBack, onPick, onCard, onAddStudents, onCriterion, onMark,
   column, onColumn, readCount, onReadCount, draftOf, onDraft, onSaveReadings,
 }: {
@@ -48,6 +48,8 @@ export function ClassView({
   averageOf: (id: string) => number | null;
   /** عدد محاولات تلميذ في معيار؛ بلا كود: كل محاولاته. */
   readingCount: (id: string, code?: string) => number;
+  /** آخر من قرؤوا في معيار من هذا القسم، الأحدث أولًا: لا يُختارون حتى يقرأ ثمانية بعدهم. */
+  recentReaders: (code: string) => string[];
   stats: ReturnType<typeof classStats>;
   /** وجهة معدّل حصص الأعمال التطبيقية ومعدّل كل تلميذ، لقفل الخانة التي تُحسب منها. */
   tp: { target: TpTarget; averageOf: (id: string) => number | null };
@@ -232,6 +234,7 @@ export function ClassView({
         <ReadingPanel
           students={students}
           attemptsOf={(id) => readingCount(id, drawKey)}
+          recent={recentReaders(drawKey)}
           reading={reading}
           count={readCount}
           onCount={onReadCount}

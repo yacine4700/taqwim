@@ -55,6 +55,11 @@ export type Reading = {
    * القاعدة تفعل الشيء نفسه بقيمة افتراضية: يجب أن يبقيا متطابقين.
    */
   criterion_code?: string;
+  /**
+   * وقت تسجيل المحاولة في الخادم، أو وقت حفظها في الهاتف ما دامت في الطابور.
+   * لا يُرسل: القاعدة تضع وقتها. يُستعمل لمعرفة آخر من قرأ فقط.
+   */
+  created_at?: string;
 };
 
 /** كود معيار القراءة الافتراضي، وهو ما تأخذه المحاولة بلا كود. */
@@ -215,36 +220,79 @@ export function classStats(
 }
 
 /**
- * ترشيح تلاميذ الحصة: الأقل محاولات أولًا، والاختيار عشوائي بين المتساوين.
- * العشوائية الخالصة تُهمل بعض التلاميذ طوال الفصل وتكرّر غيرهم، وهذا يضمن
- * تغطية القسم كله بالتساوي مع بقاء الاختيار غير متوقَّع للتلاميذ.
+ * كم تلميذًا يقرأ قبل أن يعود من قرأ. يعود التلميذ إلى الاختيار بعد أن يقرأ بعده
+ * ثمانية آخرون من القسم نفسه في المعيار نفسه (طلب الأستاذ، 7 نوفمبر 2026).
+ */
+export const READING_COOLDOWN = 8;
+
+/**
+ * وقت المحاولة للترتيب: وقت تسجيلها، وإلا يومها (محاولة من نسخة أقدم بلا وقت).
+ * «2026-11-07» تسبق «2026-11-07T…» في المقارنة النصية، فالمحاولة بلا وقت تُعدّ أقدم
+ * من محاولات يومها ذات الوقت، وهذا يكفي.
+ */
+export function readingTime(reading: Reading): string {
+  return reading.created_at ?? reading.read_on;
+}
+
+/**
+ * آخر من قرؤوا، الأحدث أولًا وبلا تكرار، وعددهم `cooldown` على الأكثر.
+ * `readings` محاولات قسم واحد ومعيار واحد. المحفوظة معًا في دفعة واحدة تتساوى
+ * في الوقت، فيُقدَّم الأخير في القائمة.
+ */
+export function recentReaders(readings: Reading[], cooldown = READING_COOLDOWN): string[] {
+  const ordered = readings
+    .map((r, i) => ({ r, i }))
+    .sort((a, b) => {
+      const ta = readingTime(a.r), tb = readingTime(b.r);
+      return ta === tb ? b.i - a.i : ta < tb ? 1 : -1;
+    });
+  const out: string[] = [];
+  for (const { r } of ordered) {
+    if (out.length >= cooldown) break;
+    if (!out.includes(r.student_id)) out.push(r.student_id);
+  }
+  return out;
+}
+
+/**
+ * ترشيح تلاميذ الحصة (الخيار «ج»، 7 نوفمبر 2026):
+ *
+ * 1. من قرأ مؤخّرًا (`recent`: آخر ثمانية، الأحدث أولًا) لا يُختار. إن لم يبقَ من
+ *    غيرهم ما يكفي العدد يعود أقدمهم أولًا، فلا تُعطى قائمة ناقصة في قسم صغير.
+ * 2. من الباقين اختيار عشوائي مرجَّح: كل محاولة زائدة على أقلّهم تُنصّف الحظّ.
+ *    فمن لم يقرأ قطّ حظّه ضعف من قرأ مرة وأربعة أضعاف من قرأ مرتين، ومع ذلك
+ *    قد يُختار من قرأ. هذا يُبقي الاختيار غير متوقَّع دون أن يُهمل أحدًا طويلًا.
+ *
+ * كانت القاعدة قبله «الأقل محاولات أولًا والعشوائية بين المتساوين»، فلا يعود
+ * أحد إلا بعد أن يقرأ القسم كله، وكان التلاميذ يعرفون أنهم في مأمن بعد قراءتهم.
+ *
+ * السحب بلا إرجاع بطريقة Efraimidis–Spirakis: لكل تلميذ مفتاح ln(u)/w ويؤخذ
+ * الأكبر. `random` يُمرَّر في الاختبارات.
  */
 export function pickForSession<T extends { id: string }>(
   students: T[],
   attemptsOf: (studentId: string) => number,
   count: number,
+  recent: string[] = [],
+  random: () => number = Math.random,
 ): T[] {
-  const groups = new Map<number, T[]>();
-  for (const student of students) {
-    const n = attemptsOf(student.id);
-    const group = groups.get(n);
-    if (group) group.push(student);
-    else groups.set(n, [student]);
-  }
-  const picked: T[] = [];
-  for (const n of [...groups.keys()].sort((a, b) => a - b)) {
-    const group = [...groups.get(n)!];
-    for (let i = group.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [group[i], group[j]] = [group[j], group[i]];
-    }
-    for (const student of group) {
-      if (picked.length >= count) break;
-      picked.push(student);
-    }
-    if (picked.length >= count) break;
-  }
-  return picked;
+  if (count <= 0 || students.length === 0) return [];
+  const present = new Set(students.map((s) => s.id));
+  // من قرأ مؤخّرًا وما يزال في القائمة، الأحدث أولًا.
+  const blocked = recent.filter((id) => present.has(id));
+  // يبقى ممنوعًا من الأحدث ما لا يُنقص الباقين عن العدد، ويُطلق الأقدم.
+  const keep = Math.max(0, Math.min(blocked.length, students.length - count));
+  const resting = new Set(blocked.slice(0, keep));
+  const eligible = students.filter((s) => !resting.has(s.id));
+
+  const least = Math.min(...eligible.map((s) => attemptsOf(s.id)));
+  const keyed = eligible.map((student) => {
+    const weight = Math.pow(2, -(attemptsOf(student.id) - least));
+    // 1 - random() في (0, 1]، فلا log(0).
+    return { student, key: Math.log(1 - random()) / weight };
+  });
+  keyed.sort((a, b) => b.key - a.key);
+  return keyed.slice(0, count).map((k) => k.student);
 }
 
 export function fmt(value: number | null, digits = 2): string {

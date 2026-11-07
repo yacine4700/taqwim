@@ -9,6 +9,8 @@ import {
   autoCriteria,
   continuousMark,
   readingsFor,
+  recentReaders,
+  READING_COOLDOWN,
 } from "../src/lib/scoring.ts";
 import {
   READING_COLUMN,
@@ -42,24 +44,112 @@ const attempts = { a: 2, b: 0, c: 1, d: 0, e: 3 };
 const attemptsOf = (id) => attempts[id] ?? 0;
 const ids = (d) => d.picked.map((p) => p.id);
 
-console.log("— الاختيار بالعدل");
-for (let i = 0; i < 20; i++) {
-  const d = pickDraft(list, attemptsOf, 3);
-  if (JSON.stringify([...ids(d)].sort()) !== JSON.stringify(["b", "c", "d"])) {
-    t("الأقل محاولات أولًا (20 مرة)", [...ids(d)].sort(), ["b", "c", "d"]);
-    break;
-  }
-  if (i === 19) t("الأقل محاولات أولًا (20 مرة)", true, true);
+// عشوائية ثابتة البذرة: النتائج نفسها في كل تشغيل.
+function seeded(seed) {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let x = a;
+    x = Math.imul(x ^ (x >>> 15), x | 1);
+    x ^= x + Math.imul(x ^ (x >>> 7), x | 61);
+    return ((x ^ (x >>> 14)) >>> 0) / 4294967296;
+  };
 }
+const sorted = (d) => [...ids(d)].sort();
+
+console.log("— الاختيار: قرعة مرجَّحة");
+t("العدد ثمانية", READING_COOLDOWN, 8);
 t("اختيار جديد يبدأ بلا نقاط", pickDraft(list, attemptsOf, 2).scores, {});
 t("العدد أكبر من القسم: القسم كله", pickDraft([A, B], attemptsOf, 5).picked.length, 2);
-t("المفتاح في شريط العرض", READING_COLUMN.startsWith("r:"), true);
+t("العدد صفر: لا أحد", pickDraft(list, attemptsOf, 0).picked, []);
+{
+  let dup = false;
+  const rnd = seeded(1);
+  for (let i = 0; i < 200; i++) {
+    const p = ids(pickDraft(list, attemptsOf, 4, [], rnd));
+    if (new Set(p).size !== p.length || p.length !== 4) dup = true;
+  }
+  t("لا تكرار في القائمة الواحدة (200 مرة)", dup, false);
+}
+{
+  // b بلا محاولة، c بمحاولة: حظّ b ضعف حظّ c، أي الثلثان.
+  const rnd = seeded(7);
+  const two = [B, C];
+  let bWins = 0;
+  const N = 6000;
+  for (let i = 0; i < N; i++) if (ids(pickDraft(two, attemptsOf, 1, [], rnd))[0] === "b") bWins++;
+  const share = bWins / N;
+  t(`الأقل محاولة حظّه ضعف من قرأ مرة (${share.toFixed(3)} قرب 0.667)`, share > 0.64 && share < 0.69, true);
+  t("ومن قرأ قد يُختار مع ذلك", bWins < N, true);
+}
+{
+  // e بثلاث محاولات أكثر من b: حظّه الثُّمن.
+  const rnd = seeded(11);
+  let eWins = 0;
+  const N = 9000;
+  for (let i = 0; i < N; i++) if (ids(pickDraft([B, E], attemptsOf, 1, [], rnd))[0] === "e") eWins++;
+  const share = eWins / N;
+  t(`ثلاث محاولات زائدة: الحظّ 1/9 (${share.toFixed(3)} قرب 0.111)`, share > 0.095 && share < 0.13, true);
+}
+
+console.log("— من قرأ لا يعود قبل ثمانية");
+{
+  const ten = "abcdefghij".split("").map((x) => st(x));
+  const recent = ["a", "b", "c", "d", "e", "f", "g", "h"];
+  const rnd = seeded(3);
+  let ok = true;
+  for (let i = 0; i < 100; i++) {
+    if (JSON.stringify(sorted(pickDraft(ten, () => 0, 2, recent, rnd))) !== '["i","j"]') ok = false;
+  }
+  t("قسم من 10 وآخر 8 قرؤوا: لا يُختار إلا الاثنان الباقيان", ok, true);
+  let some = false;
+  for (let i = 0; i < 100; i++) if (ids(pickDraft(ten, () => 0, 3, recent, rnd)).includes("h")) some = true;
+  let early = false;
+  for (let i = 0; i < 100; i++) if (ids(pickDraft(ten, () => 0, 3, recent, rnd)).some((x) => "abcdefg".includes(x))) early = true;
+  t("نقص العدد: يعود أقدمهم (h) وحده", [some, early], [true, false]);
+}
+{
+  // قسم صغير: 5 تلاميذ، قرأ منهم أربعة (a الأحدث). العدد 3: يبقى ممنوعًا a وb.
+  const rnd = seeded(5);
+  let ok = true;
+  for (let i = 0; i < 100; i++) {
+    if (JSON.stringify(sorted(pickDraft(list, () => 0, 3, ["a", "b", "c", "d"], rnd))) !== '["c","d","e"]') ok = false;
+  }
+  t("قسم صغير: لا تُعطى قائمة ناقصة، ويبقى الأحدث ممنوعًا", ok, true);
+}
+t("من خرج من القسم لا يُحسب في الممنوعين", sorted(pickDraft([A, B], () => 0, 1, ["x", "y", "a"], seeded(2))), ["b"]);
+
+console.log("— آخر من قرؤوا");
+{
+  const r = (id, student_id, created_at, read_on = "2026-11-01") => ({ id, student_id, term: 1, score: 3, read_on, created_at });
+  const rows = [
+    r("1", "a", "2026-11-01T08:00:00Z"),
+    r("2", "b", "2026-11-02T08:00:00Z"),
+    r("3", "a", "2026-11-03T08:00:00Z"),
+    r("4", "c", "2026-11-03T08:00:00Z"),
+  ];
+  t("الأحدث أولًا وبلا تكرار؛ المتساويان: الأخير في القائمة أولًا", recentReaders(rows), ["c", "a", "b"]);
+  t("الحدّ", recentReaders(rows, 2), ["c", "a"]);
+  const old = { id: "5", student_id: "d", term: 1, score: 2, read_on: "2026-11-03" };
+  t("محاولة بلا وقت تُرتَّب بيومها وتسبق محاولات يومها ذات الوقت", recentReaders([...rows, old]), ["c", "a", "d", "b"]);
+  const many = "abcdefghijk".split("").map((x, i) => r(String(i), x, `2026-11-0${1 + Math.floor(i / 2)}T0${i % 10}:00:00Z`));
+  t("ثمانية على الأكثر", recentReaders(many).length, 8);
+}
 
 console.log("— التبديل");
 let d = { picked: [B, D], scores: { b: 3, d: 2 } };
 let s = swapInDraft(d, "b", list, attemptsOf);
-t("الغائب يُستبدل بالتالي في العدل (c: محاولة واحدة)", ids(s), ["c", "d"]);
+t("الغائب يُستبدل بمن ليس في القائمة", ["a", "c", "e"].includes(ids(s)[0]) && ids(s)[1] === "d", true);
 t("نقطة المُخرَج تُمحى، وتبقى نقطة غيره", s.scores, { d: 2 });
+{
+  const rnd = seeded(9);
+  let ok = true;
+  for (let i = 0; i < 100; i++) {
+    const x = swapInDraft({ picked: [B, D], scores: {} }, "b", list, attemptsOf, ["c", "a"], rnd);
+    if (ids(x)[0] !== "e") ok = false;
+  }
+  t("البديل لا يكون ممّن قرأ مؤخّرًا إن وُجد غيره", ok, true);
+}
 s = swapInDraft({ picked: [A, B], scores: {} }, "a", [A, B], attemptsOf);
 t("لا أحد يعوّضه: يُخرَج ولا تُكرَّر الأسماء", ids(s), ["b"]);
 

@@ -55,6 +55,7 @@ import {
   type Criterion,
   type Reading,
   readingsFor,
+  recentReaders,
   type RecordRow,
   type TpMark,
   type TpSession,
@@ -302,7 +303,7 @@ export default function AppClient({
       supabase.from("criteria").select("id,code,label,kind,base,ceiling,position").order("position"),
       supabase.from("components").select("id,code,label,weight,position,active").order("position"),
       supabase.from("records").select("student_id,term,criteria,tp,devoir,exam"),
-      supabase.from("readings").select("id,student_id,term,score,read_on,criterion_code").order("read_on"),
+      supabase.from("readings").select("id,student_id,term,score,read_on,criterion_code,created_at").order("read_on"),
       supabase.from("teachers").select("full_name,subject").eq("id", teacherId).maybeSingle(),
     ]);
     const failure =
@@ -745,6 +746,8 @@ export default function AppClient({
         score: entry.score,
         read_on: day,
         criterion_code: code,
+        // للترتيب وحده (من قرأ مؤخّرًا) ما دامت في الطابور؛ لا يُرسل، والقاعدة تضع وقتها.
+        created_at: new Date().toISOString(),
       };
       outbox.push(newOp("reading-add", { reading }));
     }
@@ -1700,6 +1703,14 @@ export default function AppClient({
                 averageOf={averageOf}
                 readingCount={(id, code) =>
                   (code === undefined ? readingsOf(id) : readingsFor(readingsOf(id), code)).length
+                }
+                recentReaders={(code) =>
+                  recentReaders(
+                    readingsFor(
+                      studentsOf(openClass).flatMap((st) => readingsOf(st.id)),
+                      code,
+                    ),
+                  )
                 }
                 stats={statsOf(openClass)}
                 tp={{
