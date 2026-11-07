@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { NO_GROUP_PREFS, parseGroupPrefs, type GroupPrefs } from "@/lib/columnGroups";
 import { ensurePersistence, kvDel, kvGet, kvSet, kvSetDurable, type Persistence } from "@/lib/localdb";
 import { backupFileName, buildBackup, normalizeData, type Backup } from "@/lib/backup";
 import { exportFromServer } from "@/lib/backupDb";
@@ -160,6 +161,8 @@ export default function AppClient({
   const [columnOf, setColumnOf] = useState<Record<string, string | null>>({});
   const [drafts, setDrafts] = useState<Record<string, ReadingDraft<Student>>>({});
   const [hideStart, setHideStart] = useState(false);
+  /** فتح مجموعتي الأعمدة في القسم، لكل الأقسام: تُحفظ مع المكان فيجدها الأستاذ كما تركها. */
+  const [groupPrefs, setGroupPrefs] = useState<GroupPrefs>(NO_GROUP_PREFS);
   const [confirmDelete, setConfirmDelete] = useState<Klass | null>(null);
   /** القسم الذي تُعرض بطاقته. */
   const [cardOf, setCardOf] = useState<string | null>(null);
@@ -491,6 +494,7 @@ export default function AppClient({
         columnOf?: Record<string, string | null>;
         hideStart?: boolean;
         openSchool?: string | null;
+        groupPrefs?: unknown;
       }>(whereKey);
       if (!saved) return;
       /* الفصل لا يُستعاد: يُفتح التطبيق دائمًا على الفصل الجاري بالتاريخ (انظر landedRef). */
@@ -502,6 +506,7 @@ export default function AppClient({
       setColumnOf(columns);
       if (saved.sessionCount && saved.sessionCount >= 3) setReadCount(saved.sessionCount);
       if (saved.hideStart) setHideStart(true);
+      setGroupPrefs(parseGroupPrefs(saved.groupPrefs));
       if (saved.openSchool) setOpenSchool(saved.openSchool);
       // القسم قد يكون حُذف من جهاز آخر، فلا يُفتح إلا إن كان ما يزال موجودًا.
       if (where.openClass) setOpenClass(where.openClass);
@@ -511,9 +516,9 @@ export default function AppClient({
   useEffect(() => {
     if (!restoredRef.current) return;
     void kvSet(whereKey, {
-      tab, term, openClass, openSchool, sessionCount: readCount, columnOf, hideStart,
+      tab, term, openClass, openSchool, sessionCount: readCount, columnOf, hideStart, groupPrefs,
     });
-  }, [tab, term, openClass, openSchool, readCount, columnOf, hideStart, whereKey]);
+  }, [tab, term, openClass, openSchool, readCount, columnOf, hideStart, groupPrefs, whereKey]);
 
   /* المحاولات تُسجَّل في الفصل المعروض لحظة الحفظ: قائمة اختيرت في ف1 لا تُحفظ في ف2 */
   useEffect(() => {
@@ -1703,6 +1708,8 @@ export default function AppClient({
                 recordOf={effectiveRecordOf}
                 averageOf={averageOf}
                 examSeason={examSeason(calendar, term, todayIso)}
+                groupPrefs={groupPrefs}
+                onGroupPrefs={setGroupPrefs}
                 readingCount={(id, code) =>
                   (code === undefined ? readingsOf(id) : readingsFor(readingsOf(id), code)).length
                 }

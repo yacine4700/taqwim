@@ -30,10 +30,11 @@ import { Klass, Student } from "./types";
 import { state } from "./parts";
 import { MARK_HINT, readMark } from "./StudentSheet";
 import { ReadingPanel } from "./ReadingPanel";
+import { groupExpanded, setGroup, type ColumnGroup, type GroupPrefs } from "@/lib/columnGroups";
 
 export function ClassView({
   klass, students, term, readOnly, criteria, components, recordOf,
-  averageOf, readingCount, recentReaders, examSeason, stats, tp, onGroups,
+  averageOf, readingCount, recentReaders, examSeason, groupPrefs, onGroupPrefs, stats, tp, onGroups,
   onBack, onPick, onCard, onAddStudents, onCriterion, onMark,
   column, onColumn, readCount, onReadCount, draftOf, onDraft, onSaveReadings,
 }: {
@@ -46,8 +47,11 @@ export function ClassView({
   components: Component[];
   recordOf: (id: string) => RecordRow | undefined;
   averageOf: (id: string) => number | null;
-  /** فترة الاختبارات: علامات الفصل تظهر في صف ثانٍ دائمًا بدل أن تختبئ خلف زرّ. */
+  /** فترة الاختبارات: تُفتح علامات الفصل افتراضيًا (ما لم يطوِها الأستاذ بنفسه). */
   examSeason: boolean;
+  /** حالة فتح مجموعتي الأعمدة كما اختارها الأستاذ، وتحفظها AppClient على الجهاز. */
+  groupPrefs: GroupPrefs;
+  onGroupPrefs: (next: GroupPrefs) => void;
   /** عدد محاولات تلميذ في معيار؛ بلا كود: كل محاولاته. */
   readingCount: (id: string, code?: string) => number;
   /** آخر من قرؤوا في معيار من هذا القسم، الأحدث أولًا: لا يُختارون حتى يقرأ ثمانية بعدهم. */
@@ -83,8 +87,6 @@ export function ClassView({
   const setColumn = onColumn;
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<"all" | "todo" | "low">("all");
-  /** الصف الثاني (علامات الفصل) مفتوح بزرّه خارج فترة الاختبارات. */
-  const [marksExpanded, setMarksExpanded] = useState(false);
 
   const ranked = students
     .map((s) => ({ student: s, average: averageOf(s.id) }))
@@ -115,7 +117,25 @@ export function ClassView({
   const columns = [...criteriaColumns, ...markColumns];
   const open = readOnly ? null : (columns.find((c) => c.key === column) ?? null);
   const markOpen = open?.key.startsWith("m:") ?? false;
-  const showMarks = markColumns.length > 0 && (examSeason || marksExpanded || markOpen);
+  const criteriaHolds = !!open && !markOpen;
+  const criteriaOpen = groupExpanded(groupPrefs, "criteria", { examSeason, holdsOpenColumn: criteriaHolds });
+  const marksOpen =
+    markColumns.length > 0 &&
+    groupExpanded(groupPrefs, "marks", { examSeason, holdsOpenColumn: markOpen });
+  /** رأس المجموعة: يقلب ما يُعرض، وإن كان فيها عمود مفتوح عاد الأستاذ بطيّها إلى الجدول العام. */
+  const toggleGroup = (group: ColumnGroup, expanded: boolean, holdsOpen: boolean) => {
+    if (expanded && holdsOpen) {
+      setColumn(null);
+      setFilter("all");
+    }
+    onGroupPrefs(setGroup(groupPrefs, group, !expanded));
+  };
+  /** اختيار عمود من مجموعة يفتحها اختيارًا صريحًا، فيُتذكَّر. */
+  const pickColumn = (key: string, group: ColumnGroup) => {
+    setColumn(column === key ? null : key);
+    setFilter("all");
+    onGroupPrefs(setGroup(groupPrefs, group, true));
+  };
   const drawCode = drawCodeOf(open?.key);
   const isReading = drawCode !== null;
   const drawKey = drawCode ?? "";
@@ -211,9 +231,13 @@ export function ClassView({
           مرة ثم يُنزَل على الأسماء بعدّاد لكل سطر. */}
       {students.length > 0 && !readOnly && (
         <>
+          {/* مجموعتان تُفتحان وتُطويان ويتذكّر التطبيق حالتهما: معايير التقويم (عمل كل
+              حصة) مفتوحة افتراضيًا، وعلامات الفصل مطويّة حتى يفتحها الأستاذ (وتُفتح
+              افتراضيًا في فترة الاختبارات). الرأسان خارج الأشرطة القابلة للتمرير فلا
+              يختفيان وراء الحافة. */}
           <div className="colbar">
             <span className="collab">عرض:</span>
-            <div className="chips">
+            <div className="chips fixed">
               {/* العودة إلى الحالة العامة بزرّ ظاهر: إعادة النقر على العمود المختار
                   تُلغيه، لكن أحدًا لا يخمّن ذلك. */}
               <button
@@ -221,61 +245,53 @@ export function ClassView({
                 onClick={() => {
                   setColumn(null);
                   setFilter("all");
-                  setMarksExpanded(false);
                 }}
               >
                 الكل
               </button>
-              {criteriaColumns.map((c) => (
+              <button
+                className="grp"
+                aria-pressed={criteriaHolds}
+                aria-expanded={criteriaOpen}
+                onClick={() => toggleGroup("criteria", criteriaOpen, criteriaHolds)}
+              >
+                معايير التقويم {criteriaOpen ? "▴" : "▾"}
+              </button>
+              {markColumns.length > 0 && (
                 <button
-                  key={c.key}
-                  aria-pressed={column === c.key}
-                  onClick={() => {
-                    setColumn(column === c.key ? null : c.key);
-                    setFilter("all");
-                    setMarksExpanded(false);
-                  }}
-                >
-                  {c.label}
-                </button>
-              ))}
-            </div>
-            {/* خارج فترة الاختبارات تختبئ علامات الفصل خلف زرّ واحد، خارج الشريط
-                القابل للتمرير حتى لا يختفي وراء الحافة. إن كانت إحداها مفتوحة حمل
-                الزرّ اسمها، ولمسته تعيد الجدول العام. */}
-            {markColumns.length > 0 && !examSeason && (
-              <div className="chips fixed">
-                <button
-                  className="more"
+                  className="grp marks"
                   aria-pressed={markOpen}
-                  aria-expanded={showMarks}
-                  onClick={() => {
-                    if (markOpen) {
-                      setColumn(null);
-                      setFilter("all");
-                      setMarksExpanded(false);
-                    } else {
-                      setMarksExpanded(!marksExpanded);
-                    }
-                  }}
+                  aria-expanded={marksOpen}
+                  onClick={() => toggleGroup("marks", marksOpen, markOpen)}
                 >
-                  {markOpen && open ? open.label : "علامات الفصل"} {showMarks ? "▴" : "▾"}
+                  علامات الفصل {marksOpen ? "▴" : "▾"}
                 </button>
-              </div>
-            )}
+              )}
+            </div>
           </div>
-          {showMarks && (
+          {criteriaOpen && (
+            <div className="colbar">
+              <div className="chips">
+                {criteriaColumns.map((c) => (
+                  <button
+                    key={c.key}
+                    aria-pressed={column === c.key}
+                    onClick={() => pickColumn(c.key, "criteria")}
+                  >
+                    {c.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+          {marksOpen && (
             <div className="colbar marks">
-              <span className="collab">علامات الفصل:</span>
               <div className="chips">
                 {markColumns.map((c) => (
                   <button
                     key={c.key}
                     aria-pressed={column === c.key}
-                    onClick={() => {
-                      setColumn(column === c.key ? null : c.key);
-                      setFilter("all");
-                    }}
+                    onClick={() => pickColumn(c.key, "marks")}
                   >
                     {c.label}
                     {c.key === "m:tp" && tp.target === TP_COMPONENT ? " 🔒" : ""}

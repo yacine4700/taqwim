@@ -581,12 +581,12 @@ nav.tabs svg { width: 21px; height: 21px; }
 .colbar .chips::-webkit-scrollbar { display: none; }
 .colbar .chips button { flex: none; font-size: 12px; padding: 8px 12px; }
 .colbar .chips button:not([aria-pressed="true"]) { color: var(--muted); }
-/* علامات الفصل: لون الرمل يميّز صفّها وزرّها عن معايير التقويم الأخضر. */
-.colbar .chips.fixed { flex: none; overflow: visible; padding-bottom: 0; }
-.colbar .chips button.more { border-color: var(--line); }
-.colbar .chips button.more[aria-pressed="true"],
+/* رأسا المجموعتين: بإطار وخلفية الورقة ليُعرفا عن أزرار الأعمدة. وعلامات الفصل بلون الرمل. */
+.colbar .chips.fixed { flex: none; flex-wrap: wrap; overflow: visible; padding-bottom: 0; }
+.colbar .chips button.grp { background: var(--surface); border-color: var(--line); }
+.colbar .chips button.grp[aria-pressed="true"] { background: var(--primary-soft); color: var(--primary); border-color: var(--primary); }
+.colbar .chips button.grp.marks[aria-pressed="true"],
 .colbar.marks .chips button[aria-pressed="true"] { background: var(--sand); color: #fff; border-color: var(--sand); }
-.colbar.marks .collab { font-size: 11px; }
 
 .srow.colmode { gap: 8px; padding-block: 6px; }
 /* في وضع العمود يلتفّ الاسم على سطرين: القصّ يُخفي الفرق بين «عبد الرحمن» و«عبد الرحيم» */
